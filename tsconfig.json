@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "module": "ESNext",
+    "moduleResolution": "Node",
+    "lib": ["ES2020", "DOM"],
+    "strict": true,
+    "noImplicitOverride": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": false,
+    "noFallthroughCasesInSwitch": true,
+    "resolveJsonModule": true,
+    "allowSyntheticDefaultImports": false,
+    "esModuleInterop": false,
+    "skipLibCheck": false,
+    "forceConsistentCasingInFileNames": true,
+    "types": ["@figma/plugin-typings"],
+    "baseUrl": ".",
+    "outDir": "build"
+  },
+  "include": ["core/**/*.ts", "ui/**/*.ts", "types/**/*.ts"],
+  "exclude": ["dist", "build", "node_modules"]
+}
