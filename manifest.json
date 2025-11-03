@@ -1,0 +1,13 @@
+{
+  "name": "Biblio Assets Resizer",
+  "id": "biblio-assets-resizer",
+  "api": "1.0.0",
+  "main": "dist/main.js",
+  "editorType": ["figma"],
+  "relaunchButtons": [
+    {
+      "command": "generate",
+      "name": "Generate Variants"
+    }
+  ]
+}
