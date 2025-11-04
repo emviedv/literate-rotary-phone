@@ -834,20 +834,24 @@ async function scaleNodeRecursive(node, scale, fontCache) {
   if ("strokeWeight" in node && typeof node.strokeWeight === "number") {
     node.strokeWeight *= scale;
   }
-  if ("cornerRadius" in node && typeof node.cornerRadius === "number") {
-    node.cornerRadius *= scale;
+  if ("cornerRadius" in node) {
+    const withCornerRadius = node;
+    if (withCornerRadius.cornerRadius !== figma.mixed && typeof withCornerRadius.cornerRadius === "number") {
+      withCornerRadius.cornerRadius *= scale;
+    }
   }
-  if ("topLeftRadius" in node && typeof node.topLeftRadius === "number") {
-    node.topLeftRadius *= scale;
+  const rectangleCorners = node;
+  if (typeof rectangleCorners.topLeftRadius === "number") {
+    rectangleCorners.topLeftRadius *= scale;
   }
-  if ("topRightRadius" in node && typeof node.topRightRadius === "number") {
-    node.topRightRadius *= scale;
+  if (typeof rectangleCorners.topRightRadius === "number") {
+    rectangleCorners.topRightRadius *= scale;
   }
-  if ("bottomLeftRadius" in node && typeof node.bottomLeftRadius === "number") {
-    node.bottomLeftRadius *= scale;
+  if (typeof rectangleCorners.bottomLeftRadius === "number") {
+    rectangleCorners.bottomLeftRadius *= scale;
   }
-  if ("bottomRightRadius" in node && typeof node.bottomRightRadius === "number") {
-    node.bottomRightRadius *= scale;
+  if (typeof rectangleCorners.bottomRightRadius === "number") {
+    rectangleCorners.bottomRightRadius *= scale;
   }
   if ("effects" in node && Array.isArray(node.effects)) {
     node.effects = node.effects.map((effect) => scaleEffect(effect, scale));
@@ -910,12 +914,11 @@ async function scaleTextNode(node, scale, fontCache) {
 }
 function scaleEffect(effect, scale) {
   const clone = cloneValue(effect);
-  if (clone.type === "DROP_SHADOW" || clone.type === "INNER_SHADOW") {
+  if ((clone.type === "DROP_SHADOW" || clone.type === "INNER_SHADOW") && typeof clone.radius === "number") {
     clone.radius *= scale;
-    clone.offset.x *= scale;
-    clone.offset.y *= scale;
+    clone.offset = { x: clone.offset.x * scale, y: clone.offset.y * scale };
   }
-  if (clone.type === "LAYER_BLUR" || clone.type === "BACKGROUND_BLUR") {
+  if ((clone.type === "LAYER_BLUR" || clone.type === "BACKGROUND_BLUR") && typeof clone.radius === "number") {
     clone.radius *= scale;
   }
   return clone;
@@ -923,16 +926,20 @@ function scaleEffect(effect, scale) {
 function scalePaint(paint, scale) {
   var _a2;
   const clone = cloneValue(paint);
-  if (clone.type === "IMAGE" && clone.scaling === "TILE") {
+  if ((clone.type === "IMAGE" || clone.type === "VIDEO") && clone.scaleMode === "TILE") {
     clone.scalingFactor = ((_a2 = clone.scalingFactor) != null ? _a2 : 1) * scale;
   }
-  if (clone.type === "GRADIENT_LINEAR" || clone.type === "GRADIENT_RADIAL" || clone.type === "GRADIENT_ANGULAR") {
-    if (Array.isArray(clone.gradientHandlePositions)) {
-      clone.gradientHandlePositions = clone.gradientHandlePositions.map((position) => ({
+  if (clone.type === "GRADIENT_LINEAR" || clone.type === "GRADIENT_RADIAL" || clone.type === "GRADIENT_ANGULAR" || clone.type === "GRADIENT_DIAMOND") {
+    const gradientClone = clone;
+    if (Array.isArray(gradientClone.gradientHandlePositions)) {
+      gradientClone.gradientHandlePositions = gradientClone.gradientHandlePositions.map((position) => ({
         x: position.x * scale,
         y: position.y * scale
       }));
     }
+    gradientClone.gradientTransform = gradientClone.gradientTransform.map(
+      (row) => row.map((value, index) => index === 2 ? value : value * scale)
+    );
   }
   return clone;
 }
