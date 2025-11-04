@@ -9,11 +9,13 @@ import type {
   SelectionState
 } from "../types/messages";
 import { UI_TEMPLATE } from "../ui/template";
+import { computeVariantLayout } from "./layout-positions";
 
 const STAGING_PAGE_NAME = "Biblio Assets Variants";
 const LAST_RUN_KEY = "biblio-assets:last-run";
 const MAX_SAFE_AREA_RATIO = 0.25;
 const RUN_GAP = 160;
+const RUN_MARGIN = 48;
 const MAX_ROW_WIDTH = 3200;
 
 type AutoLayoutSnapshot = {
@@ -43,6 +45,24 @@ type SafeAreaMetrics = {
 };
 
 declare const figma: PluginAPI;
+declare const process: { env?: Record<string, string | undefined> } | undefined;
+
+const DEBUG_FIX_ENABLED =
+  (typeof process !== "undefined" && process?.env?.DEBUG_FIX === "1") ||
+  figma.root.getPluginData("biblio-assets:debug") === "1" ||
+  (typeof globalThis !== "undefined" &&
+    (globalThis as { DEBUG_FIX?: string | undefined }).DEBUG_FIX === "1");
+
+function debugFixLog(message: string, context?: Record<string, unknown>): void {
+  if (!DEBUG_FIX_ENABLED) {
+    return;
+  }
+  if (context) {
+    console.log("[BiblioAssets][frame-detach]", message, context);
+    return;
+  }
+  console.log("[BiblioAssets][frame-detach]", message);
+}
 
 figma.showUI(UI_TEMPLATE, {
   width: 360,
@@ -143,7 +163,8 @@ async function handleGenerateRequest(targetIds: readonly string[], rawSafeAreaRa
     }
 
     layoutVariants(runContainer, variantNodes);
-    exposeRun(stagingPage, runContainer, variantNodes);
+    promoteVariantsToPage(stagingPage, runContainer, variantNodes);
+    exposeRun(stagingPage, variantNodes);
     writeLastRun({
       runId,
       timestamp: Date.now(),
@@ -232,10 +253,10 @@ function createRunContainer(page: PageNode, runId: string, sourceName: string): 
     }
   ];
   container.strokeWeight = 2;
-  container.paddingLeft = 48;
-  container.paddingRight = 48;
-  container.paddingTop = 48;
-  container.paddingBottom = 48;
+  container.paddingLeft = RUN_MARGIN;
+  container.paddingRight = RUN_MARGIN;
+  container.paddingTop = RUN_MARGIN;
+  container.paddingBottom = RUN_MARGIN;
   container.itemSpacing = RUN_GAP;
   container.clipsContent = false;
   container.setPluginData("biblio-assets:runId", runId);
@@ -582,35 +603,69 @@ function repositionChildren(parent: FrameNode, offsetX: number, offsetY: number)
 }
 
 function layoutVariants(container: FrameNode, variants: readonly FrameNode[]): void {
-  let cursorX = 48;
-  let cursorY = 48;
-  let rowHeight = 0;
-
-  let containerWidth = container.width;
-  let containerHeight = container.height;
-
-  for (const variant of variants) {
-    const requiredWidth = cursorX + variant.width;
-    if (requiredWidth > MAX_ROW_WIDTH && cursorX > 48) {
-      cursorX = 48;
-      cursorY += rowHeight + RUN_GAP;
-      rowHeight = 0;
-    }
-
-    variant.x = cursorX;
-    variant.y = cursorY;
-    cursorX += variant.width + RUN_GAP;
-    rowHeight = Math.max(rowHeight, variant.height);
-    containerWidth = Math.max(containerWidth, variant.x + variant.width + 48);
-    containerHeight = Math.max(containerHeight, variant.y + variant.height + 48);
+  if (variants.length === 0) {
+    return;
   }
 
+  const sizes = variants.map((variant) => ({ width: variant.width, height: variant.height }));
+  const layout = computeVariantLayout(sizes, { margin: RUN_MARGIN, gap: RUN_GAP, maxRowWidth: MAX_ROW_WIDTH });
+
+  layout.positions.forEach((position, index) => {
+    const variant = variants[index];
+    variant.x = position.x;
+    variant.y = position.y;
+  });
+
+  const containerWidth = Math.max(container.width, layout.bounds.width);
+  const containerHeight = Math.max(container.height, layout.bounds.height);
   container.resizeWithoutConstraints(containerWidth, containerHeight);
+
+  debugFixLog("variants positioned within container", {
+    containerWidth,
+    containerHeight,
+    variantCount: variants.length
+  });
 }
 
-function exposeRun(page: PageNode, container: FrameNode, variants: readonly FrameNode[]): void {
+/**
+ * Re-parents generated variant frames onto the staging page so each target sits
+ * in its own top-level frame, then removes the temporary container shell.
+ */
+function promoteVariantsToPage(page: PageNode, container: FrameNode, variants: readonly FrameNode[]): void {
+  const parent = container.parent;
+  if (!parent || parent.type !== "PAGE") {
+    debugFixLog("skipped promotion because container parent is not a page", {
+      parentType: parent?.type ?? "none"
+    });
+    return;
+  }
+
+  const baseX = container.x;
+  const baseY = container.y;
+
+  for (const variant of variants) {
+    const absoluteX = baseX + variant.x;
+    const absoluteY = baseY + variant.y;
+    page.appendChild(variant);
+    variant.x = absoluteX;
+    variant.y = absoluteY;
+  }
+
+  container.remove();
+
+  debugFixLog("variants promoted to top-level frames", {
+    baseX,
+    baseY,
+    variantCount: variants.length
+  });
+}
+
+function exposeRun(page: PageNode, variants: readonly FrameNode[]): void {
+  if (variants.length === 0) {
+    return;
+  }
   figma.currentPage = page;
-  figma.viewport.scrollAndZoomIntoView([container, ...variants]);
+  figma.viewport.scrollAndZoomIntoView([...variants]);
 }
 
 function collectWarnings(frame: FrameNode, target: VariantTarget, safeAreaRatio: number): VariantWarning[] {
