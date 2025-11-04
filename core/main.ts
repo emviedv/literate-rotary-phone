@@ -1,4 +1,3 @@
-import type { SceneNode, FrameNode, PageNode, TextNode, Effect, Paint, ComponentNode } from "@figma/plugin-typings";
 import { VARIANT_TARGETS, getTargetById, type VariantTarget } from "../types/targets";
 import type {
   ToCoreMessage,
@@ -17,6 +16,12 @@ const MAX_SAFE_AREA_RATIO = 0.25;
 const RUN_GAP = 160;
 const RUN_MARGIN = 48;
 const MAX_ROW_WIDTH = 3200;
+
+type Mutable<T> = T extends ReadonlyArray<infer U>
+  ? Mutable<U>[]
+  : T extends object
+    ? { -readonly [K in keyof T]: Mutable<T[K]> }
+    : T;
 
 type AutoLayoutSnapshot = {
   layoutMode: FrameNode["layoutMode"];
@@ -263,7 +268,7 @@ function createRunContainer(page: PageNode, runId: string, sourceName: string): 
 
   page.appendChild(container);
 
-  const bottom = page.children.reduce((accumulator, child) => {
+  const bottom = page.children.reduce<number>((accumulator, child) => {
     if (child === container) {
       return accumulator;
     }
@@ -466,20 +471,29 @@ async function scaleNodeRecursive(node: SceneNode, scale: number, fontCache: Set
     node.strokeWeight *= scale;
   }
 
-  if ("cornerRadius" in node && typeof node.cornerRadius === "number") {
-    node.cornerRadius *= scale;
+  if ("cornerRadius" in node) {
+    const withCornerRadius = node as SceneNode & { cornerRadius?: number | typeof figma.mixed };
+    if (withCornerRadius.cornerRadius !== figma.mixed && typeof withCornerRadius.cornerRadius === "number") {
+      withCornerRadius.cornerRadius *= scale;
+    }
   }
-  if ("topLeftRadius" in node && typeof node.topLeftRadius === "number") {
-    node.topLeftRadius *= scale;
+  const rectangleCorners = node as SceneNode & {
+    topLeftRadius?: number;
+    topRightRadius?: number;
+    bottomLeftRadius?: number;
+    bottomRightRadius?: number;
+  };
+  if (typeof rectangleCorners.topLeftRadius === "number") {
+    rectangleCorners.topLeftRadius *= scale;
   }
-  if ("topRightRadius" in node && typeof node.topRightRadius === "number") {
-    node.topRightRadius *= scale;
+  if (typeof rectangleCorners.topRightRadius === "number") {
+    rectangleCorners.topRightRadius *= scale;
   }
-  if ("bottomLeftRadius" in node && typeof node.bottomLeftRadius === "number") {
-    node.bottomLeftRadius *= scale;
+  if (typeof rectangleCorners.bottomLeftRadius === "number") {
+    rectangleCorners.bottomLeftRadius *= scale;
   }
-  if ("bottomRightRadius" in node && typeof node.bottomRightRadius === "number") {
-    node.bottomRightRadius *= scale;
+  if (typeof rectangleCorners.bottomRightRadius === "number") {
+    rectangleCorners.bottomRightRadius *= scale;
   }
 
   if ("effects" in node && Array.isArray(node.effects)) {
@@ -554,35 +568,42 @@ async function scaleTextNode(node: TextNode, scale: number, fontCache: Set<strin
 
 function scaleEffect(effect: Effect, scale: number): Effect {
   const clone = cloneValue(effect);
-  if (clone.type === "DROP_SHADOW" || clone.type === "INNER_SHADOW") {
+  if ((clone.type === "DROP_SHADOW" || clone.type === "INNER_SHADOW") && typeof clone.radius === "number") {
     clone.radius *= scale;
-    clone.offset.x *= scale;
-    clone.offset.y *= scale;
+    clone.offset = { x: clone.offset.x * scale, y: clone.offset.y * scale };
   }
-  if (clone.type === "LAYER_BLUR" || clone.type === "BACKGROUND_BLUR") {
+  if ((clone.type === "LAYER_BLUR" || clone.type === "BACKGROUND_BLUR") && typeof clone.radius === "number") {
     clone.radius *= scale;
   }
-  return clone;
+  return clone as Effect;
 }
 
 function scalePaint(paint: Paint, scale: number): Paint {
   const clone = cloneValue(paint);
-  if (clone.type === "IMAGE" && clone.scaling === "TILE") {
+  if ((clone.type === "IMAGE" || clone.type === "VIDEO") && clone.scaleMode === "TILE") {
     clone.scalingFactor = (clone.scalingFactor ?? 1) * scale;
   }
+
   if (
     clone.type === "GRADIENT_LINEAR" ||
     clone.type === "GRADIENT_RADIAL" ||
-    clone.type === "GRADIENT_ANGULAR"
+    clone.type === "GRADIENT_ANGULAR" ||
+    clone.type === "GRADIENT_DIAMOND"
   ) {
-    if (Array.isArray(clone.gradientHandlePositions)) {
-      clone.gradientHandlePositions = clone.gradientHandlePositions.map((position) => ({
+    const gradientClone = clone as typeof clone & { gradientHandlePositions?: Vector[] };
+    if (Array.isArray(gradientClone.gradientHandlePositions)) {
+      gradientClone.gradientHandlePositions = gradientClone.gradientHandlePositions.map((position) => ({
         x: position.x * scale,
         y: position.y * scale
       }));
     }
+
+    gradientClone.gradientTransform = gradientClone.gradientTransform.map((row) =>
+      row.map((value, index) => (index === 2 ? value : value * scale))
+    ) as Transform;
   }
-  return clone;
+
+  return clone as Paint;
 }
 
 function repositionChildren(parent: FrameNode, offsetX: number, offsetY: number): void {
@@ -856,6 +877,6 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
-function cloneValue<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T;
+function cloneValue<T>(value: T): Mutable<T> {
+  return JSON.parse(JSON.stringify(value)) as Mutable<T>;
 }

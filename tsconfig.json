@@ -3,7 +3,7 @@
     "target": "ES2017",
     "module": "ESNext",
     "moduleResolution": "Node",
-    "lib": ["ES2020", "DOM"],
+    "lib": ["ES2020"],
     "strict": true,
     "noImplicitOverride": true,
     "noUnusedLocals": true,
