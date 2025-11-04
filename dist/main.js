@@ -446,12 +446,66 @@ var UI_TEMPLATE = `<!DOCTYPE html>
 </body>
 </html>`;
 
+// core/layout-positions.ts
+function computeVariantLayout(sizes, options) {
+  if (sizes.length === 0) {
+    return {
+      positions: [],
+      bounds: { width: 0, height: 0 }
+    };
+  }
+  const positions = [];
+  let cursorX = options.margin;
+  let cursorY = options.margin;
+  let rowHeight = 0;
+  let maxWidth = 0;
+  let maxHeight = 0;
+  for (const size of sizes) {
+    const requiresWrap = cursorX + size.width > options.maxRowWidth && cursorX > options.margin;
+    if (requiresWrap) {
+      cursorX = options.margin;
+      cursorY += rowHeight + options.gap;
+      rowHeight = 0;
+    }
+    positions.push({ x: cursorX, y: cursorY });
+    const rightEdge = cursorX + size.width + options.margin;
+    const bottomEdge = cursorY + size.height + options.margin;
+    if (rightEdge > maxWidth) {
+      maxWidth = rightEdge;
+    }
+    if (bottomEdge > maxHeight) {
+      maxHeight = bottomEdge;
+    }
+    cursorX += size.width + options.gap;
+    if (size.height > rowHeight) {
+      rowHeight = size.height;
+    }
+  }
+  return {
+    positions,
+    bounds: { width: maxWidth, height: maxHeight }
+  };
+}
+
 // core/main.ts
 var STAGING_PAGE_NAME = "Biblio Assets Variants";
 var LAST_RUN_KEY = "biblio-assets:last-run";
 var MAX_SAFE_AREA_RATIO = 0.25;
 var RUN_GAP = 160;
+var RUN_MARGIN = 48;
 var MAX_ROW_WIDTH = 3200;
+var _a;
+var DEBUG_FIX_ENABLED = typeof process !== "undefined" && ((_a = process == null ? void 0 : process.env) == null ? void 0 : _a.DEBUG_FIX) === "1" || figma.root.getPluginData("biblio-assets:debug") === "1" || typeof globalThis !== "undefined" && globalThis.DEBUG_FIX === "1";
+function debugFixLog(message, context) {
+  if (!DEBUG_FIX_ENABLED) {
+    return;
+  }
+  if (context) {
+    console.log("[BiblioAssets][frame-detach]", message, context);
+    return;
+  }
+  console.log("[BiblioAssets][frame-detach]", message);
+}
 figma.showUI(UI_TEMPLATE, {
   width: 360,
   height: 540,
@@ -532,7 +586,8 @@ async function handleGenerateRequest(targetIds, rawSafeAreaRatio) {
       });
     }
     layoutVariants(runContainer, variantNodes);
-    exposeRun(stagingPage, runContainer, variantNodes);
+    promoteVariantsToPage(stagingPage, runContainer, variantNodes);
+    exposeRun(stagingPage, variantNodes);
     writeLastRun({
       runId,
       timestamp: Date.now(),
@@ -611,10 +666,10 @@ function createRunContainer(page, runId, sourceName) {
     }
   ];
   container.strokeWeight = 2;
-  container.paddingLeft = 48;
-  container.paddingRight = 48;
-  container.paddingTop = 48;
-  container.paddingBottom = 48;
+  container.paddingLeft = RUN_MARGIN;
+  container.paddingRight = RUN_MARGIN;
+  container.paddingTop = RUN_MARGIN;
+  container.paddingBottom = RUN_MARGIN;
   container.itemSpacing = RUN_GAP;
   container.clipsContent = false;
   container.setPluginData("biblio-assets:runId", runId);
@@ -866,10 +921,10 @@ function scaleEffect(effect, scale) {
   return clone;
 }
 function scalePaint(paint, scale) {
-  var _a;
+  var _a2;
   const clone = cloneValue(paint);
   if (clone.type === "IMAGE" && clone.scaling === "TILE") {
-    clone.scalingFactor = ((_a = clone.scalingFactor) != null ? _a : 1) * scale;
+    clone.scalingFactor = ((_a2 = clone.scalingFactor) != null ? _a2 : 1) * scale;
   }
   if (clone.type === "GRADIENT_LINEAR" || clone.type === "GRADIENT_RADIAL" || clone.type === "GRADIENT_ANGULAR") {
     if (Array.isArray(clone.gradientHandlePositions)) {
@@ -898,30 +953,56 @@ function repositionChildren(parent, offsetX, offsetY) {
   }
 }
 function layoutVariants(container, variants) {
-  let cursorX = 48;
-  let cursorY = 48;
-  let rowHeight = 0;
-  let containerWidth = container.width;
-  let containerHeight = container.height;
-  for (const variant of variants) {
-    const requiredWidth = cursorX + variant.width;
-    if (requiredWidth > MAX_ROW_WIDTH && cursorX > 48) {
-      cursorX = 48;
-      cursorY += rowHeight + RUN_GAP;
-      rowHeight = 0;
-    }
-    variant.x = cursorX;
-    variant.y = cursorY;
-    cursorX += variant.width + RUN_GAP;
-    rowHeight = Math.max(rowHeight, variant.height);
-    containerWidth = Math.max(containerWidth, variant.x + variant.width + 48);
-    containerHeight = Math.max(containerHeight, variant.y + variant.height + 48);
+  if (variants.length === 0) {
+    return;
   }
+  const sizes = variants.map((variant) => ({ width: variant.width, height: variant.height }));
+  const layout = computeVariantLayout(sizes, { margin: RUN_MARGIN, gap: RUN_GAP, maxRowWidth: MAX_ROW_WIDTH });
+  layout.positions.forEach((position, index) => {
+    const variant = variants[index];
+    variant.x = position.x;
+    variant.y = position.y;
+  });
+  const containerWidth = Math.max(container.width, layout.bounds.width);
+  const containerHeight = Math.max(container.height, layout.bounds.height);
   container.resizeWithoutConstraints(containerWidth, containerHeight);
+  debugFixLog("variants positioned within container", {
+    containerWidth,
+    containerHeight,
+    variantCount: variants.length
+  });
 }
-function exposeRun(page, container, variants) {
+function promoteVariantsToPage(page, container, variants) {
+  var _a2;
+  const parent = container.parent;
+  if (!parent || parent.type !== "PAGE") {
+    debugFixLog("skipped promotion because container parent is not a page", {
+      parentType: (_a2 = parent == null ? void 0 : parent.type) != null ? _a2 : "none"
+    });
+    return;
+  }
+  const baseX = container.x;
+  const baseY = container.y;
+  for (const variant of variants) {
+    const absoluteX = baseX + variant.x;
+    const absoluteY = baseY + variant.y;
+    page.appendChild(variant);
+    variant.x = absoluteX;
+    variant.y = absoluteY;
+  }
+  container.remove();
+  debugFixLog("variants promoted to top-level frames", {
+    baseX,
+    baseY,
+    variantCount: variants.length
+  });
+}
+function exposeRun(page, variants) {
+  if (variants.length === 0) {
+    return;
+  }
   figma.currentPage = page;
-  figma.viewport.scrollAndZoomIntoView([container, ...variants]);
+  figma.viewport.scrollAndZoomIntoView([...variants]);
 }
 function collectWarnings(frame, target, safeAreaRatio) {
   const warnings = [];
