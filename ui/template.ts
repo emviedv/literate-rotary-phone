@@ -176,6 +176,36 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
       background: var(--figma-color-bg-tertiary, rgba(16, 24, 40, 0.04));
       color: var(--figma-color-text, #101828);
     }
+    .layout-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .layout-row {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 8px;
+      border: 1px solid rgba(16, 24, 40, 0.08);
+      border-radius: 8px;
+      background: var(--figma-color-bg-tertiary, rgba(16, 24, 40, 0.02));
+    }
+    .layout-row label {
+      display: flex;
+      justify-content: space-between;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--figma-color-text, #101828);
+    }
+    .layout-row select {
+      width: 100%;
+      border-radius: 8px;
+      border: 1px solid var(--figma-color-border, rgba(16, 24, 40, 0.16));
+      padding: 6px 8px;
+      background: var(--figma-color-bg-tertiary, rgba(16, 24, 40, 0.02));
+      font: inherit;
+      color: inherit;
+    }
   </style>
 </head>
 <body>
@@ -191,6 +221,20 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
       <div id="aiRoles" class="ai-row" role="list"></div>
       <div id="aiQa" class="ai-qa" role="list"></div>
       <button id="applySampleAi" style="align-self: flex-start;">Apply sample AI signals</button>
+    </section>
+
+    <section class="section" id="layoutSection" hidden>
+      <h2>Layout patterns</h2>
+      <p class="status" id="layoutStatus">AI-suggested patterns per target.</p>
+      <div id="layoutContainer" class="layout-list"></div>
+      <button id="applySampleLayout" style="align-self: flex-start;">Apply sample layout advice</button>
+    </section>
+
+    <section class="section" id="layoutSection" hidden>
+      <h2>Layout patterns</h2>
+      <p class="status" id="layoutStatus">AI-suggested patterns per target.</p>
+      <div id="layoutContainer" class="layout-list"></div>
+      <button id="applySampleLayout" style="align-self: flex-start;">Apply sample layout advice</button>
     </section>
 
     <section class="section">
@@ -248,10 +292,15 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
       const aiRoles = document.getElementById("aiRoles");
       const aiQa = document.getElementById("aiQa");
       const applySampleAi = document.getElementById("applySampleAi");
+      const layoutSection = document.getElementById("layoutSection");
+      const layoutStatus = document.getElementById("layoutStatus");
+      const layoutContainer = document.getElementById("layoutContainer");
+      const applySampleLayout = document.getElementById("applySampleLayout");
 
       let availableTargets = [];
       let selectionReady = false;
       let isBusy = false;
+      let layoutSelections = {};
 
       if (!(targetSelect instanceof HTMLSelectElement)) {
         throw new Error("Target select element missing.");
@@ -336,6 +385,7 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
           }
         }
         renderAiSignals(state.aiSignals);
+        renderLayoutAdvice(state.layoutAdvice);
         updateGenerateState();
       }
 
@@ -366,7 +416,8 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
               type: "generate-variants",
               payload: {
                 targetIds: targets,
-                safeAreaRatio: Number(safeAreaSlider.value)
+                safeAreaRatio: Number(safeAreaSlider.value),
+                layoutPatterns: layoutSelections
               }
             }
           },
@@ -397,6 +448,59 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
         return \`\${formatted} — \${lastRun.sourceNodeName} (\${lastRun.targetIds.length} targets)\`;
       }
 
+      function renderLayoutAdvice(advice) {
+        layoutContainer.innerHTML = "";
+        if (!selectionReady) {
+          layoutSection.hidden = true;
+          return;
+        }
+
+        const hasAdvice = advice && Array.isArray(advice.entries) && advice.entries.length > 0;
+        if (!hasAdvice) {
+          layoutSection.hidden = false;
+          layoutStatus.textContent = "No layout patterns supplied. Using auto layout.";
+          layoutSelections = {};
+          return;
+        }
+
+        layoutSection.hidden = false;
+        layoutStatus.textContent = "AI-suggested patterns per target.";
+
+        advice.entries.forEach((entry) => {
+          const target = availableTargets.find((item) => item.id === entry.targetId);
+          if (!target) return;
+          const row = document.createElement("div");
+          row.className = "layout-row";
+
+          const label = document.createElement("label");
+          label.textContent = target.label;
+          row.appendChild(label);
+
+          const select = document.createElement("select");
+          entry.options.forEach((option) => {
+            const opt = document.createElement("option");
+            opt.value = option.id;
+            const scoreText = option.score !== undefined ? ` · ${Math.round(option.score * 100)}%` : "";
+            opt.textContent = `${option.label}${scoreText}`;
+            opt.title = option.description;
+            select.appendChild(opt);
+          });
+
+          const defaultChoice = layoutSelections[entry.targetId] || entry.selectedId || entry.options[0]?.id;
+          if (defaultChoice) {
+            select.value = defaultChoice;
+            layoutSelections[entry.targetId] = defaultChoice;
+          }
+
+          select.addEventListener("change", () => {
+            layoutSelections[entry.targetId] = select.value;
+          });
+
+          row.appendChild(select);
+          layoutContainer.appendChild(row);
+        });
+      }
+
       function renderResults(results) {
         resultsContainer.innerHTML = "";
         results.forEach((result) => {
@@ -406,6 +510,13 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
           const heading = document.createElement("strong");
           heading.textContent = target ? target.label : result.targetId;
           tile.appendChild(heading);
+          if (result.layoutPatternId) {
+            const patternLine = document.createElement("span");
+            patternLine.style.color = "var(--figma-color-text-secondary, #475467)";
+            patternLine.style.fontSize = "12px";
+            patternLine.textContent = `Layout: ${result.layoutPatternLabel || result.layoutPatternId}`;
+            tile.appendChild(patternLine);
+          }
 
           if (result.warnings.length === 0) {
             const success = document.createElement("span");
@@ -509,8 +620,48 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
         );
       }
 
+      function applySampleLayoutAdvice() {
+        if (!selectionReady) {
+          statusMessage.textContent = "Select a frame before applying layout advice.";
+          return;
+        }
+        const sample = {
+          entries: [
+            {
+              targetId: "figma-cover",
+              selectedId: "hero-left",
+              options: [
+                { id: "hero-left", label: "Hero left, text right", description: "Hero anchored left, copy on right", score: 0.82 },
+                { id: "stacked", label: "Stacked", description: "Hero on top, text and CTA below", score: 0.71 }
+              ]
+            },
+            {
+              targetId: "tiktok-vertical",
+              selectedId: "stacked",
+              options: [
+                { id: "stacked", label: "Stacked", description: "Hero top, text bottom", score: 0.77 },
+                { id: "hero-top", label: "Hero top-heavy", description: "Large hero on top, small footer CTA", score: 0.62 }
+              ]
+            }
+          ]
+        };
+
+        parent.postMessage(
+          {
+            pluginMessage: {
+              type: "set-layout-advice",
+              payload: { advice: sample }
+            }
+          },
+          "*"
+        );
+      }
+
       if (applySampleAi instanceof HTMLButtonElement) {
         applySampleAi.addEventListener("click", applySampleSignals);
+      }
+      if (applySampleLayout instanceof HTMLButtonElement) {
+        applySampleLayout.addEventListener("click", applySampleLayoutAdvice);
       }
 
       window.onmessage = (event) => {
@@ -525,7 +676,8 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
               selectionOk: message.payload.selectionOk,
               selectionName: message.payload.selectionName,
               error: message.payload.error,
-              aiSignals: message.payload.aiSignals
+              aiSignals: message.payload.aiSignals,
+              layoutAdvice: message.payload.layoutAdvice
             });
             if (message.payload.lastRun) {
               lastRunSection.hidden = false;

@@ -7,6 +7,7 @@ import type {
   LastRunSummary,
   SelectionState
 } from "../types/messages";
+import type { LayoutAdvice } from "../types/layout-advice.js";
 import type { AiSignals } from "../types/ai-signals.js";
 import { UI_TEMPLATE } from "../ui/template";
 import { computeVariantLayout } from "./layout-positions";
@@ -24,6 +25,7 @@ import {
 import { analyzeContent, calculateOptimalScale } from "./content-analyzer";
 import { createLayoutAdaptationPlan, applyLayoutAdaptation } from "./auto-layout-adapter";
 import { deriveWarningsFromAiSignals, readAiSignals } from "./ai-signals.js";
+import { readLayoutAdvice, resolvePatternLabel } from "./layout-advice.js";
 import { debugFixLog } from "./debug.js";
 
 const STAGING_PAGE_NAME = "Biblio Assets Variants";
@@ -85,10 +87,17 @@ figma.ui.onmessage = async (rawMessage: ToCoreMessage) => {
       await postInitialState();
       break;
     case "generate-variants":
-      await handleGenerateRequest(rawMessage.payload.targetIds, rawMessage.payload.safeAreaRatio);
+      await handleGenerateRequest(
+        rawMessage.payload.targetIds,
+        rawMessage.payload.safeAreaRatio,
+        rawMessage.payload.layoutPatterns ?? {}
+      );
       break;
     case "set-ai-signals":
       await handleSetAiSignals(rawMessage.payload.signals);
+      break;
+    case "set-layout-advice":
+      await handleSetLayoutAdvice(rawMessage.payload.advice);
       break;
     default:
       console.warn("Unhandled message", rawMessage);
@@ -111,6 +120,7 @@ async function postInitialState(): Promise<void> {
     selectionName: selectionState.selectionName,
     error: selectionState.error,
     aiSignals: selectionState.aiSignals,
+    layoutAdvice: selectionState.layoutAdvice,
     targets: VARIANT_TARGETS,
     lastRun: lastRunSummary ?? undefined
   };
@@ -123,7 +133,11 @@ async function postInitialState(): Promise<void> {
   postToUI({ type: "init", payload });
 }
 
-async function handleGenerateRequest(targetIds: readonly string[], rawSafeAreaRatio: number): Promise<void> {
+async function handleGenerateRequest(
+  targetIds: readonly string[],
+  rawSafeAreaRatio: number,
+  layoutPatterns: Record<string, string | undefined>
+): Promise<void> {
   const selectionFrame = getSelectionFrame();
   if (!selectionFrame) {
     postToUI({ type: "error", payload: { message: "Select exactly one frame before generating variants." } });
@@ -155,6 +169,7 @@ async function handleGenerateRequest(targetIds: readonly string[], rawSafeAreaRa
     const fontCache = new Set<string>();
     await loadFontsForNode(selectionFrame, fontCache);
 
+    const layoutAdvice = readLayoutAdvice(selectionFrame);
     for (const target of targets) {
       const layoutProfile = resolveLayoutProfile({ width: target.width, height: target.height });
       debugFixLog("prepping variant target", {
@@ -218,12 +233,20 @@ async function handleGenerateRequest(targetIds: readonly string[], rawSafeAreaRa
         willLockAfterFlush: true
       });
 
+      const chosenPatternId = layoutPatterns[target.id] ?? layoutAdvice?.entries.find((entry) => entry.targetId === target.id)?.selectedId;
+      if (chosenPatternId) {
+        variantNode.setPluginData("biblio-assets:layoutPattern", chosenPatternId);
+        debugFixLog("layout pattern tagged on variant", { targetId: target.id, patternId: chosenPatternId });
+      }
+
       const warnings = collectWarnings(variantNode, target, safeAreaRatio);
       variantNodes.push(variantNode);
       results.push({
         targetId: target.id,
         nodeId: variantNode.id,
-        warnings
+        warnings,
+        layoutPatternId: chosenPatternId,
+        layoutPatternLabel: resolvePatternLabel(layoutAdvice, target.id, chosenPatternId)
       });
     }
 
@@ -293,10 +316,12 @@ function getSelectionFrame(): FrameNode | null {
 function createSelectionState(frame: FrameNode | null): SelectionState {
   if (frame) {
     const aiSignals = readAiSignals(frame);
+    const layoutAdvice = readLayoutAdvice(frame);
     return {
       selectionOk: true,
       selectionName: frame.name,
-      aiSignals: aiSignals ?? undefined
+      aiSignals: aiSignals ?? undefined,
+      layoutAdvice: layoutAdvice ?? undefined
     };
   }
   return {
@@ -1254,4 +1279,25 @@ function clamp(value: number, min: number, max: number): number {
 
 function cloneValue<T>(value: T): Mutable<T> {
   return JSON.parse(JSON.stringify(value)) as Mutable<T>;
+}
+async function handleSetLayoutAdvice(advice: LayoutAdvice): Promise<void> {
+  const frame = getSelectionFrame();
+  if (!frame) {
+    postToUI({ type: "error", payload: { message: "Select a single frame before applying layout advice." } });
+    return;
+  }
+
+  try {
+    const serialized = JSON.stringify(advice);
+    frame.setPluginData("biblio-assets:layout-advice", serialized);
+    debugFixLog("layout advice stored on selection", {
+      entries: advice.entries?.length ?? 0
+    });
+    figma.notify("Layout advice applied to selection.");
+    const selectionState = createSelectionState(frame);
+    postToUI({ type: "selection-update", payload: selectionState });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to apply layout advice.";
+    postToUI({ type: "error", payload: { message } });
+  }
 }
