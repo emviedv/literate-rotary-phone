@@ -1,0 +1,56 @@
+import { planAutoLayoutExpansion } from "../core/layout-expansion.js";
+
+function assertAlmostEqual(actual: number, expected: number, message: string): void {
+  const epsilon = 0.0001;
+  if (Math.abs(actual - expected) > epsilon) {
+    throw new Error(`${message}\nExpected: ${expected}\nReceived: ${actual}`);
+  }
+}
+
+function testCase(name: string, fn: () => void): void {
+  try {
+    fn();
+    console.log(`✅ ${name}`);
+  } catch (error) {
+    console.error(`❌ ${name}`);
+    throw error;
+  }
+}
+
+function assertGreaterThan(actual: number, threshold: number, message: string): void {
+  if (!(actual > threshold)) {
+    throw new Error(`${message}\nExpected greater than: ${threshold}\nReceived: ${actual}`);
+  }
+}
+
+function assertLessThan(actual: number, threshold: number, message: string): void {
+  if (!(actual < threshold)) {
+    throw new Error(`${message}\nExpected less than: ${threshold}\nReceived: ${actual}`);
+  }
+}
+
+testCase("pushes majority of extra width into interior spacing when layout can reflow", () => {
+  const plan = planAutoLayoutExpansion({
+    totalExtra: 600,
+    safeInset: 80,
+    gaps: { start: 120, end: 120 },
+    flowChildCount: 3
+  });
+
+  assertLessThan(plan.start, 200, "left edge should not hoard the full safe gap");
+  assertLessThan(plan.end, 200, "right edge should stay symmetric for balanced margins");
+  assertGreaterThan(plan.interior, 280, "most of the surplus should flow into interior spacing");
+  assertGreaterThan(plan.interior, plan.start, "interior spacing should exceed either edge");
+});
+
+testCase("falls back to edge padding when auto layout lacks reflow capacity", () => {
+  const plan = planAutoLayoutExpansion({
+    totalExtra: 400,
+    safeInset: 60,
+    gaps: { start: 160, end: 80 },
+    flowChildCount: 1
+  });
+
+  assertAlmostEqual(plan.interior, 0, "without flow children there is no spacing to inflate");
+  assertAlmostEqual(plan.start + plan.end, 400, "all extra width stays on the edges");
+});
