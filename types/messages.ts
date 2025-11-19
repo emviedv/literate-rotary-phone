@@ -1,11 +1,13 @@
 import type { VariantTarget } from "./targets.js";
 import type { AiSignals } from "./ai-signals.js";
+import type { LayoutAdvice } from "./layout-advice.js";
 
 export interface SelectionState {
   readonly selectionOk: boolean;
   readonly selectionName?: string;
   readonly error?: string;
   readonly aiSignals?: AiSignals;
+  readonly layoutAdvice?: LayoutAdvice;
 }
 
 export interface LastRunSummary {
@@ -39,6 +41,8 @@ export interface VariantResult {
   readonly targetId: string;
   readonly nodeId: string;
   readonly warnings: readonly VariantWarning[];
+  readonly layoutPatternId?: string;
+  readonly layoutPatternLabel?: string;
 }
 
 export interface GenerationCompletePayload {
@@ -60,11 +64,18 @@ export type ToCoreMessage =
       readonly payload: {
         readonly targetIds: readonly string[];
         readonly safeAreaRatio: number;
+        readonly layoutPatterns?: Record<string, string | undefined>;
       };
     }
   | {
       readonly type: "set-ai-signals";
       readonly payload: {
         readonly signals: AiSignals;
+      };
+    }
+  | {
+      readonly type: "set-layout-advice";
+      readonly payload: {
+        readonly advice: LayoutAdvice;
       };
     };

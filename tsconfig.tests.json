@@ -15,6 +15,7 @@
     "core/layout-expansion.ts",
     "core/absolute-geometry.ts",
     "core/absolute-layout.ts",
+    "core/layout-advice.ts",
     "core/layout-profile.ts",
     "core/qa-overlay.ts",
     "core/auto-layout-adapter.ts",
