@@ -24,8 +24,8 @@ import {
 } from "./layout-profile";
 import { analyzeContent, calculateOptimalScale } from "./content-analyzer";
 import { createLayoutAdaptationPlan, applyLayoutAdaptation } from "./auto-layout-adapter";
-import { deriveWarningsFromAiSignals, readAiSignals } from "./ai-signals.js";
-import { readLayoutAdvice, resolvePatternLabel } from "./layout-advice.js";
+import { deriveWarningsFromAiSignals, readAiSignals, resolvePrimaryFocalPoint } from "./ai-signals.js";
+import { autoSelectLayoutPattern, normalizeLayoutAdvice, readLayoutAdvice, resolvePatternLabel } from "./layout-advice.js";
 import { debugFixLog } from "./debug.js";
 
 const STAGING_PAGE_NAME = "Biblio Assets Variants";
@@ -34,6 +34,7 @@ const MAX_SAFE_AREA_RATIO = 0.25;
 const RUN_GAP = 160;
 const RUN_MARGIN = 48;
 const MAX_ROW_WIDTH = 3200;
+const MIN_PATTERN_CONFIDENCE = 0.65;
 
 type Mutable<T> = T extends ReadonlyArray<infer U>
   ? Mutable<U>[]
@@ -170,6 +171,8 @@ async function handleGenerateRequest(
     await loadFontsForNode(selectionFrame, fontCache);
 
     const layoutAdvice = readLayoutAdvice(selectionFrame);
+    const aiSignals = readAiSignals(selectionFrame);
+    const primaryFocal = resolvePrimaryFocalPoint(aiSignals);
     for (const target of targets) {
       const layoutProfile = resolveLayoutProfile({ width: target.width, height: target.height });
       debugFixLog("prepping variant target", {
@@ -196,7 +199,8 @@ async function handleGenerateRequest(
         safeAreaRatio,
         fontCache,
         rootSnapshot,
-        layoutProfile
+        layoutProfile,
+        primaryFocal
       );
 
       // Create and apply intelligent layout adaptation instead of just restoring
@@ -233,20 +237,47 @@ async function handleGenerateRequest(
         willLockAfterFlush: true
       });
 
-      const chosenPatternId = layoutPatterns[target.id] ?? layoutAdvice?.entries.find((entry) => entry.targetId === target.id)?.selectedId;
+      const patternSelection = autoSelectLayoutPattern(layoutAdvice, target.id, MIN_PATTERN_CONFIDENCE);
+      const userSelection = layoutPatterns[target.id];
+      const adviceEntry = layoutAdvice?.entries.find((entry) => entry.targetId === target.id);
+      const chosenPatternId =
+        userSelection ??
+        (patternSelection && !patternSelection.fallback
+          ? patternSelection.patternId ?? adviceEntry?.selectedId
+          : undefined);
+      const layoutFallback = !userSelection && (patternSelection?.fallback ?? false);
+      const patternConfidence =
+        chosenPatternId && patternSelection?.patternId === chosenPatternId && !layoutFallback
+          ? patternSelection.confidence
+          : undefined;
+
       if (chosenPatternId) {
         variantNode.setPluginData("biblio-assets:layoutPattern", chosenPatternId);
-        debugFixLog("layout pattern tagged on variant", { targetId: target.id, patternId: chosenPatternId });
+        debugFixLog("layout pattern tagged on variant", {
+          targetId: target.id,
+          patternId: chosenPatternId,
+          confidence: patternConfidence
+        });
       }
 
       const warnings = collectWarnings(variantNode, target, safeAreaRatio);
+      if (layoutFallback) {
+        warnings.push({
+          code: "AI_LAYOUT_FALLBACK",
+          severity: "info",
+          message: "AI confidence was low, so a deterministic layout was used."
+        });
+      }
       variantNodes.push(variantNode);
       results.push({
         targetId: target.id,
         nodeId: variantNode.id,
         warnings,
         layoutPatternId: chosenPatternId,
-        layoutPatternLabel: resolvePatternLabel(layoutAdvice, target.id, chosenPatternId)
+        layoutPatternLabel:
+          resolvePatternLabel(layoutAdvice, target.id, chosenPatternId) ?? patternSelection?.patternLabel,
+        layoutPatternConfidence: patternConfidence,
+        layoutPatternFallback: layoutFallback
       });
     }
 
@@ -627,7 +658,8 @@ async function scaleNodeTree(
   safeAreaRatio: number,
   fontCache: Set<string>,
   rootSnapshot: AutoLayoutSnapshot | null,
-  profile: LayoutProfile
+  profile: LayoutProfile,
+  primaryFocal: ReturnType<typeof resolvePrimaryFocalPoint> = null
 ): Promise<SafeAreaMetrics> {
   // Analyze the content to understand what we're working with
   const contentAnalysis = analyzeContent(frame);
@@ -700,7 +732,8 @@ async function scaleNodeTree(
         : 0,
     allowInteriorExpansion:
       (rootSnapshot && rootSnapshot.layoutMode === "HORIZONTAL" && rootSnapshot.flowChildCount >= 2) ||
-      (!rootSnapshot || rootSnapshot.layoutMode === "NONE" ? absoluteChildCount >= 2 : false)
+      (!rootSnapshot || rootSnapshot.layoutMode === "NONE" ? absoluteChildCount >= 2 : false),
+    focalRatio: primaryFocal?.x ?? null
   });
   const verticalFlowChildCount =
     rootSnapshot && rootSnapshot.layoutMode === "VERTICAL"
@@ -722,7 +755,8 @@ async function scaleNodeTree(
       rootSnapshot && rootSnapshot.layoutMode === "VERTICAL"
         ? scaleAutoLayoutMetric(rootSnapshot.itemSpacing, scale)
         : 0,
-    allowInteriorExpansion: verticalAllowInterior
+    allowInteriorExpansion: verticalAllowInterior,
+    focalRatio: primaryFocal?.y ?? null
   });
 
   const offsetX = horizontalPlan.start;
@@ -739,6 +773,9 @@ async function scaleNodeTree(
     "biblio-assets:safeArea",
     JSON.stringify({ insetX: safeInsetX, insetY: safeInsetY, width: target.width, height: target.height })
   );
+  if (primaryFocal) {
+    frame.setPluginData("biblio-assets:focalPoint", JSON.stringify(primaryFocal));
+  }
 
   debugFixLog("axis expansion planned", {
     nodeId: frame.id,
@@ -748,7 +785,8 @@ async function scaleNodeTree(
     horizontalPlan,
     verticalPlan,
     profile,
-    adoptVerticalVariant
+    adoptVerticalVariant,
+    focal: primaryFocal ? { x: primaryFocal.x, y: primaryFocal.y, confidence: primaryFocal.confidence } : null
   });
 
   return {
@@ -1288,10 +1326,15 @@ async function handleSetLayoutAdvice(advice: LayoutAdvice): Promise<void> {
   }
 
   try {
-    const serialized = JSON.stringify(advice);
+    const normalized = normalizeLayoutAdvice(advice);
+    if (!normalized) {
+      postToUI({ type: "error", payload: { message: "Layout advice was empty or malformed." } });
+      return;
+    }
+    const serialized = JSON.stringify(normalized);
     frame.setPluginData("biblio-assets:layout-advice", serialized);
     debugFixLog("layout advice stored on selection", {
-      entries: advice.entries?.length ?? 0
+      entries: normalized.entries?.length ?? 0
     });
     figma.notify("Layout advice applied to selection.");
     const selectionState = createSelectionState(frame);

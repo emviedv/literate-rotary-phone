@@ -230,13 +230,6 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
       <button id="applySampleLayout" style="align-self: flex-start;">Apply sample layout advice</button>
     </section>
 
-    <section class="section" id="layoutSection" hidden>
-      <h2>Layout patterns</h2>
-      <p class="status" id="layoutStatus">AI-suggested patterns per target.</p>
-      <div id="layoutContainer" class="layout-list"></div>
-      <button id="applySampleLayout" style="align-self: flex-start;">Apply sample layout advice</button>
-    </section>
-
     <section class="section">
       <h2 id="targetSection">Targets</h2>
       <div class="targets">
@@ -297,6 +290,7 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
       const layoutContainer = document.getElementById("layoutContainer");
       const applySampleLayout = document.getElementById("applySampleLayout");
 
+      const LAYOUT_CONFIDENCE_THRESHOLD = 0.65;
       let availableTargets = [];
       let selectionReady = false;
       let isBusy = false;
@@ -321,7 +315,7 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
           const option = document.createElement("option");
           option.value = target.id;
           option.textContent = \`\${target.label} (\${target.width} × \${target.height})\`;
-          option.title = \`\${target.description} · \${target.width} × \${target.height}\`;
+          option.title = \`\${target.description} - \${target.width} × \${target.height}\`;
           option.selected = true;
           targetSelect.appendChild(option);
         });
@@ -480,16 +474,25 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
           entry.options.forEach((option) => {
             const opt = document.createElement("option");
             opt.value = option.id;
-            const scoreText = option.score !== undefined ? ` · ${Math.round(option.score * 100)}%` : "";
-            opt.textContent = `${option.label}${scoreText}`;
+            const scoreText = option.score !== undefined ? " - " + Math.round(option.score * 100) + "%" : "";
+            opt.textContent = option.label + scoreText;
             opt.title = option.description;
             select.appendChild(opt);
           });
 
-          const defaultChoice = layoutSelections[entry.targetId] || entry.selectedId || entry.options[0]?.id;
+          const sortedOptions = [...entry.options].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+          const confidentOption = sortedOptions.find(
+            (option) => typeof option.score === "number" && option.score >= LAYOUT_CONFIDENCE_THRESHOLD
+          );
+          const defaultChoice = layoutSelections[entry.targetId] || confidentOption?.id || entry.selectedId || entry.options[0]?.id;
           if (defaultChoice) {
             select.value = defaultChoice;
-            layoutSelections[entry.targetId] = defaultChoice;
+          }
+
+          if (confidentOption?.id) {
+            layoutSelections[entry.targetId] = confidentOption.id;
+          } else {
+            delete layoutSelections[entry.targetId];
           }
 
           select.addEventListener("change", () => {
@@ -514,8 +517,20 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
             const patternLine = document.createElement("span");
             patternLine.style.color = "var(--figma-color-text-secondary, #475467)";
             patternLine.style.fontSize = "12px";
-            patternLine.textContent = `Layout: ${result.layoutPatternLabel || result.layoutPatternId}`;
+            const confidenceSuffix =
+              typeof result.layoutPatternConfidence === "number"
+                ? " (" + Math.round(result.layoutPatternConfidence * 100) + "% AI)"
+                : "";
+            patternLine.textContent =
+              "Layout: " + (result.layoutPatternLabel || result.layoutPatternId) + confidenceSuffix;
             tile.appendChild(patternLine);
+          } else if (result.layoutPatternFallback) {
+            const badge = document.createElement("span");
+            badge.className = "ai-chip";
+            badge.style.background = "rgba(250, 176, 5, 0.18)";
+            badge.style.color = "#7a3b00";
+            badge.textContent = "Deterministic layout fallback";
+            tile.appendChild(badge);
           }
 
           if (result.warnings.length === 0) {
@@ -564,7 +579,7 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
             const chip = document.createElement("span");
             chip.className = "ai-chip";
             const confidence = Math.round((role.confidence ?? 0) * 100);
-            chip.textContent = role.role.replace("_", " ") + " · " + confidence + "%";
+            chip.textContent = role.role.replace("_", " ") + " - " + confidence + "%";
             aiRoles.appendChild(chip);
           });
         }

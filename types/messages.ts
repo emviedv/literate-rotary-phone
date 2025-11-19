@@ -32,7 +32,8 @@ export interface VariantWarning {
     | "AI_ROLE_UNCERTAIN"
     | "AI_SALIENCE_MISALIGNED"
     | "AI_SAFE_AREA_RISK"
-    | "AI_GENERIC";
+    | "AI_GENERIC"
+    | "AI_LAYOUT_FALLBACK";
   readonly severity: "info" | "warn";
   readonly message: string;
 }
@@ -43,6 +44,8 @@ export interface VariantResult {
   readonly warnings: readonly VariantWarning[];
   readonly layoutPatternId?: string;
   readonly layoutPatternLabel?: string;
+  readonly layoutPatternConfidence?: number;
+  readonly layoutPatternFallback?: boolean;
 }
 
 export interface GenerationCompletePayload {

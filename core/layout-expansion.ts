@@ -8,6 +8,7 @@ export interface LayoutExpansionContext {
   readonly flowChildCount: number;
   readonly baseItemSpacing?: number;
   readonly allowInteriorExpansion?: boolean;
+  readonly focalRatio?: number | null;
 }
 
 export interface AxisExpansionPlan extends DistributedPadding {
@@ -47,7 +48,8 @@ export function planAutoLayoutExpansion(context: LayoutExpansionContext): AxisEx
   const distributed = distributePadding({
     totalExtra: edgeBudget,
     safeInset: insetPerSide,
-    gaps: gaps ?? null
+    gaps: gaps ?? null,
+    focus: context.focalRatio
   });
 
   return {

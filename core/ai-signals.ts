@@ -3,6 +3,7 @@ import type { AiSignals, AiQaSignal } from "../types/ai-signals.js";
 import { debugFixLog } from "./debug.js";
 
 const MIN_CONFIDENCE = 0.35;
+const MIN_FOCAL_CONFIDENCE = 0.55;
 
 type PluginDataReader = Pick<FrameNode, "getPluginData">;
 
@@ -98,4 +99,31 @@ function mapQaToWarning(qa: AiQaSignal): VariantWarning | null {
     default:
       return null;
   }
+}
+
+export function resolvePrimaryFocalPoint(
+  signals: AiSignals | null | undefined
+): { readonly x: number; readonly y: number; readonly confidence: number } | null {
+  if (!signals?.focalPoints?.length) {
+    return null;
+  }
+
+  const sorted = [...signals.focalPoints].sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0));
+  const [primary] = sorted;
+  const confidence = primary?.confidence ?? 0;
+
+  if (!primary || confidence < MIN_FOCAL_CONFIDENCE) {
+    debugFixLog("focal point discarded due to low confidence", { confidence });
+    return null;
+  }
+
+  const clamp = (value: number): number => Math.min(Math.max(value, 0), 1);
+  const focalPoint = {
+    x: clamp(primary.x),
+    y: clamp(primary.y),
+    confidence
+  };
+
+  debugFixLog("primary focal point resolved", focalPoint);
+  return focalPoint;
 }
