@@ -247,6 +247,36 @@ var UI_TEMPLATE = `<!DOCTYPE html>
       background: var(--figma-color-bg-tertiary, rgba(16, 24, 40, 0.04));
       color: var(--figma-color-text, #101828);
     }
+    .layout-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .layout-row {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 8px;
+      border: 1px solid rgba(16, 24, 40, 0.08);
+      border-radius: 8px;
+      background: var(--figma-color-bg-tertiary, rgba(16, 24, 40, 0.02));
+    }
+    .layout-row label {
+      display: flex;
+      justify-content: space-between;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--figma-color-text, #101828);
+    }
+    .layout-row select {
+      width: 100%;
+      border-radius: 8px;
+      border: 1px solid var(--figma-color-border, rgba(16, 24, 40, 0.16));
+      padding: 6px 8px;
+      background: var(--figma-color-bg-tertiary, rgba(16, 24, 40, 0.02));
+      font: inherit;
+      color: inherit;
+    }
   </style>
 </head>
 <body>
@@ -262,6 +292,13 @@ var UI_TEMPLATE = `<!DOCTYPE html>
       <div id="aiRoles" class="ai-row" role="list"></div>
       <div id="aiQa" class="ai-qa" role="list"></div>
       <button id="applySampleAi" style="align-self: flex-start;">Apply sample AI signals</button>
+    </section>
+
+    <section class="section" id="layoutSection" hidden>
+      <h2>Layout patterns</h2>
+      <p class="status" id="layoutStatus">AI-suggested patterns per target.</p>
+      <div id="layoutContainer" class="layout-list"></div>
+      <button id="applySampleLayout" style="align-self: flex-start;">Apply sample layout advice</button>
     </section>
 
     <section class="section">
@@ -319,10 +356,16 @@ var UI_TEMPLATE = `<!DOCTYPE html>
       const aiRoles = document.getElementById("aiRoles");
       const aiQa = document.getElementById("aiQa");
       const applySampleAi = document.getElementById("applySampleAi");
+      const layoutSection = document.getElementById("layoutSection");
+      const layoutStatus = document.getElementById("layoutStatus");
+      const layoutContainer = document.getElementById("layoutContainer");
+      const applySampleLayout = document.getElementById("applySampleLayout");
 
+      const LAYOUT_CONFIDENCE_THRESHOLD = 0.65;
       let availableTargets = [];
       let selectionReady = false;
       let isBusy = false;
+      let layoutSelections = {};
 
       if (!(targetSelect instanceof HTMLSelectElement)) {
         throw new Error("Target select element missing.");
@@ -343,7 +386,7 @@ var UI_TEMPLATE = `<!DOCTYPE html>
           const option = document.createElement("option");
           option.value = target.id;
           option.textContent = \`\${target.label} (\${target.width} \xD7 \${target.height})\`;
-          option.title = \`\${target.description} \xB7 \${target.width} \xD7 \${target.height}\`;
+          option.title = \`\${target.description} - \${target.width} \xD7 \${target.height}\`;
           option.selected = true;
           targetSelect.appendChild(option);
         });
@@ -407,6 +450,7 @@ var UI_TEMPLATE = `<!DOCTYPE html>
           }
         }
         renderAiSignals(state.aiSignals);
+        renderLayoutAdvice(state.layoutAdvice);
         updateGenerateState();
       }
 
@@ -437,7 +481,8 @@ var UI_TEMPLATE = `<!DOCTYPE html>
               type: "generate-variants",
               payload: {
                 targetIds: targets,
-                safeAreaRatio: Number(safeAreaSlider.value)
+                safeAreaRatio: Number(safeAreaSlider.value),
+                layoutPatterns: layoutSelections
               }
             }
           },
@@ -468,6 +513,68 @@ var UI_TEMPLATE = `<!DOCTYPE html>
         return \`\${formatted} \u2014 \${lastRun.sourceNodeName} (\${lastRun.targetIds.length} targets)\`;
       }
 
+      function renderLayoutAdvice(advice) {
+        layoutContainer.innerHTML = "";
+        if (!selectionReady) {
+          layoutSection.hidden = true;
+          return;
+        }
+
+        const hasAdvice = advice && Array.isArray(advice.entries) && advice.entries.length > 0;
+        if (!hasAdvice) {
+          layoutSection.hidden = false;
+          layoutStatus.textContent = "No layout patterns supplied. Using auto layout.";
+          layoutSelections = {};
+          return;
+        }
+
+        layoutSection.hidden = false;
+        layoutStatus.textContent = "AI-suggested patterns per target.";
+
+        advice.entries.forEach((entry) => {
+          const target = availableTargets.find((item) => item.id === entry.targetId);
+          if (!target) return;
+          const row = document.createElement("div");
+          row.className = "layout-row";
+
+          const label = document.createElement("label");
+          label.textContent = target.label;
+          row.appendChild(label);
+
+          const select = document.createElement("select");
+          entry.options.forEach((option) => {
+            const opt = document.createElement("option");
+            opt.value = option.id;
+            const scoreText = option.score !== undefined ? " - " + Math.round(option.score * 100) + "%" : "";
+            opt.textContent = option.label + scoreText;
+            opt.title = option.description;
+            select.appendChild(opt);
+          });
+
+          const sortedOptions = [...entry.options].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+          const confidentOption = sortedOptions.find(
+            (option) => typeof option.score === "number" && option.score >= LAYOUT_CONFIDENCE_THRESHOLD
+          );
+          const defaultChoice = layoutSelections[entry.targetId] || confidentOption?.id || entry.selectedId || entry.options[0]?.id;
+          if (defaultChoice) {
+            select.value = defaultChoice;
+          }
+
+          if (confidentOption?.id) {
+            layoutSelections[entry.targetId] = confidentOption.id;
+          } else {
+            delete layoutSelections[entry.targetId];
+          }
+
+          select.addEventListener("change", () => {
+            layoutSelections[entry.targetId] = select.value;
+          });
+
+          row.appendChild(select);
+          layoutContainer.appendChild(row);
+        });
+      }
+
       function renderResults(results) {
         resultsContainer.innerHTML = "";
         results.forEach((result) => {
@@ -477,6 +584,25 @@ var UI_TEMPLATE = `<!DOCTYPE html>
           const heading = document.createElement("strong");
           heading.textContent = target ? target.label : result.targetId;
           tile.appendChild(heading);
+          if (result.layoutPatternId) {
+            const patternLine = document.createElement("span");
+            patternLine.style.color = "var(--figma-color-text-secondary, #475467)";
+            patternLine.style.fontSize = "12px";
+            const confidenceSuffix =
+              typeof result.layoutPatternConfidence === "number"
+                ? " (" + Math.round(result.layoutPatternConfidence * 100) + "% AI)"
+                : "";
+            patternLine.textContent =
+              "Layout: " + (result.layoutPatternLabel || result.layoutPatternId) + confidenceSuffix;
+            tile.appendChild(patternLine);
+          } else if (result.layoutPatternFallback) {
+            const badge = document.createElement("span");
+            badge.className = "ai-chip";
+            badge.style.background = "rgba(250, 176, 5, 0.18)";
+            badge.style.color = "#7a3b00";
+            badge.textContent = "Deterministic layout fallback";
+            tile.appendChild(badge);
+          }
 
           if (result.warnings.length === 0) {
             const success = document.createElement("span");
@@ -524,7 +650,7 @@ var UI_TEMPLATE = `<!DOCTYPE html>
             const chip = document.createElement("span");
             chip.className = "ai-chip";
             const confidence = Math.round((role.confidence ?? 0) * 100);
-            chip.textContent = role.role.replace("_", " ") + " \xB7 " + confidence + "%";
+            chip.textContent = role.role.replace("_", " ") + " - " + confidence + "%";
             aiRoles.appendChild(chip);
           });
         }
@@ -580,8 +706,48 @@ var UI_TEMPLATE = `<!DOCTYPE html>
         );
       }
 
+      function applySampleLayoutAdvice() {
+        if (!selectionReady) {
+          statusMessage.textContent = "Select a frame before applying layout advice.";
+          return;
+        }
+        const sample = {
+          entries: [
+            {
+              targetId: "figma-cover",
+              selectedId: "hero-left",
+              options: [
+                { id: "hero-left", label: "Hero left, text right", description: "Hero anchored left, copy on right", score: 0.82 },
+                { id: "stacked", label: "Stacked", description: "Hero on top, text and CTA below", score: 0.71 }
+              ]
+            },
+            {
+              targetId: "tiktok-vertical",
+              selectedId: "stacked",
+              options: [
+                { id: "stacked", label: "Stacked", description: "Hero top, text bottom", score: 0.77 },
+                { id: "hero-top", label: "Hero top-heavy", description: "Large hero on top, small footer CTA", score: 0.62 }
+              ]
+            }
+          ]
+        };
+
+        parent.postMessage(
+          {
+            pluginMessage: {
+              type: "set-layout-advice",
+              payload: { advice: sample }
+            }
+          },
+          "*"
+        );
+      }
+
       if (applySampleAi instanceof HTMLButtonElement) {
         applySampleAi.addEventListener("click", applySampleSignals);
+      }
+      if (applySampleLayout instanceof HTMLButtonElement) {
+        applySampleLayout.addEventListener("click", applySampleLayoutAdvice);
       }
 
       window.onmessage = (event) => {
@@ -596,7 +762,8 @@ var UI_TEMPLATE = `<!DOCTYPE html>
               selectionOk: message.payload.selectionOk,
               selectionName: message.payload.selectionName,
               error: message.payload.error,
-              aiSignals: message.payload.aiSignals
+              aiSignals: message.payload.aiSignals,
+              layoutAdvice: message.payload.layoutAdvice
             });
             if (message.payload.lastRun) {
               lastRunSection.hidden = false;
@@ -697,10 +864,20 @@ function distributePadding(options) {
       startShare = startGap / totalGap;
     }
   }
+  if (typeof options.focus === "number" && Number.isFinite(options.focus)) {
+    const clampedFocus = clampRatio(options.focus);
+    const blend = 0.6;
+    startShare = clampRatio(startShare * (1 - blend) + clampedFocus * blend);
+  }
   return {
     start: insetPerSide + remaining * startShare,
     end: insetPerSide + remaining * (1 - startShare)
   };
+}
+function clampRatio(value) {
+  const clamped = Math.min(Math.max(value, 0), 1);
+  const epsilon = 0.05;
+  return Math.min(Math.max(clamped, epsilon), 1 - epsilon);
 }
 
 // core/layout-expansion.ts
@@ -733,7 +910,8 @@ function planAutoLayoutExpansion(context) {
   const distributed = distributePadding({
     totalExtra: edgeBudget,
     safeInset: insetPerSide,
-    gaps: gaps != null ? gaps : null
+    gaps: gaps != null ? gaps : null,
+    focus: context.focalRatio
   });
   return {
     start: round(distributed.start),
@@ -1534,6 +1712,7 @@ function hasImageChildren(frame) {
 
 // core/ai-signals.ts
 var MIN_CONFIDENCE = 0.35;
+var MIN_FOCAL_CONFIDENCE = 0.55;
 function readAiSignals(node, key = "biblio-assets:ai-signals") {
   var _a, _b, _c;
   let raw = null;
@@ -1622,6 +1801,179 @@ function mapQaToWarning(qa) {
       return null;
   }
 }
+function resolvePrimaryFocalPoint(signals) {
+  var _a, _b;
+  if (!((_a = signals == null ? void 0 : signals.focalPoints) == null ? void 0 : _a.length)) {
+    return null;
+  }
+  const sorted = [...signals.focalPoints].sort((a, b) => {
+    var _a2, _b2;
+    return ((_a2 = b.confidence) != null ? _a2 : 0) - ((_b2 = a.confidence) != null ? _b2 : 0);
+  });
+  const [primary] = sorted;
+  const confidence = (_b = primary == null ? void 0 : primary.confidence) != null ? _b : 0;
+  if (!primary || confidence < MIN_FOCAL_CONFIDENCE) {
+    debugFixLog("focal point discarded due to low confidence", { confidence });
+    return null;
+  }
+  const clamp4 = (value) => Math.min(Math.max(value, 0), 1);
+  const focalPoint = {
+    x: clamp4(primary.x),
+    y: clamp4(primary.y),
+    confidence
+  };
+  debugFixLog("primary focal point resolved", focalPoint);
+  return focalPoint;
+}
+
+// core/layout-advice.ts
+var LAYOUT_KEY = "biblio-assets:layout-advice";
+var DEFAULT_CONFIDENCE = 0.6;
+var toNumber = (value) => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : void 0;
+  }
+  return void 0;
+};
+function clampScore(value) {
+  if (value === void 0) {
+    return void 0;
+  }
+  const normalized = value > 1 && value <= 100 ? value / 100 : value;
+  return Math.min(Math.max(normalized, 0), 1);
+}
+function normalizeOption(option) {
+  var _a, _b, _c, _d;
+  if (!option || typeof option !== "object") {
+    return null;
+  }
+  const rawId = (_a = option.id) != null ? _a : option.patternId;
+  const rawLabel = (_b = option.label) != null ? _b : option.name;
+  if (typeof rawId !== "string" || typeof rawLabel !== "string") {
+    return null;
+  }
+  const id = rawId;
+  const label = rawLabel;
+  const optionDescription = option.description;
+  const description = typeof optionDescription === "string" ? optionDescription : "";
+  const score = (_d = (_c = clampScore(toNumber(option.score))) != null ? _c : clampScore(toNumber(option.confidence))) != null ? _d : clampScore(toNumber(option.probability));
+  return {
+    id,
+    label,
+    description,
+    score: typeof score === "number" && Number.isFinite(score) ? score : void 0
+  };
+}
+function normalizeEntry(entry) {
+  if (!entry || typeof entry !== "object") {
+    return null;
+  }
+  const targetId = entry.targetId;
+  if (typeof targetId !== "string") {
+    return null;
+  }
+  const options = Array.isArray(entry.options) ? entry.options : [];
+  const normalizedOptions = options.map((option) => normalizeOption(option)).filter((option) => Boolean(option));
+  if (normalizedOptions.length === 0) {
+    return null;
+  }
+  const selectedId = entry.selectedId;
+  return {
+    targetId,
+    selectedId: typeof selectedId === "string" ? selectedId : void 0,
+    options: normalizedOptions
+  };
+}
+function normalizeLayoutAdvice(raw) {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  const entries = Array.isArray(raw.entries) ? raw.entries : [];
+  const normalizedEntries = entries.map((entry) => normalizeEntry(entry)).filter((entry) => Boolean(entry));
+  if (normalizedEntries.length === 0) {
+    return null;
+  }
+  return { entries: normalizedEntries };
+}
+function readLayoutAdvice(node, key = LAYOUT_KEY) {
+  var _a, _b;
+  let raw = null;
+  try {
+    raw = node.getPluginData(key);
+  } catch (e) {
+    return null;
+  }
+  if (!raw) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    const normalized = normalizeLayoutAdvice(parsed);
+    debugFixLog("layout advice parsed", {
+      entries: (_b = (_a = normalized == null ? void 0 : normalized.entries) == null ? void 0 : _a.length) != null ? _b : 0
+    });
+    return normalized;
+  } catch (error) {
+    debugFixLog("layout advice parse failed", { error: error instanceof Error ? error.message : String(error) });
+    return null;
+  }
+}
+function resolvePatternLabel(advice, targetId, patternId) {
+  if (!advice || !patternId) {
+    return void 0;
+  }
+  const entry = advice.entries.find((item) => item.targetId === targetId);
+  const match = entry == null ? void 0 : entry.options.find((option) => option.id === patternId);
+  return match == null ? void 0 : match.label;
+}
+function autoSelectLayoutPattern(advice, targetId, minConfidence = DEFAULT_CONFIDENCE) {
+  var _a, _b;
+  if (!advice) {
+    return null;
+  }
+  const entry = advice.entries.find((item) => item.targetId === targetId);
+  if (!entry || !Array.isArray(entry.options) || entry.options.length === 0) {
+    debugFixLog("auto layout selection missing options", { targetId });
+    return { fallback: true };
+  }
+  const sorted = [...entry.options].sort((a, b) => {
+    var _a2, _b2;
+    return ((_a2 = b.score) != null ? _a2 : 0) - ((_b2 = a.score) != null ? _b2 : 0);
+  });
+  const highest = sorted[0];
+  const fromSelected = entry.selectedId ? entry.options.find((option) => option.id === entry.selectedId) : null;
+  const candidate = (_a = highest != null ? highest : fromSelected) != null ? _a : null;
+  const confidence = (_b = candidate == null ? void 0 : candidate.score) != null ? _b : 0;
+  const confidentEnough = confidence >= minConfidence;
+  if (!candidate || !confidentEnough) {
+    debugFixLog("auto layout selection falling back to deterministic layout", {
+      targetId,
+      confidence,
+      minConfidence
+    });
+    return {
+      patternId: void 0,
+      patternLabel: void 0,
+      confidence,
+      fallback: true
+    };
+  }
+  debugFixLog("auto layout selection succeeded", {
+    targetId,
+    patternId: candidate.id,
+    confidence
+  });
+  return {
+    patternId: candidate.id,
+    patternLabel: candidate.label,
+    confidence,
+    fallback: false
+  };
+}
 
 // core/main.ts
 var STAGING_PAGE_NAME = "Biblio Assets Variants";
@@ -1630,21 +1982,30 @@ var MAX_SAFE_AREA_RATIO = 0.25;
 var RUN_GAP = 160;
 var RUN_MARGIN = 48;
 var MAX_ROW_WIDTH = 3200;
+var MIN_PATTERN_CONFIDENCE = 0.65;
 figma.showUI(UI_TEMPLATE, {
   width: 360,
   height: 540,
   themeColors: true
 });
 figma.ui.onmessage = async (rawMessage) => {
+  var _a;
   switch (rawMessage.type) {
     case "request-initial-state":
       await postInitialState();
       break;
     case "generate-variants":
-      await handleGenerateRequest(rawMessage.payload.targetIds, rawMessage.payload.safeAreaRatio);
+      await handleGenerateRequest(
+        rawMessage.payload.targetIds,
+        rawMessage.payload.safeAreaRatio,
+        (_a = rawMessage.payload.layoutPatterns) != null ? _a : {}
+      );
       break;
     case "set-ai-signals":
       await handleSetAiSignals(rawMessage.payload.signals);
+      break;
+    case "set-layout-advice":
+      await handleSetLayoutAdvice(rawMessage.payload.advice);
       break;
     default:
       console.warn("Unhandled message", rawMessage);
@@ -1664,6 +2025,7 @@ async function postInitialState() {
     selectionName: selectionState.selectionName,
     error: selectionState.error,
     aiSignals: selectionState.aiSignals,
+    layoutAdvice: selectionState.layoutAdvice,
     targets: VARIANT_TARGETS,
     lastRun: lastRunSummary != null ? lastRunSummary : void 0
   };
@@ -1673,8 +2035,8 @@ async function postInitialState() {
   });
   postToUI({ type: "init", payload });
 }
-async function handleGenerateRequest(targetIds, rawSafeAreaRatio) {
-  var _a, _b;
+async function handleGenerateRequest(targetIds, rawSafeAreaRatio, layoutPatterns) {
+  var _a, _b, _c, _d, _e;
   const selectionFrame = getSelectionFrame();
   if (!selectionFrame) {
     postToUI({ type: "error", payload: { message: "Select exactly one frame before generating variants." } });
@@ -1696,6 +2058,9 @@ async function handleGenerateRequest(targetIds, rawSafeAreaRatio) {
     const overlaysToLock = [];
     const fontCache = /* @__PURE__ */ new Set();
     await loadFontsForNode(selectionFrame, fontCache);
+    const layoutAdvice = readLayoutAdvice(selectionFrame);
+    const aiSignals = readAiSignals(selectionFrame);
+    const primaryFocal = resolvePrimaryFocalPoint(aiSignals);
     for (const target of targets) {
       const layoutProfile = resolveLayoutProfile({ width: target.width, height: target.height });
       debugFixLog("prepping variant target", {
@@ -1720,7 +2085,8 @@ async function handleGenerateRequest(targetIds, rawSafeAreaRatio) {
         safeAreaRatio,
         fontCache,
         rootSnapshot,
-        layoutProfile
+        layoutProfile,
+        primaryFocal
       );
       const layoutAdaptationPlan = createLayoutAdaptationPlan(
         variantNode,
@@ -1749,12 +2115,37 @@ async function handleGenerateRequest(targetIds, rawSafeAreaRatio) {
         locked: overlay.locked,
         willLockAfterFlush: true
       });
+      const patternSelection = autoSelectLayoutPattern(layoutAdvice, target.id, MIN_PATTERN_CONFIDENCE);
+      const userSelection = layoutPatterns[target.id];
+      const adviceEntry = layoutAdvice == null ? void 0 : layoutAdvice.entries.find((entry) => entry.targetId === target.id);
+      const chosenPatternId = userSelection != null ? userSelection : patternSelection && !patternSelection.fallback ? (_c = patternSelection.patternId) != null ? _c : adviceEntry == null ? void 0 : adviceEntry.selectedId : void 0;
+      const layoutFallback = !userSelection && ((_d = patternSelection == null ? void 0 : patternSelection.fallback) != null ? _d : false);
+      const patternConfidence = chosenPatternId && (patternSelection == null ? void 0 : patternSelection.patternId) === chosenPatternId && !layoutFallback ? patternSelection.confidence : void 0;
+      if (chosenPatternId) {
+        variantNode.setPluginData("biblio-assets:layoutPattern", chosenPatternId);
+        debugFixLog("layout pattern tagged on variant", {
+          targetId: target.id,
+          patternId: chosenPatternId,
+          confidence: patternConfidence
+        });
+      }
       const warnings = collectWarnings(variantNode, target, safeAreaRatio);
+      if (layoutFallback) {
+        warnings.push({
+          code: "AI_LAYOUT_FALLBACK",
+          severity: "info",
+          message: "AI confidence was low, so a deterministic layout was used."
+        });
+      }
       variantNodes.push(variantNode);
       results.push({
         targetId: target.id,
         nodeId: variantNode.id,
-        warnings
+        warnings,
+        layoutPatternId: chosenPatternId,
+        layoutPatternLabel: (_e = resolvePatternLabel(layoutAdvice, target.id, chosenPatternId)) != null ? _e : patternSelection == null ? void 0 : patternSelection.patternLabel,
+        layoutPatternConfidence: patternConfidence,
+        layoutPatternFallback: layoutFallback
       });
     }
     await lockOverlays(overlaysToLock);
@@ -1818,10 +2209,12 @@ function getSelectionFrame() {
 function createSelectionState(frame) {
   if (frame) {
     const aiSignals = readAiSignals(frame);
+    const layoutAdvice = readLayoutAdvice(frame);
     return {
       selectionOk: true,
       selectionName: frame.name,
-      aiSignals: aiSignals != null ? aiSignals : void 0
+      aiSignals: aiSignals != null ? aiSignals : void 0,
+      layoutAdvice: layoutAdvice != null ? layoutAdvice : void 0
     };
   }
   return {
@@ -2058,8 +2451,8 @@ function adjustAutoLayoutProperties(node, scale) {
     node.counterAxisSpacing = scaleAutoLayoutMetric(node.counterAxisSpacing, scale);
   }
 }
-async function scaleNodeTree(frame, target, safeAreaRatio, fontCache, rootSnapshot, profile) {
-  var _a, _b;
+async function scaleNodeTree(frame, target, safeAreaRatio, fontCache, rootSnapshot, profile, primaryFocal = null) {
+  var _a, _b, _c, _d;
   const contentAnalysis = analyzeContent(frame);
   debugFixLog("Content analysis complete", {
     frameId: frame.id,
@@ -2108,9 +2501,10 @@ async function scaleNodeTree(frame, target, safeAreaRatio, fontCache, rootSnapsh
     gaps: horizontalGaps,
     flowChildCount: rootSnapshot && rootSnapshot.layoutMode === "HORIZONTAL" ? rootSnapshot.flowChildCount : absoluteChildCount,
     baseItemSpacing: rootSnapshot && rootSnapshot.layoutMode === "HORIZONTAL" ? scaleAutoLayoutMetric(rootSnapshot.itemSpacing, scale) : 0,
-    allowInteriorExpansion: rootSnapshot && rootSnapshot.layoutMode === "HORIZONTAL" && rootSnapshot.flowChildCount >= 2 || (!rootSnapshot || rootSnapshot.layoutMode === "NONE" ? absoluteChildCount >= 2 : false)
+    allowInteriorExpansion: rootSnapshot && rootSnapshot.layoutMode === "HORIZONTAL" && rootSnapshot.flowChildCount >= 2 || (!rootSnapshot || rootSnapshot.layoutMode === "NONE" ? absoluteChildCount >= 2 : false),
+    focalRatio: (_a = primaryFocal == null ? void 0 : primaryFocal.x) != null ? _a : null
   });
-  const verticalFlowChildCount = rootSnapshot && rootSnapshot.layoutMode === "VERTICAL" ? rootSnapshot.flowChildCount : adoptVerticalVariant ? (_a = rootSnapshot == null ? void 0 : rootSnapshot.flowChildCount) != null ? _a : absoluteChildCount : absoluteChildCount;
+  const verticalFlowChildCount = rootSnapshot && rootSnapshot.layoutMode === "VERTICAL" ? rootSnapshot.flowChildCount : adoptVerticalVariant ? (_b = rootSnapshot == null ? void 0 : rootSnapshot.flowChildCount) != null ? _b : absoluteChildCount : absoluteChildCount;
   const verticalAllowInterior = adoptVerticalVariant || rootSnapshot && rootSnapshot.layoutMode === "VERTICAL" && rootSnapshot.flowChildCount >= 2 || (rootSnapshot == null ? void 0 : rootSnapshot.layoutWrap) === "WRAP" && rootSnapshot.flowChildCount >= 2 || (!rootSnapshot || rootSnapshot.layoutMode === "NONE" ? absoluteChildCount >= 2 : false);
   const verticalPlan = planAutoLayoutExpansion({
     totalExtra: extraHeight,
@@ -2118,7 +2512,8 @@ async function scaleNodeTree(frame, target, safeAreaRatio, fontCache, rootSnapsh
     gaps: verticalGaps,
     flowChildCount: verticalFlowChildCount,
     baseItemSpacing: rootSnapshot && rootSnapshot.layoutMode === "VERTICAL" ? scaleAutoLayoutMetric(rootSnapshot.itemSpacing, scale) : 0,
-    allowInteriorExpansion: verticalAllowInterior
+    allowInteriorExpansion: verticalAllowInterior,
+    focalRatio: (_c = primaryFocal == null ? void 0 : primaryFocal.y) != null ? _c : null
   });
   const offsetX = horizontalPlan.start;
   const offsetY = verticalPlan.start;
@@ -2131,15 +2526,19 @@ async function scaleNodeTree(frame, target, safeAreaRatio, fontCache, rootSnapsh
     "biblio-assets:safeArea",
     JSON.stringify({ insetX: safeInsetX, insetY: safeInsetY, width: target.width, height: target.height })
   );
+  if (primaryFocal) {
+    frame.setPluginData("biblio-assets:focalPoint", JSON.stringify(primaryFocal));
+  }
   debugFixLog("axis expansion planned", {
     nodeId: frame.id,
-    layoutMode: (_b = rootSnapshot == null ? void 0 : rootSnapshot.layoutMode) != null ? _b : "NONE",
+    layoutMode: (_d = rootSnapshot == null ? void 0 : rootSnapshot.layoutMode) != null ? _d : "NONE",
     extraWidth,
     extraHeight,
     horizontalPlan,
     verticalPlan,
     profile,
-    adoptVerticalVariant
+    adoptVerticalVariant,
+    focal: primaryFocal ? { x: primaryFocal.x, y: primaryFocal.y, confidence: primaryFocal.confidence } : null
   });
   return {
     scale,
@@ -2575,5 +2974,31 @@ function clamp3(value, min, max) {
 }
 function cloneValue(value) {
   return JSON.parse(JSON.stringify(value));
+}
+async function handleSetLayoutAdvice(advice) {
+  var _a, _b;
+  const frame = getSelectionFrame();
+  if (!frame) {
+    postToUI({ type: "error", payload: { message: "Select a single frame before applying layout advice." } });
+    return;
+  }
+  try {
+    const normalized = normalizeLayoutAdvice(advice);
+    if (!normalized) {
+      postToUI({ type: "error", payload: { message: "Layout advice was empty or malformed." } });
+      return;
+    }
+    const serialized = JSON.stringify(normalized);
+    frame.setPluginData("biblio-assets:layout-advice", serialized);
+    debugFixLog("layout advice stored on selection", {
+      entries: (_b = (_a = normalized.entries) == null ? void 0 : _a.length) != null ? _b : 0
+    });
+    figma.notify("Layout advice applied to selection.");
+    const selectionState = createSelectionState(frame);
+    postToUI({ type: "selection-update", payload: selectionState });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to apply layout advice.";
+    postToUI({ type: "error", payload: { message } });
+  }
 }
 //# sourceMappingURL=main.js.map

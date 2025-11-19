@@ -67,3 +67,15 @@ testCase("clamps safe inset when available room is limited", () => {
 
   assertDeepEqual(result, { start: 25, end: 25 }, "safe inset should not exceed available extra space");
 });
+
+testCase("focus ratio biases padding toward the focal side", () => {
+  const result = distributePadding({
+    totalExtra: 400,
+    safeInset: 60,
+    gaps: { start: 120, end: 120 },
+    focus: 0.2
+  });
+
+  assertAlmostEqual(result.start, 149.6, "start padding should shrink when focal point leans left");
+  assertAlmostEqual(result.end, 250.4, "end padding should grow to keep focal content framed");
+});

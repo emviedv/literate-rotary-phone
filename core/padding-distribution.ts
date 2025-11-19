@@ -12,6 +12,7 @@ export interface DistributePaddingOptions {
   readonly totalExtra: number;
   readonly safeInset: number;
   readonly gaps?: AxisGaps | null;
+  readonly focus?: number | null;
 }
 
 /**
@@ -42,8 +43,20 @@ export function distributePadding(options: DistributePaddingOptions): Distribute
     }
   }
 
+  if (typeof options.focus === "number" && Number.isFinite(options.focus)) {
+    const clampedFocus = clampRatio(options.focus);
+    const blend = 0.6; // keep some memory of original symmetry/gap bias
+    startShare = clampRatio(startShare * (1 - blend) + clampedFocus * blend);
+  }
+
   return {
     start: insetPerSide + remaining * startShare,
     end: insetPerSide + remaining * (1 - startShare)
   };
+}
+
+function clampRatio(value: number): number {
+  const clamped = Math.min(Math.max(value, 0), 1);
+  const epsilon = 0.05; // avoid collapsing a side completely
+  return Math.min(Math.max(clamped, epsilon), 1 - epsilon);
 }
