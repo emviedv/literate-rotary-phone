@@ -8,5 +8,16 @@
     "moduleResolution": "Node16",
     "skipLibCheck": true
   },
-  "include": ["tests/**/*.ts", "core/layout-positions.ts"]
+  "include": [
+    "tests/**/*.ts",
+    "core/layout-positions.ts",
+    "core/padding-distribution.ts",
+    "core/layout-expansion.ts",
+    "core/absolute-geometry.ts",
+    "core/absolute-layout.ts",
+    "core/layout-profile.ts",
+    "core/qa-overlay.ts",
+    "core/auto-layout-adapter.ts",
+    "core/debug.ts"
+  ]
 }

@@ -17,7 +17,6 @@ Phase 1 delivers the core variant engine for transforming a selected marketing f
 
 ## Building
 ```bash
-cd plugins/biblio-assets-resizer
 npm install          # generates node_modules and lockfile (requires registry access)
 npm run build        # emits dist/main.js
 ```
@@ -27,7 +26,7 @@ npm run build        # emits dist/main.js
 ## Loading in Figma
 1. Open the Figma desktop app.
 2. Choose `Plugins → Development → Import plugin from manifest…`.
-3. Select `plugins/biblio-assets-resizer/manifest.json`.
+3. Select `manifest.json` in this folder.
 4. After import, run the plugin, select a marketing frame, choose targets, and click **Generate variants**.
 
 ## Limitations & Follow-ups

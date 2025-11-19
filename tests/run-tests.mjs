@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { rmSync } from "node:fs";
+import { readdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -27,7 +27,14 @@ async function main() {
   rmSync(buildDir, { recursive: true, force: true });
   await run("npx", ["tsc", "--project", "tsconfig.tests.json"]);
   try {
-    await run("node", [path.join(buildDir, "tests", "layout-positions.test.js")]);
+    const testsDir = path.join(buildDir, "tests");
+    const testFiles = readdirSync(testsDir)
+      .filter((file) => file.endsWith(".test.js"))
+      .sort();
+
+    for (const file of testFiles) {
+      await run("node", [path.join(testsDir, file)]);
+    }
   } finally {
     rmSync(buildDir, { recursive: true, force: true });
   }

@@ -1,9 +1,11 @@
-import type { VariantTarget } from "./targets";
+import type { VariantTarget } from "./targets.js";
+import type { AiSignals } from "./ai-signals.js";
 
 export interface SelectionState {
   readonly selectionOk: boolean;
   readonly selectionName?: string;
   readonly error?: string;
+  readonly aiSignals?: AiSignals;
 }
 
 export interface LastRunSummary {
@@ -19,7 +21,16 @@ export interface InitMessage extends SelectionState {
 }
 
 export interface VariantWarning {
-  readonly code: "OUTSIDE_SAFE_AREA" | "MISALIGNED";
+  readonly code:
+    | "OUTSIDE_SAFE_AREA"
+    | "MISALIGNED"
+    | "AI_LOW_CONTRAST"
+    | "AI_LOGO_VISIBILITY"
+    | "AI_TEXT_OVERLAP"
+    | "AI_ROLE_UNCERTAIN"
+    | "AI_SALIENCE_MISALIGNED"
+    | "AI_SAFE_AREA_RISK"
+    | "AI_GENERIC";
   readonly severity: "info" | "warn";
   readonly message: string;
 }
@@ -49,5 +60,11 @@ export type ToCoreMessage =
       readonly payload: {
         readonly targetIds: readonly string[];
         readonly safeAreaRatio: number;
+      };
+    }
+  | {
+      readonly type: "set-ai-signals";
+      readonly payload: {
+        readonly signals: AiSignals;
       };
     };

@@ -2,7 +2,7 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Biblio Assets Resizer</title>
+  <title>Product Landing</title>
   <style>
     :root {
       color-scheme: light dark;
@@ -56,31 +56,34 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
     .targets {
       display: flex;
       flex-direction: column;
-      gap: 6px;
-    }
-    label.target-row {
-      display: flex;
-      align-items: flex-start;
       gap: 8px;
-      padding: 6px 8px;
+    }
+    .targets select {
+      width: 100%;
       border-radius: 8px;
-      cursor: pointer;
-      transition: background 0.15s ease-in-out;
+      border: 1px solid var(--figma-color-border, rgba(16, 24, 40, 0.16));
+      padding: 6px 8px;
+      background: var(--figma-color-bg-tertiary, rgba(16, 24, 40, 0.02));
+      font: inherit;
+      color: inherit;
+      min-height: 120px;
     }
-    label.target-row:hover {
-      background: var(--figma-color-bg-tertiary, rgba(16, 24, 40, 0.06));
+    .targets select:focus {
+      outline: none;
+      box-shadow: 0 0 0 2px rgba(51, 92, 255, 0.24);
+      border-color: var(--figma-color-bg-brand, #335cff);
     }
-    .target-meta {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-    }
-    .target-meta span {
+    .targets-help,
+    .targets-summary {
       font-size: 12px;
+      margin: 0;
+    }
+    .targets-help {
       color: var(--figma-color-text-secondary, #475467);
     }
-    input[type="checkbox"] {
-      margin-top: 2px;
+    .targets-summary {
+      color: var(--figma-color-text, #101828);
+      font-weight: 600;
     }
     .safe-area-control {
       display: flex;
@@ -148,18 +151,55 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
     .result-item strong {
       font-size: 12px;
     }
+    .ai-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .ai-chip {
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: rgba(16, 24, 40, 0.06);
+      font-size: 12px;
+      color: var(--figma-color-text-secondary, #475467);
+    }
+    .ai-qa {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .ai-qa-item {
+      font-size: 12px;
+      padding: 6px 8px;
+      border-radius: 8px;
+      border: 1px solid rgba(16, 24, 40, 0.08);
+      background: var(--figma-color-bg-tertiary, rgba(16, 24, 40, 0.04));
+      color: var(--figma-color-text, #101828);
+    }
   </style>
 </head>
 <body>
   <main>
     <header>
-      <h1>Biblio Assets Resizer</h1>
+      <h1>Product Landing</h1>
       <p id="selectionLabel" class="status">Select a single frame to begin.</p>
     </header>
 
+    <section class="section" id="aiSection" hidden>
+      <h2>AI signals</h2>
+      <div id="aiEmpty" class="status">No AI signals found on selection.</div>
+      <div id="aiRoles" class="ai-row" role="list"></div>
+      <div id="aiQa" class="ai-qa" role="list"></div>
+      <button id="applySampleAi" style="align-self: flex-start;">Apply sample AI signals</button>
+    </section>
+
     <section class="section">
-      <h2>Targets</h2>
-      <div id="targetList" class="targets" role="group" aria-labelledby="targetSection"></div>
+      <h2 id="targetSection">Targets</h2>
+      <div class="targets">
+        <select id="targetSelect" multiple size="4" aria-labelledby="targetSection" aria-describedby="targetHelp"></select>
+        <p id="targetHelp" class="targets-help">Hold Cmd (Mac) or Ctrl (Windows) to choose multiple target sizes.</p>
+        <p id="targetSummary" class="targets-summary"></p>
+      </div>
     </section>
 
     <section class="section">
@@ -193,7 +233,8 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
   <script>
     (function () {
       const selectionLabel = document.getElementById("selectionLabel");
-      const targetList = document.getElementById("targetList");
+      const targetSelect = document.getElementById("targetSelect");
+      const targetSummary = document.getElementById("targetSummary");
       const safeAreaSlider = document.getElementById("safeAreaSlider");
       const safeAreaValue = document.getElementById("safeAreaValue");
       const generateButton = document.getElementById("generateButton");
@@ -202,39 +243,38 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
       const lastRunContent = document.getElementById("lastRunContent");
       const resultsSection = document.getElementById("resultsSection");
       const resultsContainer = document.getElementById("resultsContainer");
+      const aiSection = document.getElementById("aiSection");
+      const aiEmpty = document.getElementById("aiEmpty");
+      const aiRoles = document.getElementById("aiRoles");
+      const aiQa = document.getElementById("aiQa");
+      const applySampleAi = document.getElementById("applySampleAi");
 
       let availableTargets = [];
       let selectionReady = false;
       let isBusy = false;
 
+      if (!(targetSelect instanceof HTMLSelectElement)) {
+        throw new Error("Target select element missing.");
+      }
+      if (!(targetSummary instanceof HTMLElement)) {
+        throw new Error("Target summary element missing.");
+      }
+
       function renderTargets(targets) {
         availableTargets = targets;
-        targetList.innerHTML = "";
+        targetSelect.innerHTML = "";
+        const minimumVisible = 4;
+        const maximumVisible = 8;
+        const visibleRows = Math.min(Math.max(targets.length, minimumVisible), maximumVisible);
+        targetSelect.size = targets.length === 0 ? minimumVisible : visibleRows;
+        targetSelect.disabled = targets.length === 0;
         targets.forEach((target) => {
-          const label = document.createElement("label");
-          label.className = "target-row";
-          label.setAttribute("for", target.id);
-
-          const checkbox = document.createElement("input");
-          checkbox.type = "checkbox";
-          checkbox.value = target.id;
-          checkbox.id = target.id;
-          checkbox.checked = true;
-          checkbox.className = "target-checkbox";
-          checkbox.addEventListener("change", updateGenerateState);
-
-          const meta = document.createElement("div");
-          meta.className = "target-meta";
-          const title = document.createElement("strong");
-          title.textContent = target.label;
-          const desc = document.createElement("span");
-          desc.textContent = \`\${target.width} × \${target.height} · \${target.description}\`;
-
-          meta.appendChild(title);
-          meta.appendChild(desc);
-          label.appendChild(checkbox);
-          label.appendChild(meta);
-          targetList.appendChild(label);
+          const option = document.createElement("option");
+          option.value = target.id;
+          option.textContent = \`\${target.label} (\${target.width} × \${target.height})\`;
+          option.title = \`\${target.description} · \${target.width} × \${target.height}\`;
+          option.selected = true;
+          targetSelect.appendChild(option);
         });
         updateGenerateState();
       }
@@ -245,13 +285,36 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
       }
 
       function getSelectedTargetIds() {
-        const inputs = Array.from(targetList.querySelectorAll("input[type='checkbox']"));
-        return inputs.filter((input) => input.checked).map((input) => input.value);
+        return Array.from(targetSelect.selectedOptions).map((option) => option.value);
+      }
+
+      function updateTargetSummary(selectedTargetIds) {
+        if (availableTargets.length === 0) {
+          targetSummary.textContent = "No targets available.";
+          return;
+        }
+        if (selectedTargetIds.length === 0) {
+          targetSummary.textContent = "No targets selected.";
+          return;
+        }
+        if (selectedTargetIds.length === availableTargets.length) {
+          targetSummary.textContent = "All targets selected.";
+          return;
+        }
+        if (selectedTargetIds.length <= 3) {
+          const labels = availableTargets
+            .filter((target) => selectedTargetIds.includes(target.id))
+            .map((target) => target.label);
+          targetSummary.textContent = labels.join(", ");
+          return;
+        }
+        targetSummary.textContent = \`\${selectedTargetIds.length} targets selected.\`;
       }
 
       function updateGenerateState() {
         const selectedTargets = getSelectedTargetIds();
         generateButton.disabled = isBusy || !selectionReady || selectedTargets.length === 0;
+        updateTargetSummary(selectedTargets);
       }
 
       function applySelectionState(state) {
@@ -272,8 +335,16 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
             statusMessage.textContent = message;
           }
         }
+        renderAiSignals(state.aiSignals);
         updateGenerateState();
       }
+
+      targetSelect.addEventListener("change", () => {
+        updateGenerateState();
+        if (!isBusy && selectionReady) {
+          statusMessage.textContent = "Ready to generate variants.";
+        }
+      });
 
       safeAreaSlider.addEventListener("input", () => {
         updateSafeAreaValue();
@@ -357,6 +428,91 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
         });
       }
 
+      function renderAiSignals(aiSignals) {
+        if (!selectionReady) {
+          aiSection.hidden = true;
+          return;
+        }
+        aiSection.hidden = false;
+        aiRoles.innerHTML = "";
+        aiQa.innerHTML = "";
+
+        const hasRoles = aiSignals && Array.isArray(aiSignals.roles) && aiSignals.roles.length > 0;
+        const hasQa = aiSignals && Array.isArray(aiSignals.qa) && aiSignals.qa.length > 0;
+
+        if (!aiSignals || (!hasRoles && !hasQa)) {
+          aiEmpty.textContent = "No AI signals found on selection.";
+          aiEmpty.hidden = false;
+          return;
+        }
+
+        aiEmpty.hidden = true;
+
+        if (hasRoles) {
+          aiSignals.roles.slice(0, 8).forEach((role) => {
+            const chip = document.createElement("span");
+            chip.className = "ai-chip";
+            const confidence = Math.round((role.confidence ?? 0) * 100);
+            chip.textContent = role.role.replace("_", " ") + " · " + confidence + "%";
+            aiRoles.appendChild(chip);
+          });
+        }
+
+        if (hasQa) {
+          aiSignals.qa.forEach((qa) => {
+            const item = document.createElement("div");
+            item.className = "ai-qa-item";
+            const confidence =
+              qa.confidence !== undefined ? " (" + Math.round(qa.confidence * 100) + "%)" : "";
+            item.textContent = qa.code.toLowerCase() + confidence;
+            if (qa.message) {
+              const detail = document.createElement("div");
+              detail.style.color = "var(--figma-color-text-secondary, #475467)";
+              detail.style.marginTop = "2px";
+              detail.textContent = qa.message;
+              item.appendChild(detail);
+            }
+            aiQa.appendChild(item);
+          });
+        }
+      }
+
+      function applySampleSignals() {
+        if (!selectionReady) {
+          statusMessage.textContent = "Select a frame before applying AI signals.";
+          return;
+        }
+        const sample = {
+          roles: [
+            { nodeId: "role-logo", role: "logo", confidence: 0.82 },
+            { nodeId: "role-title", role: "title", confidence: 0.77 },
+            { nodeId: "role-body", role: "body", confidence: 0.64 },
+            { nodeId: "role-cta", role: "cta", confidence: 0.7 }
+          ],
+          focalPoints: [
+            { nodeId: "role-hero", x: 0.52, y: 0.38, confidence: 0.78 }
+          ],
+          qa: [
+            { code: "LOW_CONTRAST", severity: "warn", message: "Foreground contrast may be low.", confidence: 0.86 },
+            { code: "LOGO_TOO_SMALL", severity: "info", message: "Logo visibility could be improved.", confidence: 0.62 }
+          ]
+        };
+
+        parent.postMessage(
+          {
+            pluginMessage: {
+              type: "set-ai-signals",
+              payload: { signals: sample }
+            }
+          },
+          "*"
+        );
+      }
+
+      if (applySampleAi instanceof HTMLButtonElement) {
+        applySampleAi.addEventListener("click", applySampleSignals);
+      }
+
       window.onmessage = (event) => {
         const message = event.data.pluginMessage;
         if (!message) {
@@ -368,7 +524,8 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
             applySelectionState({
               selectionOk: message.payload.selectionOk,
               selectionName: message.payload.selectionName,
-              error: message.payload.error
+              error: message.payload.error,
+              aiSignals: message.payload.aiSignals
             });
             if (message.payload.lastRun) {
               lastRunSection.hidden = false;

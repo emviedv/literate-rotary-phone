@@ -29,17 +29,8 @@ async function build() {
   await clean();
   if (watchMode) {
     const context = await esbuild.context(buildOptions);
-    await context.watch({
-      onRebuild(error) {
-        if (error) {
-          console.error("❌ Rebuild failed", error);
-          return;
-        }
-        console.log("✅ Rebuilt Biblio Assets Resizer");
-      }
-    });
-    await context.rebuild();
-    console.log("👀 Watching for changes…");
+    await context.watch();
+    console.log("👀 Watching for changes… (Ctrl+C to stop)");
   } else {
     await esbuild.build(buildOptions);
     console.log("✅ Build complete");
