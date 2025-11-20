@@ -19,6 +19,7 @@
     "core/layout-profile.ts",
     "core/qa-overlay.ts",
     "core/auto-layout-adapter.ts",
-    "core/debug.ts"
+    "core/debug.ts",
+    "core/ai-service.ts"
   ]
 }
