@@ -14,6 +14,7 @@ Phase 1 delivers the core variant engine for transforming a selected marketing f
 - Automatic safe-area overlays (locked dashed rectangles) to support quick QA
 - Non-AI warnings surface when content falls outside the safe area or drifts horizontally from center
 - Run staging on a dedicated `Biblio Assets Variants` page with per-run containers and plugin data history
+- AI-powered layout advice + QA ingestion (OpenAI `gpt-4o-mini`) with automatic normalization/clamping so Phase 2 variants pick confident layout patterns and QA signals per frame
 
 ## Building
 ```bash
@@ -22,6 +23,14 @@ npm run build        # emits dist/main.js
 ```
 
 > **Note:** Network access is required for `npm install`. If the sandbox blocks it, request approval or install dependencies locally before running the build script.
+
+## Configuring AI analysis
+1. Generate an OpenAI API key with access to `gpt-4o-mini`.
+2. Launch the plugin and open the new **AI setup** panel at the top of the UI.
+3. Paste the API key (it is stored only in your local `figma.clientStorage`) and click **Save key**. Use **Clear key** to remove it later.
+4. Select a single marketing frame and click **Run AI analysis** to request signals/layout advice. The plugin summarizes the frame, calls OpenAI’s Chat Completions API, and stores normalized results on the frame’s plugin data so renders & QA tap into the same source of truth.
+5. The AI status badge will tell you whether a key is missing, an analysis is in-flight, or if an error occurred. When successful, the Layout Patterns + AI Signals sections will populate and auto-select high-confidence layouts.
+6. To ship a workspace default without prompting users, set the `BIBLIO_DEFAULT_OPENAI_KEY` environment variable before running `npm run build`. The compiled plugin will use that key automatically while still allowing local overrides.
 
 ## Loading in Figma
 1. Open the Figma desktop app.

@@ -1,3 +1,20 @@
+var __defProp = Object.defineProperty;
+var __getOwnPropSymbols = Object.getOwnPropertySymbols;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __propIsEnum = Object.prototype.propertyIsEnumerable;
+var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
+var __spreadValues = (a, b) => {
+  for (var prop in b || (b = {}))
+    if (__hasOwnProp.call(b, prop))
+      __defNormalProp(a, prop, b[prop]);
+  if (__getOwnPropSymbols)
+    for (var prop of __getOwnPropSymbols(b)) {
+      if (__propIsEnum.call(b, prop))
+        __defNormalProp(a, prop, b[prop]);
+    }
+  return a;
+};
+
 // types/targets.ts
 var VARIANT_TARGETS = [
   {
@@ -168,6 +185,16 @@ var UI_TEMPLATE = `<!DOCTYPE html>
       font-variant-numeric: tabular-nums;
       font-weight: 600;
     }
+    input[type="password"],
+    input[type="text"] {
+      width: 100%;
+      border-radius: 8px;
+      border: 1px solid var(--figma-color-border, rgba(16, 24, 40, 0.16));
+      padding: 8px 10px;
+      background: var(--figma-color-bg-tertiary, rgba(16, 24, 40, 0.02));
+      font: inherit;
+      color: inherit;
+    }
     button {
       border: none;
       border-radius: 8px;
@@ -184,10 +211,23 @@ var UI_TEMPLATE = `<!DOCTYPE html>
       color: var(--figma-color-text-disabled, #98a2b3);
       cursor: not-allowed;
     }
+    button.secondary {
+      background: transparent;
+      border: 1px solid var(--figma-color-border, rgba(16, 24, 40, 0.2));
+      color: var(--figma-color-text, #101828);
+    }
+    .button-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
     .status {
       font-size: 12px;
       color: var(--figma-color-text-secondary, #475467);
       min-height: 18px;
+    }
+    .status.error {
+      color: #b42318;
     }
     ul {
       margin: 0;
@@ -286,6 +326,17 @@ var UI_TEMPLATE = `<!DOCTYPE html>
       <p id="selectionLabel" class="status">Select a single frame to begin.</p>
     </header>
 
+    <section class="section" id="aiSetupSection">
+      <h2>AI setup</h2>
+      <p id="aiKeyStatus" class="status">Add an OpenAI API key to enable AI insights.</p>
+      <input id="aiKeyInput" type="password" placeholder="sk-..." autocomplete="off" spellcheck="false" />
+      <div class="button-row">
+        <button id="saveAiKey">Save key</button>
+        <button id="clearAiKey" class="secondary">Clear key</button>
+        <button id="refreshAiButton" class="secondary">Run AI analysis</button>
+      </div>
+    </section>
+
     <section class="section" id="aiSection" hidden>
       <h2>AI signals</h2>
       <div id="aiEmpty" class="status">No AI signals found on selection.</div>
@@ -347,6 +398,11 @@ var UI_TEMPLATE = `<!DOCTYPE html>
       const safeAreaValue = document.getElementById("safeAreaValue");
       const generateButton = document.getElementById("generateButton");
       const statusMessage = document.getElementById("statusMessage");
+      const aiKeyStatus = document.getElementById("aiKeyStatus");
+      const aiKeyInput = document.getElementById("aiKeyInput");
+      const saveAiKey = document.getElementById("saveAiKey");
+      const clearAiKey = document.getElementById("clearAiKey");
+      const refreshAiButton = document.getElementById("refreshAiButton");
       const lastRunSection = document.getElementById("lastRunSection");
       const lastRunContent = document.getElementById("lastRunContent");
       const resultsSection = document.getElementById("resultsSection");
@@ -366,12 +422,28 @@ var UI_TEMPLATE = `<!DOCTYPE html>
       let selectionReady = false;
       let isBusy = false;
       let layoutSelections = {};
+      let aiConfigured = false;
+      let aiStatusState = "missing-key";
+      let aiErrorMessage = "";
+      let aiUsingDefaultKey = false;
 
       if (!(targetSelect instanceof HTMLSelectElement)) {
         throw new Error("Target select element missing.");
       }
       if (!(targetSummary instanceof HTMLElement)) {
         throw new Error("Target summary element missing.");
+      }
+      if (!(aiKeyStatus instanceof HTMLElement)) {
+        throw new Error("AI key status element missing.");
+      }
+      if (!(aiKeyInput instanceof HTMLInputElement)) {
+        throw new Error("AI key input missing.");
+      }
+      if (!(saveAiKey instanceof HTMLButtonElement) || !(clearAiKey instanceof HTMLButtonElement)) {
+        throw new Error("AI key buttons missing.");
+      }
+      if (!(refreshAiButton instanceof HTMLButtonElement)) {
+        throw new Error("AI refresh button missing.");
       }
 
       function renderTargets(targets) {
@@ -431,6 +503,34 @@ var UI_TEMPLATE = `<!DOCTYPE html>
         updateTargetSummary(selectedTargets);
       }
 
+      function updateAiStatusDisplay() {
+        let text = "";
+        if (!aiConfigured) {
+          text = "Add an OpenAI API key to enable AI insights.";
+        } else if (aiStatusState === "fetching") {
+          text = "Analyzing selection with AI\u2026";
+        } else if (aiStatusState === "error") {
+          text = aiErrorMessage || "AI request failed. Try again.";
+        } else if (!selectionReady) {
+          text = aiUsingDefaultKey
+            ? "Workspace default AI key ready. Select a frame to analyze."
+            : "Select a frame to request AI analysis.";
+        } else if (aiUsingDefaultKey) {
+          text = "AI ready via workspace default key. Run analysis to refresh insights.";
+        } else {
+          text = "AI ready. Click Run AI analysis to refresh insights.";
+        }
+        if (aiStatusState === "error") {
+          aiKeyStatus.classList.add("error");
+        } else {
+          aiKeyStatus.classList.remove("error");
+        }
+        aiKeyStatus.textContent = text;
+        clearAiKey.disabled = isBusy || !aiConfigured;
+        refreshAiButton.disabled =
+          isBusy || !selectionReady || !aiConfigured || aiStatusState === "missing-key" || aiStatusState === "fetching";
+      }
+
       function applySelectionState(state) {
         selectionReady = state.selectionOk;
         if (selectionReady) {
@@ -449,6 +549,11 @@ var UI_TEMPLATE = `<!DOCTYPE html>
             statusMessage.textContent = message;
           }
         }
+        aiConfigured = Boolean(state.aiConfigured);
+        aiStatusState = state.aiStatus || (aiConfigured ? "idle" : "missing-key");
+        aiErrorMessage = typeof state.aiError === "string" ? state.aiError : "";
+        aiUsingDefaultKey = Boolean(state.aiUsingDefaultKey);
+        updateAiStatusDisplay();
         renderAiSignals(state.aiSignals);
         renderLayoutAdvice(state.layoutAdvice);
         updateGenerateState();
@@ -500,6 +605,7 @@ var UI_TEMPLATE = `<!DOCTYPE html>
           updateGenerateState();
         }
         statusMessage.textContent = message;
+        updateAiStatusDisplay();
       }
 
       function formatLastRun(lastRun) {
@@ -521,15 +627,24 @@ var UI_TEMPLATE = `<!DOCTYPE html>
         }
 
         const hasAdvice = advice && Array.isArray(advice.entries) && advice.entries.length > 0;
-        if (!hasAdvice) {
-          layoutSection.hidden = false;
-          layoutStatus.textContent = "No layout patterns supplied. Using auto layout.";
-          layoutSelections = {};
-          return;
+        layoutSection.hidden = false;
+        if (!aiConfigured) {
+          layoutStatus.textContent = "Add an OpenAI API key to receive AI layout advice.";
+        } else if (aiStatusState === "fetching") {
+          layoutStatus.textContent = "Fetching AI layout patterns\u2026";
+        } else if (aiStatusState === "error") {
+          layoutStatus.textContent = aiErrorMessage || "AI request failed. Using auto layout.";
+        } else if (!hasAdvice) {
+          layoutStatus.textContent = "Run AI analysis to populate layout patterns.";
+        } else {
+          layoutStatus.textContent = "AI-suggested patterns per target.";
         }
 
-        layoutSection.hidden = false;
-        layoutStatus.textContent = "AI-suggested patterns per target.";
+        if (!hasAdvice) {
+          layoutSelections = {};
+          layoutContainer.innerHTML = "";
+          return;
+        }
 
         advice.entries.forEach((entry) => {
           const target = availableTargets.find((item) => item.id === entry.targetId);
@@ -633,13 +748,26 @@ var UI_TEMPLATE = `<!DOCTYPE html>
         aiSection.hidden = false;
         aiRoles.innerHTML = "";
         aiQa.innerHTML = "";
+        aiEmpty.hidden = false;
+
+        if (!aiConfigured) {
+          aiEmpty.textContent = "Add an OpenAI API key and run analysis to see AI signals.";
+          return;
+        }
+        if (aiStatusState === "fetching") {
+          aiEmpty.textContent = "Analyzing selection with AI\u2026";
+          return;
+        }
+        if (aiStatusState === "error") {
+          aiEmpty.textContent = aiErrorMessage || "AI request failed. Try again.";
+          return;
+        }
 
         const hasRoles = aiSignals && Array.isArray(aiSignals.roles) && aiSignals.roles.length > 0;
         const hasQa = aiSignals && Array.isArray(aiSignals.qa) && aiSignals.qa.length > 0;
 
         if (!aiSignals || (!hasRoles && !hasQa)) {
-          aiEmpty.textContent = "No AI signals found on selection.";
-          aiEmpty.hidden = false;
+          aiEmpty.textContent = "Run AI analysis to populate signals for this frame.";
           return;
         }
 
@@ -743,12 +871,57 @@ var UI_TEMPLATE = `<!DOCTYPE html>
         );
       }
 
+      function saveAiKeyValue() {
+        const trimmed = aiKeyInput.value.trim();
+        parent.postMessage(
+          {
+            pluginMessage: {
+              type: "set-api-key",
+              payload: { key: trimmed }
+            }
+          },
+          "*"
+        );
+        aiKeyInput.value = "";
+        statusMessage.textContent = trimmed ? "Saving OpenAI key\u2026" : "Clearing OpenAI key\u2026";
+      }
+
+      function clearAiKeyValue() {
+        aiKeyInput.value = "";
+        parent.postMessage(
+          {
+            pluginMessage: {
+              type: "set-api-key",
+              payload: { key: "" }
+            }
+          },
+          "*"
+        );
+        statusMessage.textContent = "Clearing OpenAI key\u2026";
+      }
+
+      function requestAiRefresh() {
+        if (!selectionReady) {
+          statusMessage.textContent = "Select a frame before running AI analysis.";
+          return;
+        }
+        if (!aiConfigured) {
+          statusMessage.textContent = "Add an OpenAI API key before running AI analysis.";
+          return;
+        }
+        parent.postMessage({ pluginMessage: { type: "refresh-ai" } }, "*");
+        statusMessage.textContent = "Requesting AI insights\u2026";
+      }
+
       if (applySampleAi instanceof HTMLButtonElement) {
         applySampleAi.addEventListener("click", applySampleSignals);
       }
       if (applySampleLayout instanceof HTMLButtonElement) {
         applySampleLayout.addEventListener("click", applySampleLayoutAdvice);
       }
+      saveAiKey.addEventListener("click", saveAiKeyValue);
+      clearAiKey.addEventListener("click", clearAiKeyValue);
+      refreshAiButton.addEventListener("click", requestAiRefresh);
 
       window.onmessage = (event) => {
         const message = event.data.pluginMessage;
@@ -763,7 +936,10 @@ var UI_TEMPLATE = `<!DOCTYPE html>
               selectionName: message.payload.selectionName,
               error: message.payload.error,
               aiSignals: message.payload.aiSignals,
-              layoutAdvice: message.payload.layoutAdvice
+              layoutAdvice: message.payload.layoutAdvice,
+              aiConfigured: message.payload.aiConfigured,
+              aiStatus: message.payload.aiStatus,
+              aiError: message.payload.aiError
             });
             if (message.payload.lastRun) {
               lastRunSection.hidden = false;
@@ -799,6 +975,7 @@ var UI_TEMPLATE = `<!DOCTYPE html>
       };
 
       updateSafeAreaValue();
+      updateAiStatusDisplay();
       parent.postMessage({ pluginMessage: { type: "request-initial-state" } }, "*");
     })();
   <\/script>
@@ -1975,6 +2152,240 @@ function autoSelectLayoutPattern(advice, targetId, minConfidence = DEFAULT_CONFI
   };
 }
 
+// core/ai-service.ts
+var OPENAI_ENDPOINT = "https://api.openai.com/v1/chat/completions";
+var OPENAI_MODEL = "gpt-4o-mini";
+var MAX_SUMMARY_NODES = 32;
+var VALID_ROLES = [
+  "logo",
+  "hero_image",
+  "secondary_image",
+  "title",
+  "subtitle",
+  "body",
+  "cta",
+  "badge",
+  "list",
+  "decorative",
+  "unknown"
+];
+var VALID_QA_CODES = [
+  "LOW_CONTRAST",
+  "LOGO_TOO_SMALL",
+  "TEXT_OVERLAP",
+  "UNCERTAIN_ROLES",
+  "SALIENCE_MISALIGNED",
+  "SAFE_AREA_RISK",
+  "GENERIC"
+];
+async function requestAiInsights(frame, apiKey) {
+  var _a, _b, _c, _d, _e, _f;
+  const summary = summarizeFrame(frame);
+  const body = {
+    model: OPENAI_MODEL,
+    temperature: 0.1,
+    response_format: { type: "json_object" },
+    messages: [
+      {
+        role: "system",
+        content: 'You are Biblio Layout AI. Analyze a marketing frame summary and respond ONLY with JSON object {"signals":{roles,focalPoints,qa},"layoutAdvice":{entries}}. roles array must include nodeId, role, confidence 0-1. Focal points require x,y,confidence 0-1. QA codes should match LOW_CONTRAST, LOGO_TOO_SMALL, TEXT_OVERLAP, UNCERTAIN_ROLES, SALIENCE_MISALIGNED, SAFE_AREA_RISK, GENERIC. Layout advice entries list targetId from provided list with options (id,label,description,score 0-1) ranked by score. Return stack-friendly options for vertical targets. Keep JSON compact without commentary.'
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          frame: summary,
+          targets: VARIANT_TARGETS
+        })
+      }
+    ]
+  };
+  const response = await fetch(OPENAI_ENDPOINT, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(body)
+  });
+  if (!response.ok) {
+    const message = await response.text().catch(() => "");
+    throw new Error(`OpenAI request failed (${response.status} ${response.statusText}): ${message.slice(0, 200)}`);
+  }
+  const payload = await response.json();
+  const content = (_c = (_b = (_a = payload.choices) == null ? void 0 : _a[0]) == null ? void 0 : _b.message) == null ? void 0 : _c.content;
+  if (!content) {
+    throw new Error("OpenAI response missing content.");
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(content);
+  } catch (error) {
+    throw new Error(`OpenAI response was not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const signals = sanitizeAiSignals(parsed.signals);
+  const layoutAdvice = normalizeLayoutAdvice(parsed.layoutAdvice);
+  debugFixLog("ai service parsed response", {
+    roles: (_d = signals == null ? void 0 : signals.roles.length) != null ? _d : 0,
+    qa: (_e = signals == null ? void 0 : signals.qa.length) != null ? _e : 0,
+    layoutTargets: (_f = layoutAdvice == null ? void 0 : layoutAdvice.entries.length) != null ? _f : 0
+  });
+  if (!signals && !layoutAdvice) {
+    return null;
+  }
+  return {
+    signals,
+    layoutAdvice: layoutAdvice != null ? layoutAdvice : void 0
+  };
+}
+function summarizeFrame(frame) {
+  var _a, _b;
+  const frameBounds = frame.absoluteBoundingBox;
+  const originX = (_a = frameBounds == null ? void 0 : frameBounds.x) != null ? _a : 0;
+  const originY = (_b = frameBounds == null ? void 0 : frameBounds.y) != null ? _b : 0;
+  const nodes = [];
+  const queue = [...frame.children];
+  while (queue.length > 0 && nodes.length < MAX_SUMMARY_NODES) {
+    const node = queue.shift();
+    if (!node || !node.visible) {
+      continue;
+    }
+    const description = describeNode(node, originX, originY);
+    if (description) {
+      nodes.push(description);
+    }
+    if ("children" in node) {
+      queue.push(...node.children);
+    }
+  }
+  return {
+    id: frame.id,
+    name: frame.name,
+    size: {
+      width: Math.round(frame.width),
+      height: Math.round(frame.height)
+    },
+    childCount: frame.children.length,
+    nodes
+  };
+}
+function describeNode(node, originX, originY) {
+  if (!("absoluteBoundingBox" in node) || !node.absoluteBoundingBox) {
+    return null;
+  }
+  const bounds = node.absoluteBoundingBox;
+  const text = node.type === "TEXT" ? node.characters.replace(/\s+/g, " ").trim().slice(0, 160) : void 0;
+  const layoutDetails = "layoutMode" in node && node.layoutMode && node.layoutMode !== "NONE" ? {
+    layoutMode: node.layoutMode,
+    primaryAxisAlignItems: node.primaryAxisAlignItems,
+    counterAxisAlignItems: node.counterAxisAlignItems
+  } : {};
+  return __spreadValues(__spreadValues({
+    id: node.id,
+    name: node.name || node.type,
+    type: node.type,
+    rel: {
+      x: round3(bounds.x - originX),
+      y: round3(bounds.y - originY),
+      width: round3(bounds.width),
+      height: round3(bounds.height)
+    }
+  }, text ? { text } : {}), layoutDetails);
+}
+function round3(value) {
+  return Math.round(value * 100) / 100;
+}
+function sanitizeAiSignals(raw) {
+  if (!raw || typeof raw !== "object") {
+    return void 0;
+  }
+  const roles = Array.isArray(raw.roles) ? raw.roles.map((entry) => sanitizeRole(entry)).filter((entry) => Boolean(entry)) : [];
+  const focalPoints = Array.isArray(raw.focalPoints) ? raw.focalPoints.map((entry) => sanitizeFocal(entry)).filter((entry) => Boolean(entry)) : [];
+  const qa = Array.isArray(raw.qa) ? raw.qa.map((entry) => sanitizeQa(entry)).filter((entry) => Boolean(entry)) : [];
+  if (roles.length === 0 && focalPoints.length === 0 && qa.length === 0) {
+    return void 0;
+  }
+  return {
+    roles,
+    focalPoints,
+    qa
+  };
+}
+function sanitizeRole(entry) {
+  if (!entry || typeof entry !== "object") {
+    return null;
+  }
+  const nodeId = entry.nodeId;
+  const role = entry.role;
+  if (typeof nodeId !== "string" || typeof role !== "string") {
+    return null;
+  }
+  const normalizedRole = role.trim().replace(/([a-z])([A-Z])/g, "$1_$2").replace(/[\s-]+/g, "_").toLowerCase();
+  if (!VALID_ROLES.includes(normalizedRole)) {
+    return null;
+  }
+  const confidence = clampToUnit(entry.confidence);
+  return {
+    nodeId,
+    role: normalizedRole,
+    confidence: confidence != null ? confidence : 0.5
+  };
+}
+function sanitizeFocal(entry) {
+  var _a;
+  if (!entry || typeof entry !== "object") {
+    return null;
+  }
+  const nodeId = entry.nodeId;
+  const rawX = entry.x;
+  const rawY = entry.y;
+  if (typeof rawX !== "number" || typeof rawY !== "number") {
+    return null;
+  }
+  return {
+    nodeId: typeof nodeId === "string" ? nodeId : "",
+    x: clampValue(rawX),
+    y: clampValue(rawY),
+    confidence: (_a = clampToUnit(entry.confidence)) != null ? _a : 0.5
+  };
+}
+function sanitizeQa(entry) {
+  if (!entry || typeof entry !== "object") {
+    return null;
+  }
+  const code = entry.code;
+  if (typeof code !== "string") {
+    return null;
+  }
+  const normalizedCode = code.trim().toUpperCase();
+  if (!VALID_QA_CODES.includes(normalizedCode)) {
+    return null;
+  }
+  const severityRaw = entry.severity;
+  const severity = severityRaw === "info" ? "info" : severityRaw === "error" ? "error" : "warn";
+  const message = entry.message;
+  return {
+    code: normalizedCode,
+    severity,
+    message: typeof message === "string" ? message : void 0,
+    confidence: clampToUnit(entry.confidence)
+  };
+}
+function clampToUnit(value) {
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number.parseFloat(value) : NaN;
+  if (!Number.isFinite(parsed)) {
+    return void 0;
+  }
+  const normalized = parsed > 1 && parsed <= 100 ? parsed / 100 : parsed;
+  return Math.min(Math.max(normalized, 0), 1);
+}
+function clampValue(value) {
+  return Math.min(Math.max(value, 0), 1);
+}
+
+// core/build-env.ts
+var DEFAULT_AI_API_KEY = "";
+var HAS_DEFAULT_AI_API_KEY = DEFAULT_AI_API_KEY.length > 0;
+
 // core/main.ts
 var STAGING_PAGE_NAME = "Biblio Assets Variants";
 var LAST_RUN_KEY = "biblio-assets:last-run";
@@ -1983,6 +2394,14 @@ var RUN_GAP = 160;
 var RUN_MARGIN = 48;
 var MAX_ROW_WIDTH = 3200;
 var MIN_PATTERN_CONFIDENCE = 0.65;
+var AI_KEY_STORAGE_KEY = "biblio-assets:openai-key";
+var HAS_DEFAULT_AI_KEY = DEFAULT_AI_API_KEY.length > 0;
+var cachedAiApiKey = null;
+var aiKeyLoaded = false;
+var aiStatus = "missing-key";
+var aiStatusDetail = null;
+var aiRequestToken = 0;
+var aiUsingDefaultKey = false;
 figma.showUI(UI_TEMPLATE, {
   width: 360,
   height: 540,
@@ -2007,16 +2426,30 @@ figma.ui.onmessage = async (rawMessage) => {
     case "set-layout-advice":
       await handleSetLayoutAdvice(rawMessage.payload.advice);
       break;
+    case "set-api-key":
+      await handleSetApiKey(rawMessage.payload.key);
+      break;
+    case "refresh-ai":
+      await handleRefreshAiRequest();
+      break;
     default:
       console.warn("Unhandled message", rawMessage);
   }
 };
 figma.on("selectionchange", () => {
+  void handleSelectionChange();
+});
+async function handleSelectionChange() {
+  await ensureAiKeyLoaded();
   const frame = getSelectionFrame();
   const selectionState = createSelectionState(frame);
   postToUI({ type: "selection-update", payload: selectionState });
-});
+  if (frame) {
+    void maybeRequestAiForFrame(frame);
+  }
+}
 async function postInitialState() {
+  await ensureAiKeyLoaded();
   const selectionFrame = getSelectionFrame();
   const selectionState = createSelectionState(selectionFrame);
   const lastRunSummary = readLastRun();
@@ -2034,6 +2467,9 @@ async function postInitialState() {
     targetCount: VARIANT_TARGETS.length
   });
   postToUI({ type: "init", payload });
+  if (selectionFrame) {
+    void maybeRequestAiForFrame(selectionFrame);
+  }
 }
 async function handleGenerateRequest(targetIds, rawSafeAreaRatio, layoutPatterns) {
   var _a, _b, _c, _d, _e;
@@ -2214,12 +2650,20 @@ function createSelectionState(frame) {
       selectionOk: true,
       selectionName: frame.name,
       aiSignals: aiSignals != null ? aiSignals : void 0,
-      layoutAdvice: layoutAdvice != null ? layoutAdvice : void 0
+      layoutAdvice: layoutAdvice != null ? layoutAdvice : void 0,
+      aiConfigured: Boolean(cachedAiApiKey),
+      aiStatus,
+      aiError: aiStatus === "error" ? aiStatusDetail != null ? aiStatusDetail : "AI request failed." : void 0,
+      aiUsingDefaultKey: aiUsingDefaultKey || void 0
     };
   }
   return {
     selectionOk: false,
-    error: "Select a single frame to begin."
+    error: "Select a single frame to begin.",
+    aiConfigured: Boolean(cachedAiApiKey),
+    aiStatus,
+    aiError: aiStatus === "error" ? aiStatusDetail != null ? aiStatusDetail : "AI request failed." : void 0,
+    aiUsingDefaultKey: aiUsingDefaultKey || void 0
   };
 }
 function postToUI(message) {
@@ -2344,25 +2788,25 @@ function restoreAutoLayoutSettings(frame, autoLayoutSnapshots, metrics) {
   const baseItemSpacing = scaleAutoLayoutMetric(snapshot.itemSpacing, metrics.scale);
   const horizontalPlan = metrics.horizontal;
   const verticalPlan = metrics.vertical;
-  const round3 = (value) => Math.round(value * 100) / 100;
-  frame.paddingLeft = round3(basePaddingLeft + horizontalPlan.start);
-  frame.paddingRight = round3(basePaddingRight + horizontalPlan.end);
-  frame.paddingTop = round3(basePaddingTop + verticalPlan.start);
-  frame.paddingBottom = round3(basePaddingBottom + verticalPlan.end);
+  const round4 = (value) => Math.round(value * 100) / 100;
+  frame.paddingLeft = round4(basePaddingLeft + horizontalPlan.start);
+  frame.paddingRight = round4(basePaddingRight + horizontalPlan.end);
+  frame.paddingTop = round4(basePaddingTop + verticalPlan.start);
+  frame.paddingBottom = round4(basePaddingBottom + verticalPlan.end);
   let nextItemSpacing = baseItemSpacing;
   if (snapshot.layoutMode === "HORIZONTAL" && snapshot.flowChildCount >= 2) {
     const gaps = Math.max(snapshot.flowChildCount - 1, 1);
     const perGap = horizontalPlan.interior / gaps;
-    nextItemSpacing = round3(baseItemSpacing + perGap);
+    nextItemSpacing = round4(baseItemSpacing + perGap);
   } else if (snapshot.layoutMode === "VERTICAL" && snapshot.flowChildCount >= 2) {
     const gaps = Math.max(snapshot.flowChildCount - 1, 1);
     const perGap = verticalPlan.interior / gaps;
-    nextItemSpacing = round3(baseItemSpacing + perGap);
+    nextItemSpacing = round4(baseItemSpacing + perGap);
   }
   frame.itemSpacing = nextItemSpacing;
   if (snapshot.layoutWrap === "WRAP" && snapshot.counterAxisSpacing != null && "counterAxisSpacing" in frame) {
     const baseCounterSpacing = scaleAutoLayoutMetric(snapshot.counterAxisSpacing, metrics.scale);
-    frame.counterAxisSpacing = round3(baseCounterSpacing);
+    frame.counterAxisSpacing = round4(baseCounterSpacing);
   }
   debugFixLog("auto layout fine-tuned", {
     nodeId: frame.id,
@@ -2974,6 +3418,141 @@ function clamp3(value, min, max) {
 }
 function cloneValue(value) {
   return JSON.parse(JSON.stringify(value));
+}
+async function ensureAiKeyLoaded() {
+  if (aiKeyLoaded) {
+    return;
+  }
+  const stored = await figma.clientStorage.getAsync(AI_KEY_STORAGE_KEY);
+  const trimmed = typeof stored === "string" ? stored.trim() : "";
+  if (trimmed.length > 0) {
+    cachedAiApiKey = trimmed;
+    aiUsingDefaultKey = HAS_DEFAULT_AI_KEY && trimmed === DEFAULT_AI_API_KEY;
+  } else if (HAS_DEFAULT_AI_KEY) {
+    cachedAiApiKey = DEFAULT_AI_API_KEY;
+    aiUsingDefaultKey = true;
+  } else {
+    cachedAiApiKey = null;
+    aiUsingDefaultKey = false;
+  }
+  aiKeyLoaded = true;
+  aiStatus = cachedAiApiKey ? "idle" : "missing-key";
+  aiStatusDetail = null;
+}
+async function handleSetApiKey(key) {
+  const trimmed = key.trim();
+  if (trimmed.length === 0) {
+    await figma.clientStorage.deleteAsync(AI_KEY_STORAGE_KEY);
+    if (HAS_DEFAULT_AI_KEY) {
+      cachedAiApiKey = DEFAULT_AI_API_KEY;
+      aiUsingDefaultKey = true;
+      aiStatus = "idle";
+      figma.notify("OpenAI key cleared. Using workspace default key.");
+    } else {
+      cachedAiApiKey = null;
+      aiUsingDefaultKey = false;
+      aiStatus = "missing-key";
+      figma.notify("OpenAI key cleared.");
+    }
+    aiStatusDetail = null;
+  } else {
+    await figma.clientStorage.setAsync(AI_KEY_STORAGE_KEY, trimmed);
+    cachedAiApiKey = trimmed;
+    aiUsingDefaultKey = HAS_DEFAULT_AI_KEY && trimmed === DEFAULT_AI_API_KEY;
+    aiStatus = "idle";
+    aiStatusDetail = null;
+    figma.notify(
+      aiUsingDefaultKey ? "OpenAI key saved. Matching workspace default key." : "OpenAI key saved locally."
+    );
+  }
+  aiKeyLoaded = true;
+  const frame = getSelectionFrame();
+  const selectionState = createSelectionState(frame);
+  postToUI({ type: "selection-update", payload: selectionState });
+  if (frame && cachedAiApiKey) {
+    void maybeRequestAiForFrame(frame, { force: true });
+  }
+}
+async function handleRefreshAiRequest() {
+  await ensureAiKeyLoaded();
+  const frame = getSelectionFrame();
+  if (!frame) {
+    figma.notify("Select a single frame to analyze with AI.");
+    postToUI({ type: "selection-update", payload: createSelectionState(null) });
+    return;
+  }
+  if (!cachedAiApiKey) {
+    aiStatus = "missing-key";
+    aiStatusDetail = null;
+    figma.notify("Add an OpenAI API key to run AI insights.");
+    postToUI({ type: "selection-update", payload: createSelectionState(frame) });
+    return;
+  }
+  await maybeRequestAiForFrame(frame, { force: true });
+}
+async function maybeRequestAiForFrame(frame, options) {
+  var _a, _b, _c, _d;
+  if (!cachedAiApiKey) {
+    aiStatus = "missing-key";
+    aiStatusDetail = null;
+    const current = getSelectionFrame();
+    postToUI({ type: "selection-update", payload: createSelectionState(current) });
+    return;
+  }
+  const existingSignals = readAiSignals(frame);
+  const existingAdvice = readLayoutAdvice(frame);
+  if (!(options == null ? void 0 : options.force) && existingSignals && existingAdvice) {
+    return;
+  }
+  const requestId = ++aiRequestToken;
+  aiStatus = "fetching";
+  aiStatusDetail = null;
+  const currentSelection = getSelectionFrame();
+  if (currentSelection && currentSelection.id === frame.id) {
+    postToUI({ type: "selection-update", payload: createSelectionState(frame) });
+  }
+  let encounteredError = false;
+  try {
+    debugFixLog("requesting ai insights", { frameId: frame.id, nodeName: frame.name });
+    const result = await requestAiInsights(frame, cachedAiApiKey);
+    if (!result) {
+      encounteredError = true;
+      aiStatus = "error";
+      aiStatusDetail = "AI response missing structured layout data.";
+      return;
+    }
+    if (result.signals) {
+      frame.setPluginData("biblio-assets:ai-signals", JSON.stringify(result.signals));
+    } else {
+      frame.setPluginData("biblio-assets:ai-signals", "");
+    }
+    if (result.layoutAdvice) {
+      frame.setPluginData("biblio-assets:layout-advice", JSON.stringify(result.layoutAdvice));
+    } else {
+      frame.setPluginData("biblio-assets:layout-advice", "");
+    }
+    debugFixLog("ai insights stored on frame", {
+      frameId: frame.id,
+      roles: (_b = (_a = result.signals) == null ? void 0 : _a.roles.length) != null ? _b : 0,
+      layoutEntries: (_d = (_c = result.layoutAdvice) == null ? void 0 : _c.entries.length) != null ? _d : 0
+    });
+  } catch (error) {
+    encounteredError = true;
+    aiStatus = "error";
+    aiStatusDetail = error instanceof Error ? error.message : String(error);
+    console.error("Biblio Assets AI request failed", error);
+  } finally {
+    if (!encounteredError) {
+      aiStatus = cachedAiApiKey ? "idle" : "missing-key";
+      aiStatusDetail = null;
+    }
+    if (requestId === aiRequestToken) {
+      const current = getSelectionFrame();
+      if (current && current.id === frame.id) {
+        postToUI({ type: "selection-update", payload: createSelectionState(current) });
+      }
+    }
+  }
 }
 async function handleSetLayoutAdvice(advice) {
   var _a, _b;

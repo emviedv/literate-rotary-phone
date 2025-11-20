@@ -1,5 +1,6 @@
 import { VARIANT_TARGETS, getTargetById, type VariantTarget } from "../types/targets";
 import type {
+  AiStatus,
   ToCoreMessage,
   ToUIMessage,
   VariantWarning,
@@ -26,7 +27,9 @@ import { analyzeContent, calculateOptimalScale } from "./content-analyzer";
 import { createLayoutAdaptationPlan, applyLayoutAdaptation } from "./auto-layout-adapter";
 import { deriveWarningsFromAiSignals, readAiSignals, resolvePrimaryFocalPoint } from "./ai-signals.js";
 import { autoSelectLayoutPattern, normalizeLayoutAdvice, readLayoutAdvice, resolvePatternLabel } from "./layout-advice.js";
+import { requestAiInsights } from "./ai-service.js";
 import { debugFixLog } from "./debug.js";
+import { DEFAULT_AI_API_KEY } from "./build-env.js";
 
 const STAGING_PAGE_NAME = "Biblio Assets Variants";
 const LAST_RUN_KEY = "biblio-assets:last-run";
@@ -35,6 +38,15 @@ const RUN_GAP = 160;
 const RUN_MARGIN = 48;
 const MAX_ROW_WIDTH = 3200;
 const MIN_PATTERN_CONFIDENCE = 0.65;
+const AI_KEY_STORAGE_KEY = "biblio-assets:openai-key";
+const HAS_DEFAULT_AI_KEY = DEFAULT_AI_API_KEY.length > 0;
+
+let cachedAiApiKey: string | null = null;
+let aiKeyLoaded = false;
+let aiStatus: AiStatus = "missing-key";
+let aiStatusDetail: string | null = null;
+let aiRequestToken = 0;
+let aiUsingDefaultKey = false;
 
 type Mutable<T> = T extends ReadonlyArray<infer U>
   ? Mutable<U>[]
@@ -100,18 +112,33 @@ figma.ui.onmessage = async (rawMessage: ToCoreMessage) => {
     case "set-layout-advice":
       await handleSetLayoutAdvice(rawMessage.payload.advice);
       break;
+    case "set-api-key":
+      await handleSetApiKey(rawMessage.payload.key);
+      break;
+    case "refresh-ai":
+      await handleRefreshAiRequest();
+      break;
     default:
       console.warn("Unhandled message", rawMessage);
   }
 };
 
 figma.on("selectionchange", () => {
+  void handleSelectionChange();
+});
+
+async function handleSelectionChange(): Promise<void> {
+  await ensureAiKeyLoaded();
   const frame = getSelectionFrame();
   const selectionState = createSelectionState(frame);
   postToUI({ type: "selection-update", payload: selectionState });
-});
+  if (frame) {
+    void maybeRequestAiForFrame(frame);
+  }
+}
 
 async function postInitialState(): Promise<void> {
+  await ensureAiKeyLoaded();
   const selectionFrame = getSelectionFrame();
   const selectionState = createSelectionState(selectionFrame);
   const lastRunSummary = readLastRun();
@@ -132,6 +159,9 @@ async function postInitialState(): Promise<void> {
   });
 
   postToUI({ type: "init", payload });
+  if (selectionFrame) {
+    void maybeRequestAiForFrame(selectionFrame);
+  }
 }
 
 async function handleGenerateRequest(
@@ -352,12 +382,20 @@ function createSelectionState(frame: FrameNode | null): SelectionState {
       selectionOk: true,
       selectionName: frame.name,
       aiSignals: aiSignals ?? undefined,
-      layoutAdvice: layoutAdvice ?? undefined
+      layoutAdvice: layoutAdvice ?? undefined,
+      aiConfigured: Boolean(cachedAiApiKey),
+      aiStatus,
+      aiError: aiStatus === "error" ? aiStatusDetail ?? "AI request failed." : undefined,
+      aiUsingDefaultKey: aiUsingDefaultKey || undefined
     };
   }
   return {
     selectionOk: false,
-    error: "Select a single frame to begin."
+    error: "Select a single frame to begin.",
+    aiConfigured: Boolean(cachedAiApiKey),
+    aiStatus,
+    aiError: aiStatus === "error" ? aiStatusDetail ?? "AI request failed." : undefined,
+    aiUsingDefaultKey: aiUsingDefaultKey || undefined
   };
 }
 
@@ -1318,6 +1356,149 @@ function clamp(value: number, min: number, max: number): number {
 function cloneValue<T>(value: T): Mutable<T> {
   return JSON.parse(JSON.stringify(value)) as Mutable<T>;
 }
+
+async function ensureAiKeyLoaded(): Promise<void> {
+  if (aiKeyLoaded) {
+    return;
+  }
+  const stored = await figma.clientStorage.getAsync(AI_KEY_STORAGE_KEY);
+  const trimmed = typeof stored === "string" ? stored.trim() : "";
+  if (trimmed.length > 0) {
+    cachedAiApiKey = trimmed;
+    aiUsingDefaultKey = HAS_DEFAULT_AI_KEY && trimmed === DEFAULT_AI_API_KEY;
+  } else if (HAS_DEFAULT_AI_KEY) {
+    cachedAiApiKey = DEFAULT_AI_API_KEY;
+    aiUsingDefaultKey = true;
+  } else {
+    cachedAiApiKey = null;
+    aiUsingDefaultKey = false;
+  }
+  aiKeyLoaded = true;
+  aiStatus = cachedAiApiKey ? "idle" : "missing-key";
+  aiStatusDetail = null;
+}
+
+async function handleSetApiKey(key: string): Promise<void> {
+  const trimmed = key.trim();
+  if (trimmed.length === 0) {
+    await figma.clientStorage.deleteAsync(AI_KEY_STORAGE_KEY);
+    if (HAS_DEFAULT_AI_KEY) {
+      cachedAiApiKey = DEFAULT_AI_API_KEY;
+      aiUsingDefaultKey = true;
+      aiStatus = "idle";
+      figma.notify("OpenAI key cleared. Using workspace default key.");
+    } else {
+      cachedAiApiKey = null;
+      aiUsingDefaultKey = false;
+      aiStatus = "missing-key";
+      figma.notify("OpenAI key cleared.");
+    }
+    aiStatusDetail = null;
+  } else {
+    await figma.clientStorage.setAsync(AI_KEY_STORAGE_KEY, trimmed);
+    cachedAiApiKey = trimmed;
+    aiUsingDefaultKey = HAS_DEFAULT_AI_KEY && trimmed === DEFAULT_AI_API_KEY;
+    aiStatus = "idle";
+    aiStatusDetail = null;
+    figma.notify(
+      aiUsingDefaultKey ? "OpenAI key saved. Matching workspace default key." : "OpenAI key saved locally."
+    );
+  }
+  aiKeyLoaded = true;
+  const frame = getSelectionFrame();
+  const selectionState = createSelectionState(frame);
+  postToUI({ type: "selection-update", payload: selectionState });
+  if (frame && cachedAiApiKey) {
+    void maybeRequestAiForFrame(frame, { force: true });
+  }
+}
+
+async function handleRefreshAiRequest(): Promise<void> {
+  await ensureAiKeyLoaded();
+  const frame = getSelectionFrame();
+  if (!frame) {
+    figma.notify("Select a single frame to analyze with AI.");
+    postToUI({ type: "selection-update", payload: createSelectionState(null) });
+    return;
+  }
+  if (!cachedAiApiKey) {
+    aiStatus = "missing-key";
+    aiStatusDetail = null;
+    figma.notify("Add an OpenAI API key to run AI insights.");
+    postToUI({ type: "selection-update", payload: createSelectionState(frame) });
+    return;
+  }
+  await maybeRequestAiForFrame(frame, { force: true });
+}
+
+async function maybeRequestAiForFrame(frame: FrameNode, options?: { readonly force?: boolean }): Promise<void> {
+  if (!cachedAiApiKey) {
+    aiStatus = "missing-key";
+    aiStatusDetail = null;
+    const current = getSelectionFrame();
+    postToUI({ type: "selection-update", payload: createSelectionState(current) });
+    return;
+  }
+
+  const existingSignals = readAiSignals(frame);
+  const existingAdvice = readLayoutAdvice(frame);
+  if (!options?.force && existingSignals && existingAdvice) {
+    return;
+  }
+
+  const requestId = ++aiRequestToken;
+  aiStatus = "fetching";
+  aiStatusDetail = null;
+  const currentSelection = getSelectionFrame();
+  if (currentSelection && currentSelection.id === frame.id) {
+    postToUI({ type: "selection-update", payload: createSelectionState(frame) });
+  }
+
+  let encounteredError = false;
+
+  try {
+    debugFixLog("requesting ai insights", { frameId: frame.id, nodeName: frame.name });
+    const result = await requestAiInsights(frame, cachedAiApiKey);
+    if (!result) {
+      encounteredError = true;
+      aiStatus = "error";
+      aiStatusDetail = "AI response missing structured layout data.";
+      return;
+    }
+    if (result.signals) {
+      frame.setPluginData("biblio-assets:ai-signals", JSON.stringify(result.signals));
+    } else {
+      frame.setPluginData("biblio-assets:ai-signals", "");
+    }
+    if (result.layoutAdvice) {
+      frame.setPluginData("biblio-assets:layout-advice", JSON.stringify(result.layoutAdvice));
+    } else {
+      frame.setPluginData("biblio-assets:layout-advice", "");
+    }
+    debugFixLog("ai insights stored on frame", {
+      frameId: frame.id,
+      roles: result.signals?.roles.length ?? 0,
+      layoutEntries: result.layoutAdvice?.entries.length ?? 0
+    });
+  } catch (error) {
+    encounteredError = true;
+    aiStatus = "error";
+    aiStatusDetail = error instanceof Error ? error.message : String(error);
+    console.error("Biblio Assets AI request failed", error);
+  } finally {
+    if (!encounteredError) {
+      aiStatus = cachedAiApiKey ? "idle" : "missing-key";
+      aiStatusDetail = null;
+    }
+    if (requestId === aiRequestToken) {
+      const current = getSelectionFrame();
+      if (current && current.id === frame.id) {
+        postToUI({ type: "selection-update", payload: createSelectionState(current) });
+      }
+    }
+  }
+}
+
 async function handleSetLayoutAdvice(advice: LayoutAdvice): Promise<void> {
   const frame = getSelectionFrame();
   if (!frame) {

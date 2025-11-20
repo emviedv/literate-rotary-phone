@@ -5,6 +5,7 @@ import * as esbuild from "esbuild";
 
 const outdir = "dist";
 const watchMode = process.argv.includes("--watch");
+const defaultAiKey = process.env.BIBLIO_DEFAULT_OPENAI_KEY ?? "";
 
 const buildOptions = {
   bundle: true,
@@ -18,7 +19,10 @@ const buildOptions = {
   metafile: false,
   color: true,
   treeShaking: true,
-  mainFields: ["module", "main"]
+  mainFields: ["module", "main"],
+  define: {
+    __BIBLIO_DEFAULT_AI_KEY__: JSON.stringify(defaultAiKey)
+  }
 };
 
 async function clean() {

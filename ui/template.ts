@@ -97,6 +97,16 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
       font-variant-numeric: tabular-nums;
       font-weight: 600;
     }
+    input[type="password"],
+    input[type="text"] {
+      width: 100%;
+      border-radius: 8px;
+      border: 1px solid var(--figma-color-border, rgba(16, 24, 40, 0.16));
+      padding: 8px 10px;
+      background: var(--figma-color-bg-tertiary, rgba(16, 24, 40, 0.02));
+      font: inherit;
+      color: inherit;
+    }
     button {
       border: none;
       border-radius: 8px;
@@ -113,10 +123,23 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
       color: var(--figma-color-text-disabled, #98a2b3);
       cursor: not-allowed;
     }
+    button.secondary {
+      background: transparent;
+      border: 1px solid var(--figma-color-border, rgba(16, 24, 40, 0.2));
+      color: var(--figma-color-text, #101828);
+    }
+    .button-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
     .status {
       font-size: 12px;
       color: var(--figma-color-text-secondary, #475467);
       min-height: 18px;
+    }
+    .status.error {
+      color: #b42318;
     }
     ul {
       margin: 0;
@@ -215,6 +238,17 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
       <p id="selectionLabel" class="status">Select a single frame to begin.</p>
     </header>
 
+    <section class="section" id="aiSetupSection">
+      <h2>AI setup</h2>
+      <p id="aiKeyStatus" class="status">Add an OpenAI API key to enable AI insights.</p>
+      <input id="aiKeyInput" type="password" placeholder="sk-..." autocomplete="off" spellcheck="false" />
+      <div class="button-row">
+        <button id="saveAiKey">Save key</button>
+        <button id="clearAiKey" class="secondary">Clear key</button>
+        <button id="refreshAiButton" class="secondary">Run AI analysis</button>
+      </div>
+    </section>
+
     <section class="section" id="aiSection" hidden>
       <h2>AI signals</h2>
       <div id="aiEmpty" class="status">No AI signals found on selection.</div>
@@ -276,6 +310,11 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
       const safeAreaValue = document.getElementById("safeAreaValue");
       const generateButton = document.getElementById("generateButton");
       const statusMessage = document.getElementById("statusMessage");
+      const aiKeyStatus = document.getElementById("aiKeyStatus");
+      const aiKeyInput = document.getElementById("aiKeyInput");
+      const saveAiKey = document.getElementById("saveAiKey");
+      const clearAiKey = document.getElementById("clearAiKey");
+      const refreshAiButton = document.getElementById("refreshAiButton");
       const lastRunSection = document.getElementById("lastRunSection");
       const lastRunContent = document.getElementById("lastRunContent");
       const resultsSection = document.getElementById("resultsSection");
@@ -295,12 +334,28 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
       let selectionReady = false;
       let isBusy = false;
       let layoutSelections = {};
+      let aiConfigured = false;
+      let aiStatusState = "missing-key";
+      let aiErrorMessage = "";
+      let aiUsingDefaultKey = false;
 
       if (!(targetSelect instanceof HTMLSelectElement)) {
         throw new Error("Target select element missing.");
       }
       if (!(targetSummary instanceof HTMLElement)) {
         throw new Error("Target summary element missing.");
+      }
+      if (!(aiKeyStatus instanceof HTMLElement)) {
+        throw new Error("AI key status element missing.");
+      }
+      if (!(aiKeyInput instanceof HTMLInputElement)) {
+        throw new Error("AI key input missing.");
+      }
+      if (!(saveAiKey instanceof HTMLButtonElement) || !(clearAiKey instanceof HTMLButtonElement)) {
+        throw new Error("AI key buttons missing.");
+      }
+      if (!(refreshAiButton instanceof HTMLButtonElement)) {
+        throw new Error("AI refresh button missing.");
       }
 
       function renderTargets(targets) {
@@ -360,6 +415,34 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
         updateTargetSummary(selectedTargets);
       }
 
+      function updateAiStatusDisplay() {
+        let text = "";
+        if (!aiConfigured) {
+          text = "Add an OpenAI API key to enable AI insights.";
+        } else if (aiStatusState === "fetching") {
+          text = "Analyzing selection with AI…";
+        } else if (aiStatusState === "error") {
+          text = aiErrorMessage || "AI request failed. Try again.";
+        } else if (!selectionReady) {
+          text = aiUsingDefaultKey
+            ? "Workspace default AI key ready. Select a frame to analyze."
+            : "Select a frame to request AI analysis.";
+        } else if (aiUsingDefaultKey) {
+          text = "AI ready via workspace default key. Run analysis to refresh insights.";
+        } else {
+          text = "AI ready. Click Run AI analysis to refresh insights.";
+        }
+        if (aiStatusState === "error") {
+          aiKeyStatus.classList.add("error");
+        } else {
+          aiKeyStatus.classList.remove("error");
+        }
+        aiKeyStatus.textContent = text;
+        clearAiKey.disabled = isBusy || !aiConfigured;
+        refreshAiButton.disabled =
+          isBusy || !selectionReady || !aiConfigured || aiStatusState === "missing-key" || aiStatusState === "fetching";
+      }
+
       function applySelectionState(state) {
         selectionReady = state.selectionOk;
         if (selectionReady) {
@@ -378,6 +461,11 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
             statusMessage.textContent = message;
           }
         }
+        aiConfigured = Boolean(state.aiConfigured);
+        aiStatusState = state.aiStatus || (aiConfigured ? "idle" : "missing-key");
+        aiErrorMessage = typeof state.aiError === "string" ? state.aiError : "";
+        aiUsingDefaultKey = Boolean(state.aiUsingDefaultKey);
+        updateAiStatusDisplay();
         renderAiSignals(state.aiSignals);
         renderLayoutAdvice(state.layoutAdvice);
         updateGenerateState();
@@ -429,6 +517,7 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
           updateGenerateState();
         }
         statusMessage.textContent = message;
+        updateAiStatusDisplay();
       }
 
       function formatLastRun(lastRun) {
@@ -450,15 +539,24 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
         }
 
         const hasAdvice = advice && Array.isArray(advice.entries) && advice.entries.length > 0;
-        if (!hasAdvice) {
-          layoutSection.hidden = false;
-          layoutStatus.textContent = "No layout patterns supplied. Using auto layout.";
-          layoutSelections = {};
-          return;
+        layoutSection.hidden = false;
+        if (!aiConfigured) {
+          layoutStatus.textContent = "Add an OpenAI API key to receive AI layout advice.";
+        } else if (aiStatusState === "fetching") {
+          layoutStatus.textContent = "Fetching AI layout patterns…";
+        } else if (aiStatusState === "error") {
+          layoutStatus.textContent = aiErrorMessage || "AI request failed. Using auto layout.";
+        } else if (!hasAdvice) {
+          layoutStatus.textContent = "Run AI analysis to populate layout patterns.";
+        } else {
+          layoutStatus.textContent = "AI-suggested patterns per target.";
         }
 
-        layoutSection.hidden = false;
-        layoutStatus.textContent = "AI-suggested patterns per target.";
+        if (!hasAdvice) {
+          layoutSelections = {};
+          layoutContainer.innerHTML = "";
+          return;
+        }
 
         advice.entries.forEach((entry) => {
           const target = availableTargets.find((item) => item.id === entry.targetId);
@@ -562,13 +660,26 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
         aiSection.hidden = false;
         aiRoles.innerHTML = "";
         aiQa.innerHTML = "";
+        aiEmpty.hidden = false;
+
+        if (!aiConfigured) {
+          aiEmpty.textContent = "Add an OpenAI API key and run analysis to see AI signals.";
+          return;
+        }
+        if (aiStatusState === "fetching") {
+          aiEmpty.textContent = "Analyzing selection with AI…";
+          return;
+        }
+        if (aiStatusState === "error") {
+          aiEmpty.textContent = aiErrorMessage || "AI request failed. Try again.";
+          return;
+        }
 
         const hasRoles = aiSignals && Array.isArray(aiSignals.roles) && aiSignals.roles.length > 0;
         const hasQa = aiSignals && Array.isArray(aiSignals.qa) && aiSignals.qa.length > 0;
 
         if (!aiSignals || (!hasRoles && !hasQa)) {
-          aiEmpty.textContent = "No AI signals found on selection.";
-          aiEmpty.hidden = false;
+          aiEmpty.textContent = "Run AI analysis to populate signals for this frame.";
           return;
         }
 
@@ -672,12 +783,57 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
         );
       }
 
+      function saveAiKeyValue() {
+        const trimmed = aiKeyInput.value.trim();
+        parent.postMessage(
+          {
+            pluginMessage: {
+              type: "set-api-key",
+              payload: { key: trimmed }
+            }
+          },
+          "*"
+        );
+        aiKeyInput.value = "";
+        statusMessage.textContent = trimmed ? "Saving OpenAI key…" : "Clearing OpenAI key…";
+      }
+
+      function clearAiKeyValue() {
+        aiKeyInput.value = "";
+        parent.postMessage(
+          {
+            pluginMessage: {
+              type: "set-api-key",
+              payload: { key: "" }
+            }
+          },
+          "*"
+        );
+        statusMessage.textContent = "Clearing OpenAI key…";
+      }
+
+      function requestAiRefresh() {
+        if (!selectionReady) {
+          statusMessage.textContent = "Select a frame before running AI analysis.";
+          return;
+        }
+        if (!aiConfigured) {
+          statusMessage.textContent = "Add an OpenAI API key before running AI analysis.";
+          return;
+        }
+        parent.postMessage({ pluginMessage: { type: "refresh-ai" } }, "*");
+        statusMessage.textContent = "Requesting AI insights…";
+      }
+
       if (applySampleAi instanceof HTMLButtonElement) {
         applySampleAi.addEventListener("click", applySampleSignals);
       }
       if (applySampleLayout instanceof HTMLButtonElement) {
         applySampleLayout.addEventListener("click", applySampleLayoutAdvice);
       }
+      saveAiKey.addEventListener("click", saveAiKeyValue);
+      clearAiKey.addEventListener("click", clearAiKeyValue);
+      refreshAiButton.addEventListener("click", requestAiRefresh);
 
       window.onmessage = (event) => {
         const message = event.data.pluginMessage;
@@ -692,7 +848,10 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
               selectionName: message.payload.selectionName,
               error: message.payload.error,
               aiSignals: message.payload.aiSignals,
-              layoutAdvice: message.payload.layoutAdvice
+              layoutAdvice: message.payload.layoutAdvice,
+              aiConfigured: message.payload.aiConfigured,
+              aiStatus: message.payload.aiStatus,
+              aiError: message.payload.aiError
             });
             if (message.payload.lastRun) {
               lastRunSection.hidden = false;
@@ -728,6 +887,7 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
       };
 
       updateSafeAreaValue();
+      updateAiStatusDisplay();
       parent.postMessage({ pluginMessage: { type: "request-initial-state" } }, "*");
     })();
   </script>

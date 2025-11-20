@@ -2,12 +2,18 @@ import type { VariantTarget } from "./targets.js";
 import type { AiSignals } from "./ai-signals.js";
 import type { LayoutAdvice } from "./layout-advice.js";
 
+export type AiStatus = "idle" | "fetching" | "missing-key" | "error";
+
 export interface SelectionState {
   readonly selectionOk: boolean;
   readonly selectionName?: string;
   readonly error?: string;
   readonly aiSignals?: AiSignals;
   readonly layoutAdvice?: LayoutAdvice;
+  readonly aiConfigured?: boolean;
+  readonly aiStatus?: AiStatus;
+  readonly aiError?: string;
+  readonly aiUsingDefaultKey?: boolean;
 }
 
 export interface LastRunSummary {
@@ -81,4 +87,13 @@ export type ToCoreMessage =
       readonly payload: {
         readonly advice: LayoutAdvice;
       };
+    }
+  | {
+      readonly type: "set-api-key";
+      readonly payload: {
+        readonly key: string;
+      };
+    }
+  | {
+      readonly type: "refresh-ai";
     };
