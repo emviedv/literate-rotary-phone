@@ -1,32 +1,38 @@
 import type { VariantWarning } from "../types/messages.js";
 import type { AiSignals, AiQaSignal } from "../types/ai-signals.js";
 import { debugFixLog } from "./debug.js";
+import { AI_SIGNALS_KEY, LEGACY_AI_SIGNALS_KEY } from "./plugin-constants.js";
 
 const MIN_CONFIDENCE = 0.35;
 const MIN_FOCAL_CONFIDENCE = 0.55;
 
 type PluginDataReader = Pick<FrameNode, "getPluginData">;
 
-export function readAiSignals(node: PluginDataReader, key: string = "biblio-assets:ai-signals"): AiSignals | null {
-  let raw: string | null = null;
-  try {
-    raw = node.getPluginData(key);
-  } catch {
-    return null;
+export function readAiSignals(node: PluginDataReader, key: string = AI_SIGNALS_KEY): AiSignals | null {
+  const candidateKeys = key === AI_SIGNALS_KEY ? [AI_SIGNALS_KEY, LEGACY_AI_SIGNALS_KEY] : [key];
+
+  for (const candidate of candidateKeys) {
+    let raw: string | null = null;
+    try {
+      raw = node.getPluginData(candidate);
+    } catch {
+      continue;
+    }
+
+    if (!raw) {
+      continue;
+    }
+
+    try {
+      const parsed = JSON.parse(raw) as AiSignals;
+      debugFixLog("ai signals parsed", { hasRoles: parsed?.roles?.length > 0, qa: parsed?.qa?.length ?? 0 });
+      return parsed;
+    } catch (error) {
+      debugFixLog("ai signals parse failed", { error: error instanceof Error ? error.message : String(error) });
+    }
   }
 
-  if (!raw) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as AiSignals;
-    debugFixLog("ai signals parsed", { hasRoles: parsed?.roles?.length > 0, qa: parsed?.qa?.length ?? 0 });
-    return parsed;
-  } catch (error) {
-    debugFixLog("ai signals parse failed", { error: error instanceof Error ? error.message : String(error) });
-    return null;
-  }
+  return null;
 }
 
 export function deriveWarningsFromAiSignals(signals: AiSignals | null | undefined): VariantWarning[] {

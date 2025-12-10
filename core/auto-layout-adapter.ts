@@ -134,7 +134,7 @@ function determineOptimalLayoutMode(context: LayoutContext): "HORIZONTAL" | "VER
   }
 
   // For extreme vertical targets (like TikTok)
-  if (targetProfile.type === "vertical" && targetProfile.aspectRatio < 0.6) {
+  if (targetProfile.type === "vertical" && targetProfile.aspectRatio < 0.57) {
     // Convert horizontal to vertical for better fill
     if (sourceLayout.mode === "HORIZONTAL" && sourceLayout.childCount >= 2) {
       return "VERTICAL";
@@ -142,8 +142,8 @@ function determineOptimalLayoutMode(context: LayoutContext): "HORIZONTAL" | "VER
     return sourceLayout.mode === "VERTICAL" ? "VERTICAL" : "VERTICAL";
   }
 
-  // For extreme horizontal targets (like web banners)
-  if (targetProfile.type === "horizontal" && targetProfile.aspectRatio > 2.4) {
+  // For extreme horizontal targets (like ultra-wide banners)
+  if (targetProfile.type === "horizontal" && targetProfile.aspectRatio > 2.5) {
     // Convert vertical to horizontal for better fill
     if (sourceLayout.mode === "VERTICAL" && sourceLayout.childCount >= 2) {
       return "HORIZONTAL";
@@ -153,13 +153,13 @@ function determineOptimalLayoutMode(context: LayoutContext): "HORIZONTAL" | "VER
 
   // For moderate aspect ratios, adapt based on child count and content
   if (targetProfile.type === "vertical") {
-    // Prefer vertical for tall targets with multiple children
+    // Prefer vertical for tall targets with many children
     if (sourceLayout.childCount > 3) {
       return "VERTICAL";
     }
-    // Keep horizontal if only 2-3 children and text-heavy
-    if (sourceLayout.mode === "HORIZONTAL" && sourceLayout.childCount <= 3 && sourceLayout.hasText) {
-      return sourceLayout.childCount === 2 ? "VERTICAL" : "HORIZONTAL";
+    // For 2-3 children, prefer keeping the source layout to avoid jumping
+    if (sourceLayout.mode === "HORIZONTAL") {
+      return "HORIZONTAL";
     }
     return "VERTICAL";
   }
@@ -170,7 +170,7 @@ function determineOptimalLayoutMode(context: LayoutContext): "HORIZONTAL" | "VER
       // Consider converting to horizontal wrap for many children
       return "HORIZONTAL";
     }
-    return sourceLayout.mode === "VERTICAL" && sourceLayout.childCount <= 2 ? "HORIZONTAL" : sourceLayout.mode;
+    return sourceLayout.mode === "VERTICAL" ? "VERTICAL" : sourceLayout.mode;
   }
 
   // For square targets, keep original or use best fit

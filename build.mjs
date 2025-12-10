@@ -5,14 +5,17 @@ import * as esbuild from "esbuild";
 
 const outdir = "dist";
 const watchMode = process.argv.includes("--watch");
-const defaultAiKey = process.env.BIBLIO_DEFAULT_OPENAI_KEY ?? "";
+const defaultAiKey =
+  process.env.BIBLIOSCALE_DEFAULT_OPENAI_KEY ??
+  process.env.BIBLIO_DEFAULT_OPENAI_KEY ??
+  "";
 
 const buildOptions = {
   bundle: true,
   entryPoints: ["core/main.ts"],
   outfile: path.join(outdir, "main.js"),
   platform: "browser",
-  format: "esm",
+  format: "iife",
   target: ["es2017"],
   sourcemap: true,
   logLevel: "info",
@@ -21,7 +24,7 @@ const buildOptions = {
   treeShaking: true,
   mainFields: ["module", "main"],
   define: {
-    __BIBLIO_DEFAULT_AI_KEY__: JSON.stringify(defaultAiKey)
+    __BIBLIOSCALE_DEFAULT_AI_KEY__: JSON.stringify(defaultAiKey)
   }
 };
 

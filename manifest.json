@@ -1,6 +1,6 @@
 {
-  "name": "Biblio Assets Resizer",
-  "id": "biblio-assets-resizer",
+  "name": "BiblioScale",
+  "id": "biblioscale",
   "api": "1.0.0",
   "main": "dist/main.js",
   "editorType": ["figma"],

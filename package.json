@@ -1,5 +1,5 @@
 {
-  "name": "@bibliokit/biblio-assets-resizer",
+  "name": "@bibliokit/biblioscale",
   "version": "0.1.0",
   "type": "module",
   "private": true,
@@ -15,6 +15,7 @@
   "devDependencies": {
     "@figma/plugin-typings": "^1.87.0",
     "esbuild": "^0.21.4",
+    "knip": "^5.64.0",
     "typescript": "^5.4.5"
   }
 }

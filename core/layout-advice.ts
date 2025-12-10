@@ -1,9 +1,8 @@
 import type { LayoutAdvice, LayoutAdviceEntry, LayoutPatternOption } from "../types/layout-advice.js";
 import { debugFixLog } from "./debug.js";
+import { LAYOUT_ADVICE_KEY, LEGACY_LAYOUT_ADVICE_KEY } from "./plugin-constants.js";
 
 type PluginDataNode = Pick<FrameNode, "getPluginData">;
-
-const LAYOUT_KEY = "biblio-assets:layout-advice";
 const DEFAULT_CONFIDENCE = 0.6;
 
 export interface AutoSelectedPattern {
@@ -111,27 +110,32 @@ export function normalizeLayoutAdvice(raw: unknown): LayoutAdvice | null {
   return { entries: normalizedEntries };
 }
 
-export function readLayoutAdvice(node: PluginDataNode, key: string = LAYOUT_KEY): LayoutAdvice | null {
-  let raw: string | null = null;
-  try {
-    raw = node.getPluginData(key);
-  } catch {
-    return null;
+export function readLayoutAdvice(node: PluginDataNode, key: string = LAYOUT_ADVICE_KEY): LayoutAdvice | null {
+  const candidateKeys = key === LAYOUT_ADVICE_KEY ? [LAYOUT_ADVICE_KEY, LEGACY_LAYOUT_ADVICE_KEY] : [key];
+
+  for (const candidate of candidateKeys) {
+    let raw: string | null = null;
+    try {
+      raw = node.getPluginData(candidate);
+    } catch {
+      continue;
+    }
+    if (!raw) {
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(raw) as LayoutAdvice;
+      const normalized = normalizeLayoutAdvice(parsed);
+      debugFixLog("layout advice parsed", {
+        entries: normalized?.entries?.length ?? 0
+      });
+      return normalized;
+    } catch (error) {
+      debugFixLog("layout advice parse failed", { error: error instanceof Error ? error.message : String(error) });
+    }
   }
-  if (!raw) {
-    return null;
-  }
-  try {
-    const parsed = JSON.parse(raw) as LayoutAdvice;
-    const normalized = normalizeLayoutAdvice(parsed);
-    debugFixLog("layout advice parsed", {
-      entries: normalized?.entries?.length ?? 0
-    });
-    return normalized;
-  } catch (error) {
-    debugFixLog("layout advice parse failed", { error: error instanceof Error ? error.message : String(error) });
-    return null;
-  }
+
+  return null;
 }
 
 export function resolvePatternLabel(

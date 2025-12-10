@@ -1,0 +1,8 @@
+Knip report for /Users/emily/Products/BiblioScale on 2025-12-10
+====================================
+ERROR: Error loading table
+Reason: Cannot find module 'table'
+Require stack:
+- /Users/emily/Products/BiblioScale/_index.js
+
+Exit code: 2

@@ -1,3 +1,5 @@
+import { LEGACY_ROLE_KEY, ROLE_KEY } from "./plugin-constants.js";
+
 /**
  * Content analyzer to understand source frame structure and determine
  * the best scaling strategy for any source-target combination
@@ -92,7 +94,10 @@ function findActualContentBounds(
     if (!node.visible || depth > 10) return;
 
     // Skip overlay elements
-    if ("getPluginData" in node && node.getPluginData("biblio-assets:role") === "overlay") {
+    if (
+      "getPluginData" in node &&
+      (node.getPluginData(ROLE_KEY) === "overlay" || node.getPluginData(LEGACY_ROLE_KEY) === "overlay")
+    ) {
       return;
     }
 
@@ -186,7 +191,10 @@ function hasImageContent(frame: FrameNode): boolean {
 function countVisibleChildren(frame: FrameNode): number {
   return frame.children.filter(child => {
     if (!child.visible) return false;
-    if ("getPluginData" in child && child.getPluginData("biblio-assets:role") === "overlay") {
+    if (
+      "getPluginData" in child &&
+      (child.getPluginData(ROLE_KEY) === "overlay" || child.getPluginData(LEGACY_ROLE_KEY) === "overlay")
+    ) {
       return false;
     }
     return true;
@@ -324,7 +332,9 @@ export function calculateOptimalScale(
 
   // Ensure minimum scale for readability
   const MIN_SCALE = 0.3;
-  const MAX_SCALE = 10;
+  // Allow higher scaling for vector-only content to fill large targets
+  // For images, cap at 12x to prevent extreme pixelation while ensuring layout fill
+  const MAX_SCALE = analysis.hasImages ? 12 : 60;
 
   return Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale));
 }

@@ -1,4 +1,4 @@
-import { VARIANT_TARGETS, getTargetById, type VariantTarget } from "../types/targets";
+import { VARIANT_TARGETS, getTargetById, type VariantTarget } from "../types/targets.js";
 import type {
   AiStatus,
   ToCoreMessage,
@@ -7,39 +7,54 @@ import type {
   VariantResult,
   LastRunSummary,
   SelectionState
-} from "../types/messages";
+} from "../types/messages.js";
 import type { LayoutAdvice } from "../types/layout-advice.js";
 import type { AiSignals } from "../types/ai-signals.js";
-import { UI_TEMPLATE } from "../ui/template";
-import { computeVariantLayout } from "./layout-positions";
-import { planAutoLayoutExpansion, type AxisExpansionPlan } from "./layout-expansion";
-import type { AxisGaps } from "./padding-distribution";
-import { planAbsoluteChildPositions } from "./absolute-layout";
-import { configureQaOverlay } from "./qa-overlay";
+import { UI_TEMPLATE } from "../ui/template.js";
+import { computeVariantLayout } from "./layout-positions.js";
+import { planAutoLayoutExpansion, type AxisExpansionPlan } from "./layout-expansion.js";
+import type { AxisGaps } from "./padding-distribution.js";
+import { planAbsoluteChildPositions } from "./absolute-layout.js";
+import { configureQaOverlay, createQaOverlay } from "./qa-overlay.js";
 import {
   resolveLayoutProfile,
   shouldAdoptVerticalFlow,
   shouldExpandAbsoluteChildren,
   type LayoutProfile,
   type AutoLayoutSummary
-} from "./layout-profile";
-import { analyzeContent, calculateOptimalScale } from "./content-analyzer";
-import { createLayoutAdaptationPlan, applyLayoutAdaptation } from "./auto-layout-adapter";
+} from "./layout-profile.js";
+import { analyzeContent, calculateOptimalScale } from "./content-analyzer.js";
+import { createLayoutAdaptationPlan, applyLayoutAdaptation } from "./auto-layout-adapter.js";
 import { deriveWarningsFromAiSignals, readAiSignals, resolvePrimaryFocalPoint } from "./ai-signals.js";
 import { autoSelectLayoutPattern, normalizeLayoutAdvice, readLayoutAdvice, resolvePatternLabel } from "./layout-advice.js";
 import { requestAiInsights } from "./ai-service.js";
+import { trackEvent } from "./telemetry.js";
 import { debugFixLog } from "./debug.js";
-import { DEFAULT_AI_API_KEY } from "./build-env.js";
+import { DEFAULT_AI_API_KEY, HAS_DEFAULT_AI_API_KEY } from "./build-env.js";
+import {
+  AI_KEY_STORAGE_KEY,
+  AI_SIGNALS_KEY,
+  FOCAL_POINT_KEY,
+  LAST_RUN_KEY,
+  LAYOUT_ADVICE_KEY,
+  LAYOUT_PATTERN_KEY,
+  PLUGIN_NAME,
+  ROLE_KEY,
+  RUN_ID_KEY,
+  SAFE_AREA_KEY,
+  STAGING_PAGE_NAME,
+  TARGET_ID_KEY,
+  LEGACY_ROLE_KEY,
+  LEGACY_LAST_RUN_KEY,
+  LEGACY_AI_KEY_STORAGE_KEY
+} from "./plugin-constants.js";
 
-const STAGING_PAGE_NAME = "Biblio Assets Variants";
-const LAST_RUN_KEY = "biblio-assets:last-run";
 const MAX_SAFE_AREA_RATIO = 0.25;
 const RUN_GAP = 160;
 const RUN_MARGIN = 48;
 const MAX_ROW_WIDTH = 3200;
 const MIN_PATTERN_CONFIDENCE = 0.65;
-const AI_KEY_STORAGE_KEY = "biblio-assets:openai-key";
-const HAS_DEFAULT_AI_KEY = DEFAULT_AI_API_KEY.length > 0;
+const HAS_DEFAULT_AI_KEY = HAS_DEFAULT_AI_API_KEY;
 
 let cachedAiApiKey: string | null = null;
 let aiKeyLoaded = false;
@@ -87,6 +102,17 @@ type SafeAreaMetrics = {
 };
 
 declare const figma: PluginAPI;
+
+function hasOverlayRole(node: { getPluginData?: (key: string) => string }): boolean {
+  if (!("getPluginData" in node) || typeof node.getPluginData !== "function") {
+    return false;
+  }
+  try {
+    return node.getPluginData(ROLE_KEY) === "overlay" || node.getPluginData(LEGACY_ROLE_KEY) === "overlay";
+  } catch {
+    return false;
+  }
+}
 
 figma.showUI(UI_TEMPLATE, {
   width: 360,
@@ -216,8 +242,8 @@ async function handleGenerateRequest(
 
       const variantNode = selectionFrame.clone();
       variantNode.name = `${selectionFrame.name} → ${target.label}`;
-      variantNode.setPluginData("biblio-assets:targetId", target.id);
-      variantNode.setPluginData("biblio-assets:runId", runId);
+      variantNode.setPluginData(TARGET_ID_KEY, target.id);
+      variantNode.setPluginData(RUN_ID_KEY, runId);
 
       runContainer.appendChild(variantNode);
       const autoLayoutSnapshots = new Map<string, AutoLayoutSnapshot>();
@@ -282,11 +308,18 @@ async function handleGenerateRequest(
           : undefined;
 
       if (chosenPatternId) {
-        variantNode.setPluginData("biblio-assets:layoutPattern", chosenPatternId);
+        variantNode.setPluginData(LAYOUT_PATTERN_KEY, chosenPatternId);
         debugFixLog("layout pattern tagged on variant", {
           targetId: target.id,
           patternId: chosenPatternId,
           confidence: patternConfidence
+        });
+        trackEvent("LAYOUT_ADVICE_APPLIED", {
+          targetId: target.id,
+          patternId: chosenPatternId,
+          confidence: patternConfidence,
+          fallback: layoutFallback,
+          runId
         });
       }
 
@@ -298,7 +331,26 @@ async function handleGenerateRequest(
           message: "AI confidence was low, so a deterministic layout was used."
         });
       }
+      
+      warnings.forEach(w => {
+        trackEvent("QA_ALERT_DISPLAYED", {
+           targetId: target.id,
+           code: w.code,
+           severity: w.severity,
+           runId
+        });
+      });
+
       variantNodes.push(variantNode);
+      
+      trackEvent("VARIANT_GENERATED", {
+        targetId: target.id,
+        warningsCount: warnings.length,
+        hasLayoutPattern: Boolean(chosenPatternId),
+        safeAreaRatio,
+        runId
+      });
+
       results.push({
         targetId: target.id,
         nodeId: variantNode.id,
@@ -331,10 +383,10 @@ async function handleGenerateRequest(
     });
 
     postToUI({ type: "status", payload: { status: "idle" } });
-    figma.notify(`Biblio Assets: Generated ${targets.length} variant${targets.length === 1 ? "" : "s"}.`);
+    figma.notify(`${PLUGIN_NAME}: Generated ${targets.length} variant${targets.length === 1 ? "" : "s"}.`);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unexpected error while generating variants.";
-    console.error("Biblio Assets generation failed", error);
+    console.error(`${PLUGIN_NAME} generation failed`, error);
     postToUI({ type: "error", payload: { message } });
     postToUI({ type: "status", payload: { status: "idle" } });
   }
@@ -349,7 +401,7 @@ async function handleSetAiSignals(signals: AiSignals): Promise<void> {
 
   try {
     const serialized = JSON.stringify(signals);
-    frame.setPluginData("biblio-assets:ai-signals", serialized);
+    frame.setPluginData(AI_SIGNALS_KEY, serialized);
     debugFixLog("ai signals stored on selection", {
       roleCount: signals.roles?.length ?? 0,
       qaCount: signals.qa?.length ?? 0
@@ -381,6 +433,8 @@ function createSelectionState(frame: FrameNode | null): SelectionState {
     return {
       selectionOk: true,
       selectionName: frame.name,
+      selectionWidth: frame.width,
+      selectionHeight: frame.height,
       aiSignals: aiSignals ?? undefined,
       layoutAdvice: layoutAdvice ?? undefined,
       aiConfigured: Boolean(cachedAiApiKey),
@@ -444,7 +498,7 @@ function createRunContainer(page: PageNode, runId: string, sourceName: string): 
   container.paddingBottom = RUN_MARGIN;
   container.itemSpacing = RUN_GAP;
   container.clipsContent = false;
-  container.setPluginData("biblio-assets:runId", runId);
+  container.setPluginData(RUN_ID_KEY, runId);
 
   page.appendChild(container);
 
@@ -607,7 +661,7 @@ function expandAbsoluteChildren(
   };
 
   const absoluteChildren = frame.children.filter((child) => {
-    if ("getPluginData" in child && child.getPluginData("biblio-assets:role") === "overlay") {
+    if (hasOverlayRole(child)) {
       return false;
     }
     if ("layoutPositioning" in child && child.layoutPositioning !== "ABSOLUTE" && frame.layoutMode !== "NONE") {
@@ -808,11 +862,11 @@ async function scaleNodeTree(
   }
 
   frame.setPluginData(
-    "biblio-assets:safeArea",
+    SAFE_AREA_KEY,
     JSON.stringify({ insetX: safeInsetX, insetY: safeInsetY, width: target.width, height: target.height })
   );
   if (primaryFocal) {
-    frame.setPluginData("biblio-assets:focalPoint", JSON.stringify(primaryFocal));
+    frame.setPluginData(FOCAL_POINT_KEY, JSON.stringify(primaryFocal));
   }
 
   debugFixLog("axis expansion planned", {
@@ -1027,7 +1081,7 @@ function countAbsoluteChildren(frame: FrameNode): number {
   }
   let count = 0;
   for (const child of frame.children) {
-    if ("getPluginData" in child && child.getPluginData("biblio-assets:role") === "overlay") {
+    if (hasOverlayRole(child)) {
       continue;
     }
     if ("layoutPositioning" in child && child.layoutPositioning !== "ABSOLUTE" && frame.layoutMode !== "NONE") {
@@ -1131,7 +1185,7 @@ function exposeRun(page: PageNode, variants: readonly FrameNode[]): void {
   figma.viewport.scrollAndZoomIntoView([...variants]);
 }
 
-function collectWarnings(frame: FrameNode, target: VariantTarget, safeAreaRatio: number): VariantWarning[] {
+export function collectWarnings(frame: FrameNode, target: VariantTarget, safeAreaRatio: number): VariantWarning[] {
   const warnings: VariantWarning[] = [];
   const safeInsetX = target.width * safeAreaRatio;
   const safeInsetY = target.height * safeAreaRatio;
@@ -1197,7 +1251,8 @@ function measureContentMargins(frame: FrameNode): ContentMargins | null {
     return null;
   }
 
-  const contentBounds = combineChildBounds(frame);
+  const aiSignals = readAiSignals(frame);
+  const contentBounds = combineChildBounds(frame, aiSignals || undefined);
   if (!contentBounds) {
     return null;
   }
@@ -1210,7 +1265,34 @@ function measureContentMargins(frame: FrameNode): ContentMargins | null {
   return { left, right, top, bottom };
 }
 
-function combineChildBounds(frame: FrameNode): { x: number; y: number; width: number; height: number } | null {
+const IGNORED_ROLES = new Set(["hero_image", "secondary_image", "decorative"]);
+
+function isBackgroundOrIgnored(node: SceneNode, rootFrame: FrameNode, aiSignals?: AiSignals): boolean {
+  if (hasOverlayRole(node)) {
+    return true;
+  }
+
+  // Check role if AI signals are present
+  if (aiSignals?.roles) {
+    const roleEntry = aiSignals.roles.find((r) => r.nodeId === node.id);
+    if (roleEntry && IGNORED_ROLES.has(roleEntry.role)) {
+      return true;
+    }
+  }
+
+  // Geometric heuristic: if layer covers >95% of the root frame, treat as background
+  if ("width" in node && "height" in node && typeof node.width === "number" && typeof node.height === "number") {
+    const nodeArea = node.width * node.height;
+    const rootArea = rootFrame.width * rootFrame.height;
+    if (rootArea > 0 && nodeArea >= rootArea * 0.95) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+export function combineChildBounds(frame: FrameNode, aiSignals?: AiSignals): { x: number; y: number; width: number; height: number } | null {
   let minX = Number.POSITIVE_INFINITY;
   let minY = Number.POSITIVE_INFINITY;
   let maxX = Number.NEGATIVE_INFINITY;
@@ -1224,7 +1306,7 @@ function combineChildBounds(frame: FrameNode): { x: number; y: number; width: nu
       continue;
     }
 
-    if ("getPluginData" in node && node.getPluginData("biblio-assets:role") === "overlay") {
+    if (isBackgroundOrIgnored(node, frame, aiSignals)) {
       continue;
     }
 
@@ -1269,40 +1351,6 @@ function isWithinSafeArea(bounds: { x: number; y: number; width: number; height:
   );
 }
 
-function createQaOverlay(target: VariantTarget, safeAreaRatio: number): FrameNode {
-  const overlay = figma.createFrame();
-  overlay.name = "QA Overlay";
-  overlay.layoutMode = "NONE";
-  overlay.opacity = 1;
-  overlay.fills = [];
-  overlay.strokes = [];
-  overlay.resizeWithoutConstraints(target.width, target.height);
-  overlay.clipsContent = false;
-  overlay.setPluginData("biblio-assets:role", "overlay");
-
-  const insetX = target.width * safeAreaRatio;
-  const insetY = target.height * safeAreaRatio;
-  const safeRect = figma.createRectangle();
-  safeRect.name = "Safe Area";
-  safeRect.x = insetX;
-  safeRect.y = insetY;
-  safeRect.resizeWithoutConstraints(target.width - insetX * 2, target.height - insetY * 2);
-  safeRect.fills = [];
-  safeRect.strokes = [
-    {
-      type: "SOLID",
-      color: { r: 0.92, g: 0.4, b: 0.36 }
-    }
-  ];
-  safeRect.dashPattern = [8, 12];
-  safeRect.strokeWeight = 3;
-  safeRect.locked = true;
-  safeRect.setPluginData("biblio-assets:role", "overlay");
-  overlay.appendChild(safeRect);
-
-  return overlay;
-}
-
 function formatTimestamp(date: Date): string {
   return `${date.toLocaleDateString()} · ${date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
 }
@@ -1313,7 +1361,7 @@ function writeLastRun(summary: LastRunSummary): void {
 }
 
 function readLastRun(): LastRunSummary | null {
-  const raw = figma.root.getPluginData(LAST_RUN_KEY);
+  const raw = figma.root.getPluginData(LAST_RUN_KEY) || figma.root.getPluginData(LEGACY_LAST_RUN_KEY);
   if (!raw) {
     return null;
   }
@@ -1324,7 +1372,7 @@ function readLastRun(): LastRunSummary | null {
     }
     return parsed;
   } catch (error) {
-    console.warn("Failed to parse Biblio Assets last run plugin data", error);
+    console.warn(`Failed to parse ${PLUGIN_NAME} last run plugin data`, error);
     return null;
   }
 }
@@ -1362,7 +1410,18 @@ async function ensureAiKeyLoaded(): Promise<void> {
     return;
   }
   const stored = await figma.clientStorage.getAsync(AI_KEY_STORAGE_KEY);
-  const trimmed = typeof stored === "string" ? stored.trim() : "";
+  const legacyStored = await figma.clientStorage.getAsync(LEGACY_AI_KEY_STORAGE_KEY);
+  const activeValue =
+    typeof stored === "string" && stored.trim().length > 0 ? stored : typeof legacyStored === "string" ? legacyStored : "";
+  const trimmed = typeof activeValue === "string" ? activeValue.trim() : "";
+  const migratedFromLegacy =
+    trimmed.length > 0 &&
+    (!stored || (typeof stored === "string" && stored.trim().length === 0)) &&
+    typeof legacyStored === "string" &&
+    legacyStored.trim().length > 0;
+  if (migratedFromLegacy) {
+    await figma.clientStorage.setAsync(AI_KEY_STORAGE_KEY, trimmed);
+  }
   if (trimmed.length > 0) {
     cachedAiApiKey = trimmed;
     aiUsingDefaultKey = HAS_DEFAULT_AI_KEY && trimmed === DEFAULT_AI_API_KEY;
@@ -1376,12 +1435,17 @@ async function ensureAiKeyLoaded(): Promise<void> {
   aiKeyLoaded = true;
   aiStatus = cachedAiApiKey ? "idle" : "missing-key";
   aiStatusDetail = null;
+  debugFixLog("ai key source resolved", {
+    source: cachedAiApiKey ? (aiUsingDefaultKey ? "default" : "user-provided") : "missing",
+    usingDefault: aiUsingDefaultKey
+  });
 }
 
 async function handleSetApiKey(key: string): Promise<void> {
   const trimmed = key.trim();
   if (trimmed.length === 0) {
     await figma.clientStorage.deleteAsync(AI_KEY_STORAGE_KEY);
+    await figma.clientStorage.deleteAsync(LEGACY_AI_KEY_STORAGE_KEY);
     if (HAS_DEFAULT_AI_KEY) {
       cachedAiApiKey = DEFAULT_AI_API_KEY;
       aiUsingDefaultKey = true;
@@ -1396,6 +1460,7 @@ async function handleSetApiKey(key: string): Promise<void> {
     aiStatusDetail = null;
   } else {
     await figma.clientStorage.setAsync(AI_KEY_STORAGE_KEY, trimmed);
+    await figma.clientStorage.deleteAsync(LEGACY_AI_KEY_STORAGE_KEY);
     cachedAiApiKey = trimmed;
     aiUsingDefaultKey = HAS_DEFAULT_AI_KEY && trimmed === DEFAULT_AI_API_KEY;
     aiStatus = "idle";
@@ -1458,33 +1523,42 @@ async function maybeRequestAiForFrame(frame: FrameNode, options?: { readonly for
 
   try {
     debugFixLog("requesting ai insights", { frameId: frame.id, nodeName: frame.name });
+    trackEvent("AI_ANALYSIS_REQUESTED", { frameId: frame.id, requestId });
     const result = await requestAiInsights(frame, cachedAiApiKey);
     if (!result) {
       encounteredError = true;
       aiStatus = "error";
       aiStatusDetail = "AI response missing structured layout data.";
+      trackEvent("AI_ANALYSIS_FAILED", { frameId: frame.id, reason: aiStatusDetail });
       return;
     }
     if (result.signals) {
-      frame.setPluginData("biblio-assets:ai-signals", JSON.stringify(result.signals));
+      frame.setPluginData(AI_SIGNALS_KEY, JSON.stringify(result.signals));
     } else {
-      frame.setPluginData("biblio-assets:ai-signals", "");
+      frame.setPluginData(AI_SIGNALS_KEY, "");
     }
     if (result.layoutAdvice) {
-      frame.setPluginData("biblio-assets:layout-advice", JSON.stringify(result.layoutAdvice));
+      frame.setPluginData(LAYOUT_ADVICE_KEY, JSON.stringify(result.layoutAdvice));
     } else {
-      frame.setPluginData("biblio-assets:layout-advice", "");
+      frame.setPluginData(LAYOUT_ADVICE_KEY, "");
     }
     debugFixLog("ai insights stored on frame", {
       frameId: frame.id,
       roles: result.signals?.roles.length ?? 0,
       layoutEntries: result.layoutAdvice?.entries.length ?? 0
     });
+    trackEvent("AI_ANALYSIS_COMPLETED", {
+      frameId: frame.id,
+      roleCount: result.signals?.roles.length ?? 0,
+      qaCount: result.signals?.qa.length ?? 0,
+      layoutEntries: result.layoutAdvice?.entries.length ?? 0
+    });
   } catch (error) {
     encounteredError = true;
     aiStatus = "error";
     aiStatusDetail = error instanceof Error ? error.message : String(error);
-    console.error("Biblio Assets AI request failed", error);
+    console.error(`${PLUGIN_NAME} AI request failed`, error);
+    trackEvent("AI_ANALYSIS_FAILED", { frameId: frame.id, reason: aiStatusDetail });
   } finally {
     if (!encounteredError) {
       aiStatus = cachedAiApiKey ? "idle" : "missing-key";
@@ -1513,7 +1587,7 @@ async function handleSetLayoutAdvice(advice: LayoutAdvice): Promise<void> {
       return;
     }
     const serialized = JSON.stringify(normalized);
-    frame.setPluginData("biblio-assets:layout-advice", serialized);
+    frame.setPluginData(LAYOUT_ADVICE_KEY, serialized);
     debugFixLog("layout advice stored on selection", {
       entries: normalized.entries?.length ?? 0
     });

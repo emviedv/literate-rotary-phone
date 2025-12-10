@@ -1,4 +1,4 @@
-# Biblio Assets Resizer — MVP Phased Plan
+# BiblioScale — MVP Phased Plan
 
 **Status:** Proposed (NOT IN CURRENT STACK)  
 **Last updated:** November 03, 2025

@@ -1,3 +1,5 @@
+import { DEBUG_KEY, LEGACY_DEBUG_KEY } from "./plugin-constants.js";
+
 declare const figma: PluginAPI | undefined;
 declare const process: { env?: Record<string, string | undefined> } | undefined;
 
@@ -10,7 +12,7 @@ function computeDebugFlag(): boolean {
 
   if (typeof figma !== "undefined") {
     try {
-      if (figma.root.getPluginData("biblio-assets:debug") === "1") {
+      if (figma.root.getPluginData(DEBUG_KEY) === "1" || figma.root.getPluginData(LEGACY_DEBUG_KEY) === "1") {
         return true;
       }
     } catch {
@@ -37,6 +39,10 @@ export function isDebugFixEnabled(): boolean {
   return cachedDebugFlag;
 }
 
+export function resetDebugFlag(): void {
+  cachedDebugFlag = null;
+}
+
 function log(prefix: string, message: string, context?: DebugContext): void {
   if (!isDebugFixEnabled()) {
     return;
@@ -51,9 +57,9 @@ function log(prefix: string, message: string, context?: DebugContext): void {
 }
 
 export function debugFixLog(message: string, context?: DebugContext): void {
-  log("[BiblioAssets][frame-detach]", message, context);
+  log("[BiblioScale][frame-detach]", message, context);
 }
 
 export function debugAutoLayoutLog(message: string, context?: DebugContext): void {
-  log("[BiblioAssets][auto-layout]", message, context);
+  log("[BiblioScale][auto-layout]", message, context);
 }

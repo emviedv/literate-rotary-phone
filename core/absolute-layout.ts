@@ -30,12 +30,17 @@ export function planAbsoluteChildPositions(input: PlanAbsoluteChildPositionsInpu
   const contentBounds = measureBounds(input.children);
 
   if (input.profile === "vertical" && input.children.length >= 2) {
-    const horizontalSpan = contentBounds.width;
-    const verticalSpan = contentBounds.height;
-    const layoutIsPredominantlyHorizontal = horizontalSpan > verticalSpan * 1.1;
+    const targetRatio = safeBounds.height > 0 ? safeBounds.width / safeBounds.height : 1;
+    
+    // Only force stack for extreme vertical targets (like TikTok)
+    if (targetRatio < 0.57) {
+      const horizontalSpan = contentBounds.width;
+      const verticalSpan = contentBounds.height;
+      const layoutIsPredominantlyHorizontal = horizontalSpan > verticalSpan * 1.1;
 
-    if (layoutIsPredominantlyHorizontal) {
-      return planVerticalStack(input.children, safeBounds);
+      if (layoutIsPredominantlyHorizontal) {
+        return planVerticalStack(input.children, safeBounds);
+      }
     }
   }
 
