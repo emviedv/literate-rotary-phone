@@ -1,10 +1,10 @@
-# Biblio Assets Resizer — Product Requirements Document
+# BiblioScale — Product Requirements Document
 
 **Status:** Proposed (NOT IN CURRENT STACK)  
 **Last updated:** November 03, 2025
 
 ## Context
-Marketing and product teams frequently repurpose bespoke campaign frames across multiple Figma-native placements. Manual resizing duplicates effort, introduces layout mistakes, and slows launches. Biblio Assets Resizer automates multi-target adaptation while preserving original creative intent, enabling fast, on-brand asset expansion.
+Marketing and product teams frequently repurpose bespoke campaign frames across multiple Figma-native placements. Manual resizing duplicates effort, introduces layout mistakes, and slows launches. BiblioScale automates multi-target adaptation while preserving original creative intent, enabling fast, on-brand asset expansion.
 
 ## Problem Statement
 - Re-creating variants (covers, gallery tiles, banners) requires manual artboard setup, asset scaling, and alignment tweaks in Figma.
@@ -43,7 +43,7 @@ Marketing and product teams frequently repurpose bespoke campaign frames across 
 1. User selects a source frame and opens the plugin.
 2. Plugin classifies layers (images, text, logos, decorative elements) and suggests compatible target formats.
 3. User toggles desired targets and runs “Generate Variants.”
-4. Plugin clones the frame into a dedicated `Biblio Assets` page, applies responsive layout rules per target, and repositions assets.
+4. Plugin clones the frame into a dedicated `BiblioScale` page, applies responsive layout rules per target, and repositions assets.
 5. QA overlay surfaces automated checks (alignment, safe areas, contrast). OpenAI insights flag composition risks.
 6. User exports or moves generated frames into project flow; history preserves last five operations for undo/redo.
 
@@ -89,17 +89,17 @@ Marketing and product teams frequently repurpose bespoke campaign frames across 
 
 ## Phased Delivery Plan (Each phase fully testable in Figma)
 
-### Phase 1 — Core Variant Engine
+### Phase 1 — Core Variant Engine (Complete)
 - **Scope:** Single-frame selection, generate Figma Community cover, gallery, thumbnail, and web hero banner using original assets. Include QA overlay with non-AI checks (safe area, alignment). Local history (last operation).
-- **Acceptance (Figma Testing):** In a sandbox file, selecting a marketing frame and running Phase 1 flows produces four variant frames on a `Biblio Assets` page with correct dimensions and passes QA overlay without manual fixes.
+- **Acceptance (Figma Testing):** In a sandbox file, selecting a marketing frame and running Phase 1 flows produces four variant frames on a `BiblioScale` page with correct dimensions and passes QA overlay without manual fixes.
 
-### Phase 2 — Extended Formats & AI QA
+### Phase 2 — Extended Formats & AI QA (Complete)
 - **Scope:** Add social carousel, YouTube cover, and TikTok vertical templates. Integrate OpenAI composition analyzer and asset salience detection for QA insights. Introduce configurable safe area presets.
 - **Acceptance (Figma Testing):** Running Phase 2 build on varied sample frames generates all seven target formats, displays AI-powered warnings (e.g., low contrast), and allows the user to resolve them without leaving Figma.
 
-### Phase 3 — Layout Advisor & Batch Operations
-- **Scope:** Enable batch processing (up to 10 frames), layout advisor ranking alt variants, and optional AI-generated layout suggestions (colorway/theme toggle pending approval). Capture telemetry and export QA report.
-- **Acceptance (Figma Testing):** Selecting multiple frames in a test file runs through the batch flow, produces variants with ranked layout suggestions, and logs telemetry events accessible via developer console.
+### Phase 3 — Docs, Telemetry & Polish (In Progress)
+- **Scope:** Complete documentation for new targets and AI features. Implement telemetry for usage tracking (target selection, AI adoption, QA alerts). Final polish on UI/UX.
+- **Acceptance (Figma Testing):** Telemetry events fire correctly during usage. Documentation matches shipped features.
 
 ## Rollout Plan
 - **Alpha:** Internal design team (5 users) on Phase 1; collect baseline workflow timings and template feedback.

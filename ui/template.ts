@@ -97,6 +97,47 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
       font-variant-numeric: tabular-nums;
       font-weight: 600;
     }
+    .safe-area-presets {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .safe-area-presets-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      color: var(--figma-color-text-secondary, #475467);
+    }
+    .safe-area-preset-label {
+      font-weight: 600;
+      color: var(--figma-color-text, #101828);
+    }
+    .preset-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .preset-pill {
+      border: 1px solid var(--figma-color-border, rgba(16, 24, 40, 0.16));
+      border-radius: 999px;
+      background: transparent;
+      color: var(--figma-color-text, #101828);
+      padding: 4px 10px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: background 0.16s ease-in-out, color 0.16s ease-in-out, border-color 0.16s ease-in-out;
+    }
+    .preset-pill.active {
+      background: rgba(51, 92, 255, 0.12);
+      border-color: rgba(51, 92, 255, 0.32);
+      color: var(--figma-color-text, #101828);
+    }
+    .preset-hint {
+      font-size: 12px;
+      margin: 0;
+      color: var(--figma-color-text-secondary, #475467);
+    }
     input[type="password"],
     input[type="text"] {
       width: 100%;
@@ -148,6 +189,18 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
       flex-direction: column;
       gap: 6px;
     }
+    .ai-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .ai-title {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
     .warning {
       padding: 6px 8px;
       border-radius: 8px;
@@ -170,6 +223,7 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
       border: 1px solid rgba(16, 24, 40, 0.1);
       border-radius: 8px;
       background: var(--figma-color-bg-tertiary, rgba(16, 24, 40, 0.04));
+      color: #ffffff;
     }
     .result-item strong {
       font-size: 12px;
@@ -186,6 +240,18 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
       font-size: 12px;
       color: var(--figma-color-text-secondary, #475467);
     }
+    .ai-chip.info {
+      background: rgba(16, 156, 241, 0.14);
+      color: #0f3b78;
+    }
+    .ai-chip.success {
+      background: rgba(34, 197, 94, 0.14);
+      color: #166534;
+    }
+    .ai-chip.warn {
+      background: rgba(250, 176, 5, 0.16);
+      color: #7a3b00;
+    }
     .ai-qa {
       display: flex;
       flex-direction: column;
@@ -198,6 +264,27 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
       border: 1px solid rgba(16, 24, 40, 0.08);
       background: var(--figma-color-bg-tertiary, rgba(16, 24, 40, 0.04));
       color: var(--figma-color-text, #101828);
+    }
+    .ai-qa-item.warn {
+      border-color: rgba(250, 176, 5, 0.45);
+      background: rgba(250, 176, 5, 0.12);
+    }
+    .ai-qa-item.info {
+      border-color: rgba(16, 156, 241, 0.35);
+      background: rgba(16, 156, 241, 0.08);
+    }
+    .ai-qa-item.error {
+      border-color: rgba(191, 38, 38, 0.35);
+      background: rgba(191, 38, 38, 0.12);
+    }
+    .ai-qa-title {
+      font-weight: 600;
+      text-transform: capitalize;
+    }
+    .ai-qa-meta {
+      font-size: 12px;
+      color: var(--figma-color-text-secondary, #475467);
+      margin-top: 4px;
     }
     .layout-list {
       display: flex;
@@ -220,6 +307,14 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
       font-size: 12px;
       color: var(--figma-color-text, #101828);
     }
+    .layout-meta {
+      font-size: 12px;
+      color: var(--figma-color-text-secondary, #475467);
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
     .layout-row select {
       width: 100%;
       border-radius: 8px;
@@ -238,53 +333,59 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
       <p id="selectionLabel" class="status">Select a single frame to begin.</p>
     </header>
 
-    <section class="section" id="aiSetupSection">
-      <h2>AI setup</h2>
-      <p id="aiKeyStatus" class="status">Add an OpenAI API key to enable AI insights.</p>
-      <input id="aiKeyInput" type="password" placeholder="sk-..." autocomplete="off" spellcheck="false" />
-      <div class="button-row">
-        <button id="saveAiKey">Save key</button>
-        <button id="clearAiKey" class="secondary">Clear key</button>
+    <section class="section" id="aiSection" hidden>
+      <div class="ai-header">
+        <div class="ai-title">
+          <h2>AI signals</h2>
+          <p id="aiStatusText" class="status">AI analysis is built into this plugin. Select a frame to analyze.</p>
+        </div>
         <button id="refreshAiButton" class="secondary">Run AI analysis</button>
       </div>
-    </section>
-
-    <section class="section" id="aiSection" hidden>
-      <h2>AI signals</h2>
       <div id="aiEmpty" class="status">No AI signals found on selection.</div>
       <div id="aiRoles" class="ai-row" role="list"></div>
       <div id="aiQa" class="ai-qa" role="list"></div>
-      <button id="applySampleAi" style="align-self: flex-start;">Apply sample AI signals</button>
+      <p id="aiQaSummary" class="status"></p>
     </section>
 
     <section class="section" id="layoutSection" hidden>
       <h2>Layout patterns</h2>
       <p class="status" id="layoutStatus">AI-suggested patterns per target.</p>
       <div id="layoutContainer" class="layout-list"></div>
-      <button id="applySampleLayout" style="align-self: flex-start;">Apply sample layout advice</button>
     </section>
 
     <section class="section">
       <h2 id="targetSection">Targets</h2>
-      <div class="targets">
-        <select id="targetSelect" multiple size="4" aria-labelledby="targetSection" aria-describedby="targetHelp"></select>
-        <p id="targetHelp" class="targets-help">Hold Cmd (Mac) or Ctrl (Windows) to choose multiple target sizes.</p>
-        <p id="targetSummary" class="targets-summary"></p>
-      </div>
+      <div id="targetList" class="targets-list" role="listbox" aria-multiselectable="true" aria-labelledby="targetSection"></div>
+      <p id="targetSummary" class="targets-summary" style="margin-top: 8px;"></p>
     </section>
 
     <section class="section">
       <h2>Safe area</h2>
       <div class="safe-area-control">
-        <div>
+        <label for="safeAreaSlider" style="display: flex; justify-content: space-between; align-items: center;">
+          <span>Safe area inset</span>
           <span class="safe-area-value" id="safeAreaValue">8%</span>
-          <span style="color: var(--figma-color-text-secondary, #475467); margin-left: 4px;">margin</span>
-        </div>
+        </label>
         <input id="safeAreaSlider" type="range" min="0" max="0.2" step="0.01" value="0.08" />
-        <p style="font-size: 12px; color: var(--figma-color-text-secondary, #475467);">
-          Adjusts the inset used for QA overlays and safe-area checks.
-        </p>
       </div>
+      <div class="safe-area-presets">
+        <div class="safe-area-presets-header">
+          <span>Presets</span>
+          <span class="safe-area-preset-label" id="safeAreaPresetLabel">Balanced (8%)</span>
+        </div>
+        <div class="preset-pills" id="safeAreaPresets">
+          <button type="button" class="preset-pill" data-safe-area-preset="tight" data-label="Tight" data-value="0.04">
+            Tight · 4%
+          </button>
+          <button type="button" class="preset-pill active" data-safe-area-preset="balanced" data-label="Balanced" data-value="0.08">
+            Balanced · 8%
+          </button>
+          <button type="button" class="preset-pill" data-safe-area-preset="roomy" data-label="Roomy" data-value="0.12">
+            Roomy · 12%
+          </button>
+        </div>
+      </div>
+      <p class="preset-hint">Adjusts the inset used for QA overlays and safe-area checks. Presets snap to brand policies; use the slider for custom ratios.</p>
     </section>
 
     <button id="generateButton" disabled>Generate variants</button>
@@ -304,16 +405,15 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
   <script>
     (function () {
       const selectionLabel = document.getElementById("selectionLabel");
-      const targetSelect = document.getElementById("targetSelect");
+      const targetList = document.getElementById("targetList");
       const targetSummary = document.getElementById("targetSummary");
       const safeAreaSlider = document.getElementById("safeAreaSlider");
       const safeAreaValue = document.getElementById("safeAreaValue");
+      const safeAreaPresets = document.getElementById("safeAreaPresets");
+      const safeAreaPresetLabel = document.getElementById("safeAreaPresetLabel");
       const generateButton = document.getElementById("generateButton");
       const statusMessage = document.getElementById("statusMessage");
-      const aiKeyStatus = document.getElementById("aiKeyStatus");
-      const aiKeyInput = document.getElementById("aiKeyInput");
-      const saveAiKey = document.getElementById("saveAiKey");
-      const clearAiKey = document.getElementById("clearAiKey");
+      const aiStatusText = document.getElementById("aiStatusText");
       const refreshAiButton = document.getElementById("refreshAiButton");
       const lastRunSection = document.getElementById("lastRunSection");
       const lastRunContent = document.getElementById("lastRunContent");
@@ -323,14 +423,15 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
       const aiEmpty = document.getElementById("aiEmpty");
       const aiRoles = document.getElementById("aiRoles");
       const aiQa = document.getElementById("aiQa");
-      const applySampleAi = document.getElementById("applySampleAi");
+      const aiQaSummary = document.getElementById("aiQaSummary");
       const layoutSection = document.getElementById("layoutSection");
       const layoutStatus = document.getElementById("layoutStatus");
       const layoutContainer = document.getElementById("layoutContainer");
-      const applySampleLayout = document.getElementById("applySampleLayout");
 
       const LAYOUT_CONFIDENCE_THRESHOLD = 0.65;
+      const QA_CONFIDENCE_THRESHOLD = 0.35;
       let availableTargets = [];
+      let selectedTargetIds = new Set();
       let selectionReady = false;
       let isBusy = false;
       let layoutSelections = {};
@@ -339,108 +440,302 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
       let aiErrorMessage = "";
       let aiUsingDefaultKey = false;
 
-      if (!(targetSelect instanceof HTMLSelectElement)) {
-        throw new Error("Target select element missing.");
+      if (!(targetList instanceof HTMLElement)) {
+        throw new Error("Target list element missing.");
       }
       if (!(targetSummary instanceof HTMLElement)) {
         throw new Error("Target summary element missing.");
       }
-      if (!(aiKeyStatus instanceof HTMLElement)) {
-        throw new Error("AI key status element missing.");
+      if (!(safeAreaSlider instanceof HTMLInputElement)) {
+        throw new Error("Safe area slider missing.");
       }
-      if (!(aiKeyInput instanceof HTMLInputElement)) {
-        throw new Error("AI key input missing.");
-      }
-      if (!(saveAiKey instanceof HTMLButtonElement) || !(clearAiKey instanceof HTMLButtonElement)) {
-        throw new Error("AI key buttons missing.");
-      }
-      if (!(refreshAiButton instanceof HTMLButtonElement)) {
-        throw new Error("AI refresh button missing.");
+
+      function createChip(text, tone = "") {
+        const chip = document.createElement("span");
+        chip.className = "ai-chip" + (tone ? " " + tone : "");
+        chip.textContent = text;
+        return chip;
       }
 
       function renderTargets(targets) {
         availableTargets = targets;
-        targetSelect.innerHTML = "";
-        const minimumVisible = 4;
-        const maximumVisible = 8;
-        const visibleRows = Math.min(Math.max(targets.length, minimumVisible), maximumVisible);
-        targetSelect.size = targets.length === 0 ? minimumVisible : visibleRows;
-        targetSelect.disabled = targets.length === 0;
+        targetList.innerHTML = "";
+        
         targets.forEach((target) => {
-          const option = document.createElement("option");
-          option.value = target.id;
-          option.textContent = \`\${target.label} (\${target.width} × \${target.height})\`;
-          option.title = \`\${target.description} - \${target.width} × \${target.height}\`;
-          option.selected = true;
-          targetSelect.appendChild(option);
+          const item = document.createElement("div");
+          item.className = "target-item";
+          item.role = "option";
+          item.setAttribute("aria-selected", "false");
+          item.dataset.id = target.id;
+          
+          const preview = document.createElement("div");
+          preview.className = "target-preview";
+          // Calculate aspect ratio for preview
+          const maxDim = 24;
+          const ratio = target.width / target.height;
+          let w, h;
+          if (ratio > 1) {
+            w = maxDim;
+            h = maxDim / ratio;
+          } else {
+            h = maxDim;
+            w = maxDim * ratio;
+          }
+          preview.style.width = w + "px";
+          preview.style.height = h + "px";
+          
+          const label = document.createElement("div");
+          label.className = "target-info";
+          const name = document.createElement("div");
+          name.className = "target-name";
+          name.textContent = target.label;
+          const dim = document.createElement("div");
+          dim.className = "target-dim";
+          dim.textContent = \`\${target.width} × \${target.height}\`;
+          
+          label.appendChild(name);
+          label.appendChild(dim);
+          
+          const check = document.createElement("div");
+          check.className = "target-check";
+          check.innerHTML = \`<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M10 3L4.5 8.5L2 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>\`;
+
+          item.appendChild(preview);
+          item.appendChild(label);
+          item.appendChild(check);
+          
+          item.addEventListener("click", () => toggleTarget(target.id));
+          
+          targetList.appendChild(item);
         });
+        
+        // Initial auto-select all if not set? No, wait for selection update
+      }
+      
+      function toggleTarget(id) {
+        if (selectedTargetIds.has(id)) {
+          selectedTargetIds.delete(id);
+        } else {
+          selectedTargetIds.add(id);
+        }
+        updateTargetVisuals();
         updateGenerateState();
       }
+      
+      function updateTargetVisuals() {
+        const items = targetList.querySelectorAll(".target-item");
+        items.forEach(item => {
+          const id = item.dataset.id;
+          if (selectedTargetIds.has(id)) {
+            item.classList.add("selected");
+            item.setAttribute("aria-selected", "true");
+          } else {
+            item.classList.remove("selected");
+            item.setAttribute("aria-selected", "false");
+          }
+        });
+      }
+
+      // Add styles for new target list
+      const style = document.createElement("style");
+      style.textContent = \`
+        .targets-list {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+          max-height: 240px;
+          overflow-y: auto;
+          border: 1px solid var(--figma-color-border, rgba(16, 24, 40, 0.16));
+          border-radius: 8px;
+          background: var(--figma-color-bg-tertiary, rgba(16, 24, 40, 0.02));
+        }
+        .target-item {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          padding: 8px 12px;
+          cursor: pointer;
+          transition: background 0.1s;
+          border-bottom: 1px solid var(--figma-color-border, rgba(16, 24, 40, 0.05));
+        }
+        .target-item:last-child {
+          border-bottom: none;
+        }
+        .target-item:hover {
+          background: rgba(16, 24, 40, 0.04);
+        }
+        .target-item.selected {
+          background: rgba(51, 92, 255, 0.08);
+        }
+        .target-preview {
+          background: var(--figma-color-icon-secondary, #8a93a0);
+          border-radius: 2px;
+        }
+        .target-item.selected .target-preview {
+          background: var(--figma-color-bg-brand, #335cff);
+        }
+        .target-info {
+          flex: 1;
+        }
+        .target-name {
+          font-weight: 500;
+          font-size: 12px;
+        }
+        .target-dim {
+          font-size: 11px;
+          color: var(--figma-color-text-secondary, #475467);
+        }
+        .target-check {
+          color: var(--figma-color-bg-brand, #335cff);
+          opacity: 0;
+          transition: opacity 0.1s;
+        }
+        .target-item.selected .target-check {
+          opacity: 1;
+        }
+      \`;
+      document.head.appendChild(style);
+
+      const safeAreaPresetButtons =
+        safeAreaPresets instanceof HTMLElement
+          ? Array.from(safeAreaPresets.querySelectorAll("button[data-safe-area-preset]")).filter((button) =>
+              button instanceof HTMLButtonElement
+            )
+          : [];
+
+      const SAFE_AREA_PRESET_TOLERANCE = 0.0005;
 
       function updateSafeAreaValue() {
-        const percent = Math.round(Number(safeAreaSlider.value) * 100);
-        safeAreaValue.textContent = \`\${percent}%\`;
+        const value = Number(safeAreaSlider.value);
+        const percent = Math.round(value * 100);
+        safeAreaValue.textContent = String(percent) + "%";
+        // Persistence
+        try {
+          localStorage.setItem("biblioscale_safe_area", String(value));
+        } catch (e) {}
       }
+      
+      // Load persistence
+      try {
+        const saved = localStorage.getItem("biblioscale_safe_area");
+        if (saved) {
+          const val = Number(saved);
+          if (!isNaN(val)) {
+            safeAreaSlider.value = String(val);
+          }
+        }
+      } catch (e) {}
+
+      function updateSafeAreaPresetDisplay() {
+        if (!safeAreaPresetLabel || safeAreaPresetButtons.length === 0) {
+          return;
+        }
+        const currentValue = Number(safeAreaSlider.value);
+        let matchedLabel = "";
+        safeAreaPresetButtons.forEach((button) => {
+          const presetValue = Number(button.getAttribute("data-value") || "0");
+          const isMatch = Math.abs(presetValue - currentValue) < SAFE_AREA_PRESET_TOLERANCE;
+          button.classList.toggle("active", isMatch);
+          if (isMatch) {
+            matchedLabel = button.getAttribute("data-label") || button.textContent?.trim() || "";
+          }
+        });
+        const percent = Math.round(currentValue * 100);
+        safeAreaPresetLabel.textContent = matchedLabel ? matchedLabel + " (" + percent + "%)" : "Custom (" + percent + "%)";
+      }
+
 
       function getSelectedTargetIds() {
-        return Array.from(targetSelect.selectedOptions).map((option) => option.value);
+        return Array.from(selectedTargetIds);
       }
 
-      function updateTargetSummary(selectedTargetIds) {
+      function updateTargetSummary(ids) {
         if (availableTargets.length === 0) {
           targetSummary.textContent = "No targets available.";
           return;
         }
-        if (selectedTargetIds.length === 0) {
+        if (ids.length === 0) {
           targetSummary.textContent = "No targets selected.";
           return;
         }
-        if (selectedTargetIds.length === availableTargets.length) {
+        if (ids.length === availableTargets.length) {
           targetSummary.textContent = "All targets selected.";
           return;
         }
-        if (selectedTargetIds.length <= 3) {
+        if (ids.length <= 3) {
           const labels = availableTargets
-            .filter((target) => selectedTargetIds.includes(target.id))
+            .filter((target) => ids.includes(target.id))
             .map((target) => target.label);
           targetSummary.textContent = labels.join(", ");
           return;
         }
-        targetSummary.textContent = \`\${selectedTargetIds.length} targets selected.\`;
+        targetSummary.textContent = \`\${ids.length} targets selected.\`;
       }
 
       function updateGenerateState() {
-        const selectedTargets = getSelectedTargetIds();
-        generateButton.disabled = isBusy || !selectionReady || selectedTargets.length === 0;
-        updateTargetSummary(selectedTargets);
+        const ids = getSelectedTargetIds();
+        generateButton.disabled = isBusy || !selectionReady || ids.length === 0;
+        updateTargetSummary(ids);
+      }
+      
+      function autoSelectTargets(width, height) {
+        if (!width || !height) return;
+        const ratio = width / height;
+        const isPortrait = ratio < 0.8;
+        const isLandscape = ratio > 1.2;
+        const isSquare = !isPortrait && !isLandscape;
+        
+        const newSelection = new Set();
+        availableTargets.forEach(target => {
+          const tRatio = target.width / target.height;
+          const tPortrait = tRatio < 0.8;
+          const tLandscape = tRatio > 1.2;
+          const tSquare = !tPortrait && !tLandscape;
+          
+          if ((isPortrait && tPortrait) || (isLandscape && tLandscape) || (isSquare && tSquare)) {
+             newSelection.add(target.id);
+          }
+          // Always select "Popular" ones if generic? 
+          // For now, simple aspect matching.
+          // Fallback: if no match (e.g. extreme aspect), select all?
+        });
+        
+        if (newSelection.size === 0) {
+           availableTargets.forEach(t => newSelection.add(t.id));
+        }
+        
+        selectedTargetIds = newSelection;
+        updateTargetVisuals();
+        updateGenerateState();
       }
 
       function updateAiStatusDisplay() {
         let text = "";
-        if (!aiConfigured) {
-          text = "Add an OpenAI API key to enable AI insights.";
-        } else if (aiStatusState === "fetching") {
+        if (aiStatusState === "fetching") {
           text = "Analyzing selection with AI…";
+        } else if (aiStatusState === "missing-key" || !aiConfigured) {
+          text = "AI key is missing from this build. Contact an admin to enable AI analysis.";
         } else if (aiStatusState === "error") {
           text = aiErrorMessage || "AI request failed. Try again.";
         } else if (!selectionReady) {
           text = aiUsingDefaultKey
-            ? "Workspace default AI key ready. Select a frame to analyze."
+            ? "Built-in AI key ready. Select a frame to analyze."
             : "Select a frame to request AI analysis.";
         } else if (aiUsingDefaultKey) {
-          text = "AI ready via workspace default key. Run analysis to refresh insights.";
+          text = "AI ready via built-in key. Run analysis to refresh insights.";
         } else {
           text = "AI ready. Click Run AI analysis to refresh insights.";
         }
-        if (aiStatusState === "error") {
-          aiKeyStatus.classList.add("error");
+
+        if (aiStatusState === "error" || aiStatusState === "missing-key") {
+          aiStatusText.classList.add("error");
         } else {
-          aiKeyStatus.classList.remove("error");
+          aiStatusText.classList.remove("error");
         }
-        aiKeyStatus.textContent = text;
-        clearAiKey.disabled = isBusy || !aiConfigured;
+
+        aiStatusText.textContent = text;
         refreshAiButton.disabled =
-          isBusy || !selectionReady || !aiConfigured || aiStatusState === "missing-key" || aiStatusState === "fetching";
+          isBusy || !selectionReady || aiStatusState === "missing-key" || aiStatusState === "fetching";
       }
 
       function applySelectionState(state) {
@@ -453,6 +748,10 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
           }
           if (!isBusy) {
             statusMessage.textContent = "Ready to generate variants.";
+          }
+          // Auto select targets based on new selection dimensions
+          if (state.selectionWidth && state.selectionHeight) {
+            autoSelectTargets(state.selectionWidth, state.selectionHeight);
           }
         } else {
           const message = state.error || "Select a single frame to begin.";
@@ -471,19 +770,42 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
         updateGenerateState();
       }
 
-      targetSelect.addEventListener("change", () => {
-        updateGenerateState();
-        if (!isBusy && selectionReady) {
-          statusMessage.textContent = "Ready to generate variants.";
-        }
-      });
+      // Removing old select event listener
+      // targetSelect.addEventListener("change", ...); replaced by toggleTarget
 
       safeAreaSlider.addEventListener("input", () => {
         updateSafeAreaValue();
+        updateSafeAreaPresetDisplay();
         if (!isBusy) {
           statusMessage.textContent = "Ready to generate variants.";
         }
       });
+
+      if (safeAreaPresets instanceof HTMLElement) {
+        safeAreaPresets.addEventListener("click", (event) => {
+          const source = event.target;
+          if (!(source instanceof HTMLElement)) {
+            return;
+          }
+          const button = source.closest("button[data-safe-area-preset]");
+          if (!button || !(button instanceof HTMLButtonElement)) {
+            return;
+          }
+          const valueAttr = button.getAttribute("data-value");
+          if (!valueAttr) {
+            return;
+          }
+          const nextValue = Number(valueAttr);
+          if (Number.isNaN(nextValue)) {
+            return;
+          }
+          safeAreaSlider.value = String(nextValue);
+          safeAreaSlider.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+      }
+
+      updateSafeAreaValue();
+      updateSafeAreaPresetDisplay();
 
       generateButton.addEventListener("click", () => {
         const targets = getSelectedTargetIds();
@@ -541,7 +863,7 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
         const hasAdvice = advice && Array.isArray(advice.entries) && advice.entries.length > 0;
         layoutSection.hidden = false;
         if (!aiConfigured) {
-          layoutStatus.textContent = "Add an OpenAI API key to receive AI layout advice.";
+          layoutStatus.textContent = "AI layout advice unavailable in this build. Contact an admin.";
         } else if (aiStatusState === "fetching") {
           layoutStatus.textContent = "Fetching AI layout patterns…";
         } else if (aiStatusState === "error") {
@@ -549,7 +871,10 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
         } else if (!hasAdvice) {
           layoutStatus.textContent = "Run AI analysis to populate layout patterns.";
         } else {
-          layoutStatus.textContent = "AI-suggested patterns per target.";
+          layoutStatus.textContent =
+            "AI-suggested patterns per target. Confident picks (≥" +
+            Math.round(LAYOUT_CONFIDENCE_THRESHOLD * 100) +
+            "%) auto-apply; others fall back.";
         }
 
         if (!hasAdvice) {
@@ -557,6 +882,8 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
           layoutContainer.innerHTML = "";
           return;
         }
+
+        const layoutThresholdPercent = Math.round(LAYOUT_CONFIDENCE_THRESHOLD * 100);
 
         advice.entries.forEach((entry) => {
           const target = availableTargets.find((item) => item.id === entry.targetId);
@@ -598,6 +925,26 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
           });
 
           row.appendChild(select);
+
+          const meta = document.createElement("div");
+          meta.className = "layout-meta";
+          const topScore = sortedOptions[0]?.score;
+          if (confidentOption && typeof confidentOption.score === "number") {
+            meta.appendChild(createChip("AI confident", "success"));
+            const detail = document.createElement("span");
+            detail.textContent =
+              Math.round(confidentOption.score * 100) + "% ≥ " + layoutThresholdPercent + "% threshold";
+            meta.appendChild(detail);
+          } else {
+            meta.appendChild(createChip("Low confidence", "warn"));
+            const detail = document.createElement("span");
+            const readableScore = typeof topScore === "number" ? Math.round(topScore * 100) + "%" : "No score provided";
+            detail.textContent =
+              readableScore + " below " + layoutThresholdPercent + "% threshold; generation will fall back unless overridden.";
+            meta.appendChild(detail);
+          }
+
+          row.appendChild(meta);
           layoutContainer.appendChild(row);
         });
       }
@@ -661,9 +1008,12 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
         aiRoles.innerHTML = "";
         aiQa.innerHTML = "";
         aiEmpty.hidden = false;
+        if (aiQaSummary instanceof HTMLElement) {
+          aiQaSummary.textContent = "";
+        }
 
         if (!aiConfigured) {
-          aiEmpty.textContent = "Add an OpenAI API key and run analysis to see AI signals.";
+          aiEmpty.textContent = "AI analysis is unavailable in this build. Contact an admin.";
           return;
         }
         if (aiStatusState === "fetching") {
@@ -676,14 +1026,41 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
         }
 
         const hasRoles = aiSignals && Array.isArray(aiSignals.roles) && aiSignals.roles.length > 0;
-        const hasQa = aiSignals && Array.isArray(aiSignals.qa) && aiSignals.qa.length > 0;
+        const qaSignals = aiSignals && Array.isArray(aiSignals.qa) ? aiSignals.qa : [];
+        const filteredQa = qaSignals.filter((qa) => {
+          if (qa.confidence === undefined) {
+            return true;
+          }
+          return qa.confidence >= QA_CONFIDENCE_THRESHOLD;
+        });
+        const suppressedQa = qaSignals.length - filteredQa.length;
+        const hasQa = filteredQa.length > 0;
 
         if (!aiSignals || (!hasRoles && !hasQa)) {
-          aiEmpty.textContent = "Run AI analysis to populate signals for this frame.";
+          const thresholdPercent = Math.round(QA_CONFIDENCE_THRESHOLD * 100);
+          aiEmpty.textContent =
+            suppressedQa > 0
+              ? "No QA alerts above " + thresholdPercent + "% confidence (" + suppressedQa + " filtered)."
+              : "Run AI analysis to populate signals for this frame.";
+          if (suppressedQa > 0 && aiQaSummary instanceof HTMLElement) {
+            aiQaSummary.textContent =
+              "Filtered " + suppressedQa + " low-confidence QA checks below " + thresholdPercent + "%.";
+          }
           return;
         }
 
         aiEmpty.hidden = true;
+
+        if (aiQaSummary instanceof HTMLElement) {
+          const thresholdPercent = Math.round(QA_CONFIDENCE_THRESHOLD * 100);
+          const thresholdText = hasQa
+            ? "QA alerts \u2265 " + thresholdPercent + "% confidence."
+            : "No QA alerts above " + thresholdPercent + "% confidence.";
+          aiQaSummary.textContent =
+            suppressedQa > 0
+              ? thresholdText + " Filtered " + suppressedQa + " low-confidence checks."
+              : thresholdText;
+        }
 
         if (hasRoles) {
           aiSignals.roles.slice(0, 8).forEach((role) => {
@@ -696,12 +1073,24 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
         }
 
         if (hasQa) {
-          aiSignals.qa.forEach((qa) => {
+          filteredQa.forEach((qa) => {
             const item = document.createElement("div");
-            item.className = "ai-qa-item";
-            const confidence =
-              qa.confidence !== undefined ? " (" + Math.round(qa.confidence * 100) + "%)" : "";
-            item.textContent = qa.code.toLowerCase() + confidence;
+            item.className = "ai-qa-item " + (qa.severity === "info" ? "info" : qa.severity === "error" ? "error" : "warn");
+            const title = document.createElement("div");
+            title.className = "ai-qa-title";
+            title.textContent = qa.code.replace(/_/g, " ").toLowerCase();
+            item.appendChild(title);
+            const meta = document.createElement("div");
+            meta.className = "ai-qa-meta";
+            const confidenceText =
+              qa.confidence !== undefined ? Math.round(qa.confidence * 100) + "% confidence" : "Confidence not provided";
+            const severityTone = qa.severity === "info" ? "info" : "warn";
+            const severityLabel = qa.severity === "error" ? "Critical" : qa.severity === "info" ? "Info" : "Warning";
+            meta.appendChild(createChip(severityLabel, severityTone));
+            const confidenceSpan = document.createElement("span");
+            confidenceSpan.textContent = confidenceText;
+            meta.appendChild(confidenceSpan);
+            item.appendChild(meta);
             if (qa.message) {
               const detail = document.createElement("div");
               detail.style.color = "var(--figma-color-text-secondary, #475467)";
@@ -714,125 +1103,19 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
         }
       }
 
-      function applySampleSignals() {
-        if (!selectionReady) {
-          statusMessage.textContent = "Select a frame before applying AI signals.";
-          return;
-        }
-        const sample = {
-          roles: [
-            { nodeId: "role-logo", role: "logo", confidence: 0.82 },
-            { nodeId: "role-title", role: "title", confidence: 0.77 },
-            { nodeId: "role-body", role: "body", confidence: 0.64 },
-            { nodeId: "role-cta", role: "cta", confidence: 0.7 }
-          ],
-          focalPoints: [
-            { nodeId: "role-hero", x: 0.52, y: 0.38, confidence: 0.78 }
-          ],
-          qa: [
-            { code: "LOW_CONTRAST", severity: "warn", message: "Foreground contrast may be low.", confidence: 0.86 },
-            { code: "LOGO_TOO_SMALL", severity: "info", message: "Logo visibility could be improved.", confidence: 0.62 }
-          ]
-        };
-
-        parent.postMessage(
-          {
-            pluginMessage: {
-              type: "set-ai-signals",
-              payload: { signals: sample }
-            }
-          },
-          "*"
-        );
-      }
-
-      function applySampleLayoutAdvice() {
-        if (!selectionReady) {
-          statusMessage.textContent = "Select a frame before applying layout advice.";
-          return;
-        }
-        const sample = {
-          entries: [
-            {
-              targetId: "figma-cover",
-              selectedId: "hero-left",
-              options: [
-                { id: "hero-left", label: "Hero left, text right", description: "Hero anchored left, copy on right", score: 0.82 },
-                { id: "stacked", label: "Stacked", description: "Hero on top, text and CTA below", score: 0.71 }
-              ]
-            },
-            {
-              targetId: "tiktok-vertical",
-              selectedId: "stacked",
-              options: [
-                { id: "stacked", label: "Stacked", description: "Hero top, text bottom", score: 0.77 },
-                { id: "hero-top", label: "Hero top-heavy", description: "Large hero on top, small footer CTA", score: 0.62 }
-              ]
-            }
-          ]
-        };
-
-        parent.postMessage(
-          {
-            pluginMessage: {
-              type: "set-layout-advice",
-              payload: { advice: sample }
-            }
-          },
-          "*"
-        );
-      }
-
-      function saveAiKeyValue() {
-        const trimmed = aiKeyInput.value.trim();
-        parent.postMessage(
-          {
-            pluginMessage: {
-              type: "set-api-key",
-              payload: { key: trimmed }
-            }
-          },
-          "*"
-        );
-        aiKeyInput.value = "";
-        statusMessage.textContent = trimmed ? "Saving OpenAI key…" : "Clearing OpenAI key…";
-      }
-
-      function clearAiKeyValue() {
-        aiKeyInput.value = "";
-        parent.postMessage(
-          {
-            pluginMessage: {
-              type: "set-api-key",
-              payload: { key: "" }
-            }
-          },
-          "*"
-        );
-        statusMessage.textContent = "Clearing OpenAI key…";
-      }
-
       function requestAiRefresh() {
         if (!selectionReady) {
           statusMessage.textContent = "Select a frame before running AI analysis.";
           return;
         }
-        if (!aiConfigured) {
-          statusMessage.textContent = "Add an OpenAI API key before running AI analysis.";
+        if (!aiConfigured || aiStatusState === "missing-key") {
+          statusMessage.textContent = "AI key is not available in this build. Contact an admin.";
           return;
         }
         parent.postMessage({ pluginMessage: { type: "refresh-ai" } }, "*");
         statusMessage.textContent = "Requesting AI insights…";
       }
 
-      if (applySampleAi instanceof HTMLButtonElement) {
-        applySampleAi.addEventListener("click", applySampleSignals);
-      }
-      if (applySampleLayout instanceof HTMLButtonElement) {
-        applySampleLayout.addEventListener("click", applySampleLayoutAdvice);
-      }
-      saveAiKey.addEventListener("click", saveAiKeyValue);
-      clearAiKey.addEventListener("click", clearAiKeyValue);
       refreshAiButton.addEventListener("click", requestAiRefresh);
 
       window.onmessage = (event) => {

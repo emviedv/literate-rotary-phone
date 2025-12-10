@@ -1,0 +1,63 @@
+Knip report (compact) for /Users/emily/Products/BiblioScale on 2025-12-10
+==========================================
+Unused files (39)
+core/absolute-geometry.ts
+core/absolute-layout.ts
+core/ai-service.ts
+core/ai-signals.ts
+core/auto-layout-adapter.ts
+core/build-env.ts
+core/content-analyzer.ts
+core/debug.ts
+core/layout-advice.ts
+core/layout-expansion.ts
+core/layout-positions.ts
+core/layout-profile.ts
+core/main.ts
+core/padding-distribution.ts
+core/plugin-constants.ts
+core/qa-overlay.ts
+core/telemetry.ts
+dist/main.js
+scripts/run-tests.mjs
+tests/absolute-geometry.test.ts
+tests/absolute-layout.test.ts
+tests/ai-service.test.ts
+tests/ai-signals.test.ts
+tests/auto-layout-adapter.test.ts
+tests/bounds-check.test.ts
+tests/layout-advice.test.ts
+tests/layout-expansion.test.ts
+tests/layout-positions.test.ts
+tests/layout-profile.test.ts
+tests/padding-distribution.test.ts
+tests/qa-overlay-creation.test.ts
+tests/qa-overlay.test.ts
+tests/targets.test.ts
+tests/telemetry.test.ts
+types/ai-signals.ts
+types/layout-advice.ts
+types/messages.ts
+types/targets.ts
+ui/template.ts
+Unused devDependencies (1)
+node:path:1373
+    validateString(to, 'to');
+    ^
+
+TypeError [ERR_INVALID_ARG_TYPE]: The "to" argument must be of type string. Received undefined
+    at Object.relative (node:path:1373:5)
+    at relative (file:///Users/emily/Products/BiblioScale/node_modules/knip/dist/util/path.js:9:52)
+    at getIssueLine (file:///Users/emily/Products/BiblioScale/node_modules/knip/dist/reporters/util/util.js:17:68)
+    at logIssueRecord (file:///Users/emily/Products/BiblioScale/node_modules/knip/dist/reporters/compact.js:10:21)
+    at default (file:///Users/emily/Products/BiblioScale/node_modules/knip/dist/reporters/compact.js:33:21)
+    at runReporters (file:///Users/emily/Products/BiblioScale/node_modules/knip/dist/util/reporter.js:17:15)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async run (file:///Users/emily/Products/BiblioScale/node_modules/knip/dist/cli.js:54:9)
+    at async file:///Users/emily/Products/BiblioScale/node_modules/knip/dist/cli.js:95:1 {
+  code: 'ERR_INVALID_ARG_TYPE'
+}
+
+Node.js v22.20.0
+
+Exit code: 1

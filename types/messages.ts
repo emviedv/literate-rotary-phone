@@ -7,6 +7,8 @@ export type AiStatus = "idle" | "fetching" | "missing-key" | "error";
 export interface SelectionState {
   readonly selectionOk: boolean;
   readonly selectionName?: string;
+  readonly selectionWidth?: number;
+  readonly selectionHeight?: number;
   readonly error?: string;
   readonly aiSignals?: AiSignals;
   readonly layoutAdvice?: LayoutAdvice;
