@@ -180,7 +180,6 @@ async function main(): Promise<void> {
       throw new Error("UI handler not initialized");
     }
 
-    await uiHandler({ type: "set-api-key", payload: { key: "test-key" } });
     selectionHandler?.();
     await flushMicrotasks();
 
@@ -198,8 +197,6 @@ async function main(): Promise<void> {
     if (!uiHandler) {
       throw new Error("UI handler not initialized");
     }
-
-    await uiHandler({ type: "set-api-key", payload: { key: "test-key" } });
 
     const refreshPromise = uiHandler({ type: "refresh-ai" });
     await flushMicrotasks(); // ensure fetch is invoked

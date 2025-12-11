@@ -8,6 +8,8 @@ export interface LayoutPatternOption {
 export interface LayoutAdviceEntry {
   readonly targetId: string;
   readonly selectedId?: string;
+  readonly suggestedLayoutMode?: "HORIZONTAL" | "VERTICAL" | "NONE";
+  readonly backgroundNodeId?: string;
   readonly options: readonly LayoutPatternOption[];
 }
 

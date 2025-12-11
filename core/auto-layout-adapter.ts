@@ -1,5 +1,6 @@
 import { debugAutoLayoutLog } from "./debug.js";
 import { resolveVerticalAlignItems } from "./layout-profile.js";
+import type { LayoutAdviceEntry } from "../types/layout-advice.js";
 
 /**
  * Auto Layout Adapter - Intelligently restructures auto layouts for different target formats
@@ -28,6 +29,7 @@ export interface LayoutAdaptationPlan {
 export interface ChildAdaptation {
   layoutGrow?: number;
   layoutAlign?: "INHERIT" | "STRETCH";
+  layoutPositioning?: "AUTO" | "ABSOLUTE";
   minWidth?: number;
   maxWidth?: number;
   minHeight?: number;
@@ -53,6 +55,7 @@ type LayoutContext = {
   scale: number;
   adoptVerticalVariant: boolean;
   sourceItemSpacing?: number | null;
+  layoutAdvice?: LayoutAdviceEntry;
 };
 
 /**
@@ -69,6 +72,7 @@ export function createLayoutAdaptationPlan(
     readonly sourceFlowChildCount?: number;
     readonly adoptVerticalVariant?: boolean;
     readonly sourceItemSpacing?: number | null;
+    readonly layoutAdvice?: LayoutAdviceEntry;
   }
 ): LayoutAdaptationPlan {
   const sourceLayoutMode: LayoutContext["sourceLayout"]["mode"] =
@@ -81,7 +85,7 @@ export function createLayoutAdaptationPlan(
       width: options?.sourceSize?.width ?? frame.width,
       height: options?.sourceSize?.height ?? frame.height,
       childCount:
-        options?.sourceFlowChildCount ?? frame.children.filter(c => c.visible).length,
+        options?.sourceFlowChildCount ?? countFlowChildren(frame),
       hasText: hasTextChildren(frame),
       hasImages: hasImageChildren(frame),
       itemSpacing: options?.sourceItemSpacing ?? (frame.layoutMode !== "NONE" ? frame.itemSpacing : null)
@@ -93,7 +97,8 @@ export function createLayoutAdaptationPlan(
       aspectRatio: target.width / target.height
     },
     scale,
-    adoptVerticalVariant: options?.adoptVerticalVariant ?? false
+    adoptVerticalVariant: options?.adoptVerticalVariant ?? false,
+    layoutAdvice: options?.layoutAdvice
   };
 
   // Determine the best layout mode for the target
@@ -164,7 +169,16 @@ export function createLayoutAdaptationPlan(
  * Determines the optimal layout mode based on source and target
  */
 function determineOptimalLayoutMode(context: LayoutContext): "HORIZONTAL" | "VERTICAL" | "NONE" {
-  const { sourceLayout, targetProfile } = context;
+  const { sourceLayout, targetProfile, layoutAdvice } = context;
+
+  // AI Override
+  if (layoutAdvice?.suggestedLayoutMode) {
+    debugAutoLayoutLog("determining optimal layout: using AI suggestion", {
+      suggestedMode: layoutAdvice.suggestedLayoutMode,
+      context
+    });
+    return layoutAdvice.suggestedLayoutMode;
+  }
 
   if (context.adoptVerticalVariant && targetProfile.type === "vertical") {
     debugAutoLayoutLog("determining optimal layout: adopting vertical variant", { context });
@@ -209,31 +223,15 @@ function determineOptimalLayoutMode(context: LayoutContext): "HORIZONTAL" | "VER
     return "HORIZONTAL";
   }
 
-  // For moderate aspect ratios, adapt based on child count and content
+  // For moderate aspect ratios, force appropriate orientation
   if (targetProfile.type === "vertical") {
-    if (sourceLayout.childCount > 3) {
-      debugAutoLayoutLog("determining optimal layout: many children, switching to vertical", { context });
-      return "VERTICAL";
-    }
-    if (sourceLayout.mode === "HORIZONTAL") {
-      debugAutoLayoutLog("determining optimal layout: preserving horizontal for moderate vertical target with few children", {
-        context
-      });
-      return "HORIZONTAL";
-    }
-    debugAutoLayoutLog("determining optimal layout: default to vertical for moderate vertical target", { context });
+    debugAutoLayoutLog("determining optimal layout: forcing vertical for vertical target", { context });
     return "VERTICAL";
   }
 
   if (targetProfile.type === "horizontal") {
-    if (sourceLayout.childCount > 3 && sourceLayout.mode === "VERTICAL") {
-      debugAutoLayoutLog("determining optimal layout: many children, switching to horizontal for wide target", {
-        context
-      });
-      return "HORIZONTAL";
-    }
-    debugAutoLayoutLog("determining optimal layout: keeping source mode for horizontal target", { context });
-    return sourceLayout.mode;
+    debugAutoLayoutLog("determining optimal layout: forcing horizontal for horizontal target", { context });
+    return "HORIZONTAL";
   }
 
   debugAutoLayoutLog("determining optimal layout: fallback, keeping source mode for square target", { context });
@@ -350,7 +348,7 @@ function calculateSpacing(
       : frame.layoutMode !== "NONE"
         ? frame.itemSpacing
         : 16;
-  const scaledSpacing = baseSpacingRaw * context.scale;
+  const scaledSpacing = baseSpacingRaw === 0 ? 0 : Math.max(baseSpacingRaw * context.scale, 1);
 
   debugAutoLayoutLog("spacing input resolved", {
     targetType: context.targetProfile.type,
@@ -490,6 +488,28 @@ function createChildAdaptations(
     const adaptation: ChildAdaptation = {};
     const containsImage = hasImageContent(child as SceneNode);
 
+    // AI Background Override
+    if (context.layoutAdvice?.backgroundNodeId) {
+      if (child.id === context.layoutAdvice.backgroundNodeId) {
+        adaptation.layoutPositioning = "ABSOLUTE";
+        adaptations.set(child.id, adaptation);
+        return;
+      }
+      // If AI specified a background, do NOT apply heuristics to others
+    } else {
+      // Identify background layers and remove them from flow
+      // Only treat the bottom-most layer as a potential background to avoid
+      // removing large hero images from the content stack.
+      if (
+        index === frame.children.length - 1 &&
+        isBackgroundLike(child as SceneNode, context.sourceLayout.width, context.sourceLayout.height)
+      ) {
+        adaptation.layoutPositioning = "ABSOLUTE";
+        adaptations.set(child.id, adaptation);
+        return;
+      }
+    }
+
     // For converted layouts, adjust child properties
     if (frame.layoutMode !== newLayoutMode && newLayoutMode !== "NONE") {
       // When converting to vertical, make children stretch horizontally
@@ -573,16 +593,83 @@ export function applyLayoutAdaptation(frame: FrameNode, plan: LayoutAdaptationPl
     // Apply child adaptations
     frame.children.forEach(child => {
       const adaptation = plan.childAdaptations.get(child.id);
-      if (adaptation && "layoutAlign" in child) {
-        if (adaptation.layoutAlign) {
+      if (adaptation) {
+        if ("layoutPositioning" in child && adaptation.layoutPositioning) {
+          child.layoutPositioning = adaptation.layoutPositioning;
+        }
+        if ("layoutAlign" in child && adaptation.layoutAlign) {
           child.layoutAlign = adaptation.layoutAlign;
         }
-        if (adaptation.layoutGrow !== undefined && "layoutGrow" in child) {
+        if ("layoutGrow" in child && adaptation.layoutGrow !== undefined) {
           child.layoutGrow = adaptation.layoutGrow;
         }
       }
     });
   }
+}
+
+/**
+ * Recursively adapts nested frames that act as structural containers.
+ * This ensures that nested layouts (e.g. content rows) also reflow
+ * when targeting extreme aspect ratios (like Horizontal -> Vertical).
+ */
+export function adaptNestedFrames(
+  root: FrameNode,
+  target: { width: number; height: number },
+  profile: "horizontal" | "vertical" | "square",
+  scale: number
+): void {
+  for (const child of root.children) {
+    if (child.type === "FRAME") {
+      adaptNodeRecursive(child, target, profile, scale);
+    }
+  }
+}
+
+function adaptNodeRecursive(
+  node: FrameNode,
+  target: { width: number; height: number },
+  profile: "horizontal" | "vertical" | "square",
+  scale: number
+): void {
+  // 1. Adapt current node if it looks like a structural container
+  if (isStructuralContainer(node, target.width)) {
+    const plan = createLayoutAdaptationPlan(node, target, profile, scale);
+    
+    // Only apply if the mode actually changes (avoid churning)
+    if (plan.layoutMode !== node.layoutMode) {
+      debugAutoLayoutLog("adapting nested structural frame", {
+        nodeId: node.id,
+        from: node.layoutMode,
+        to: plan.layoutMode
+      });
+      applyLayoutAdaptation(node, plan);
+    }
+  }
+
+  // 2. Recurse to children
+  if ("children" in node) {
+    for (const child of node.children) {
+      if (child.type === "FRAME") {
+        adaptNodeRecursive(child, target, profile, scale);
+      }
+    }
+  }
+}
+
+function isStructuralContainer(node: FrameNode, targetWidth: number): boolean {
+  if (!node.visible) return false;
+  if (node.layoutMode === "NONE") return false; // Don't touch absolute frames
+  
+  // If it's very wide, it's likely a row that needs stacking
+  if (node.width >= targetWidth * 0.5) {
+    return true;
+  }
+  
+  // Or if it's auto-layout and has significant height?
+  // No, width is the main constraint for switching H->V.
+  
+  return false;
 }
 
 // Helper functions
@@ -610,4 +697,24 @@ function hasImageContent(node: SceneNode): boolean {
 
 function hasImageChildren(frame: FrameNode): boolean {
   return hasImageContent(frame as unknown as SceneNode);
+}
+
+function isBackgroundLike(node: SceneNode, rootWidth: number, rootHeight: number): boolean {
+  if (!("width" in node) || !("height" in node)) return false;
+  if (typeof (node as any).width !== "number" || typeof (node as any).height !== "number") return false;
+  const nodeArea = (node as any).width * (node as any).height;
+  const rootArea = rootWidth * rootHeight;
+  // 95% threshold to identify backgrounds
+  return rootArea > 0 && nodeArea >= rootArea * 0.95;
+}
+
+function countFlowChildren(frame: FrameNode): number {
+  let count = 0;
+  for (const child of frame.children) {
+    if (isBackgroundLike(child, frame.width, frame.height)) continue;
+    if ("visible" in child && !child.visible) continue;
+    if ("layoutPositioning" in child && child.layoutPositioning === "ABSOLUTE") continue;
+    count++;
+  }
+  return count;
 }

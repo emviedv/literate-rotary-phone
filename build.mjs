@@ -3,6 +3,7 @@ import path from "node:path";
 import process from "node:process";
 import * as esbuild from "esbuild";
 
+const buildTimestamp = new Date().toISOString();
 const outdir = "dist";
 const watchMode = process.argv.includes("--watch");
 const defaultAiKey =
@@ -10,19 +11,29 @@ const defaultAiKey =
   process.env.BIBLIO_DEFAULT_OPENAI_KEY ??
   "";
 
-const envDebug = process.env.BIBLIOSCALE_DEBUG_FIX ?? process.env.DEBUG_FIX;
-let debugFixDefault;
-if (envDebug) {
-  debugFixDefault = envDebug === "1" ? "1" : "0";
-} else {
-  debugFixDefault = watchMode ? "1" : "0";
-}
+const envDebugRaw =
+  process.env.BIBLIOSCALE_DEBUG_FIX ??
+  process.env.DEBUG_FIX ??
+  process.env.debug_fix;
+const envDebug = envDebugRaw === "1" ? "1" : envDebugRaw === "0" ? "0" : null;
+const inferredDev = watchMode || process.env.NODE_ENV === "development";
+const debugFixDefault = envDebug ?? (inferredDev ? "1" : undefined);
 
 const debugBanner = `
 if (typeof globalThis !== "undefined" && typeof globalThis.DEBUG_FIX === "undefined") {
   globalThis.DEBUG_FIX = ${JSON.stringify(debugFixDefault)};
 }
 `;
+
+const defines = {
+  __BIBLIOSCALE_DEFAULT_AI_KEY__: JSON.stringify(defaultAiKey),
+  __BUILD_TIMESTAMP__: JSON.stringify(buildTimestamp),
+  __DEBUG_FIX__: '"' + debugFixDefault + '"'
+};
+
+if (process.env.DEBUG_FIX_TRACE) {
+  defines.__DEBUG_FIX_TRACE__ = '"' + process.env.DEBUG_FIX_TRACE + '"';
+}
 
 const buildOptions = {
   bundle: true,
@@ -40,10 +51,7 @@ const buildOptions = {
   banner: {
     js: debugBanner
   },
-  define: {
-    __BIBLIOSCALE_DEFAULT_AI_KEY__: JSON.stringify(defaultAiKey),
-    "process.env.DEBUG_FIX": JSON.stringify(debugFixDefault)
-  }
+  define: defines
 };
 
 async function clean() {

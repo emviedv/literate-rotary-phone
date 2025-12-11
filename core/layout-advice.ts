@@ -83,9 +83,16 @@ function normalizeEntry(entry: unknown): LayoutAdviceEntry | null {
   }
 
   const selectedId = (entry as { selectedId?: unknown }).selectedId;
+  const rawMode = (entry as { suggestedLayoutMode?: unknown }).suggestedLayoutMode;
+  const suggestedLayoutMode =
+    rawMode === "HORIZONTAL" || rawMode === "VERTICAL" || rawMode === "NONE" ? rawMode : undefined;
+  const backgroundNodeId = (entry as { backgroundNodeId?: unknown }).backgroundNodeId;
+
   return {
     targetId,
     selectedId: typeof selectedId === "string" ? selectedId : undefined,
+    suggestedLayoutMode,
+    backgroundNodeId: typeof backgroundNodeId === "string" ? backgroundNodeId : undefined,
     options: normalizedOptions
   };
 }

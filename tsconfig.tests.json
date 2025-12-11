@@ -4,6 +4,7 @@
     "outDir": "build-tests",
     "rootDir": ".",
     "lib": ["ES2020"],
+    "types": ["node", "@figma/plugin-typings/plugin-api"],
     "module": "Node16",
     "moduleResolution": "Node16",
     "skipLibCheck": true

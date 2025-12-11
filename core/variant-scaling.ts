@@ -161,7 +161,8 @@ export async function scaleNodeTree(
     insets: safeInsets
   });
 
-  const rawScale = calculateOptimalScale(contentAnalysis, target, { x: safeInsetX, y: safeInsetY }, profile);
+  // Pass full safeInsets to support asymmetric safe areas
+  const rawScale = calculateOptimalScale(contentAnalysis, target, safeInsets, profile);
 
   const frameMaxScale = Math.min(
     target.width / Math.max(sourceWidth, 1),
@@ -180,7 +181,7 @@ export async function scaleNodeTree(
     strategy: contentAnalysis.recommendedStrategy
   });
 
-  await scaleNodeRecursive(frame, scale, fontCache);
+  await scaleNodeRecursive(frame, scale, fontCache, target, rootSnapshot);
 
   const scaledWidth = sourceWidth * scale;
   const scaledHeight = sourceHeight * scale;
@@ -243,7 +244,7 @@ export async function scaleNodeTree(
   const offsetY = verticalPlan.start;
 
   frame.resizeWithoutConstraints(target.width, target.height);
-  repositionChildren(frame, offsetX, offsetY);
+  repositionChildren(frame, offsetX, offsetY, rootSnapshot);
 
   if (shouldExpandAbsoluteChildren(rootSnapshot?.layoutMode, adoptVerticalVariant, profile)) {
     expandAbsoluteChildren(frame, horizontalPlan, verticalPlan, profile);
@@ -360,9 +361,10 @@ export async function restoreAutoLayoutSettings(
   });
 }
 
-function scaleAutoLayoutMetric(value: number, scale: number): number {
+function scaleAutoLayoutMetric(value: number, scale: number, min: number = 0): number {
+  if (value === 0) return 0;
   const scaled = value * scale;
-  return Math.round(scaled * 100) / 100;
+  return Math.max(Math.round(scaled * 100) / 100, min);
 }
 
 function expandAbsoluteChildren(
@@ -447,11 +449,31 @@ function expandAbsoluteChildren(
   });
 }
 
-async function scaleNodeRecursive(node: SceneNode, scale: number, fontCache: Set<string>): Promise<void> {
+function isBackgroundLike(node: SceneNode, rootWidth: number, rootHeight: number): boolean {
+  if (!("width" in node) || !("height" in node)) return false;
+  if (typeof node.width !== "number" || typeof node.height !== "number") return false;
+  const nodeArea = node.width * node.height;
+  const rootArea = rootWidth * rootHeight;
+  // 95% threshold, same as warning logic
+  return rootArea > 0 && nodeArea >= rootArea * 0.95;
+}
+
+async function scaleNodeRecursive(
+  node: SceneNode,
+  scale: number,
+  fontCache: Set<string>,
+  target: VariantTarget,
+  rootSnapshot: AutoLayoutSnapshot | null
+): Promise<void> {
+  const isBackground = rootSnapshot ? isBackgroundLike(node, rootSnapshot.width, rootSnapshot.height) : false;
+  
+  // For backgrounds, we might want to scale differently?
+  // But let's keep it simple: apply scale to children/properties, but override size at end.
+
   if ("children" in node) {
     for (const child of node.children) {
       adjustNodePosition(child as SceneNode, scale);
-      await scaleNodeRecursive(child as SceneNode, scale, fontCache);
+      await scaleNodeRecursive(child as SceneNode, scale, fontCache, target, rootSnapshot);
     }
   }
 
@@ -461,8 +483,15 @@ async function scaleNodeRecursive(node: SceneNode, scale: number, fontCache: Set
   }
 
   if ("width" in node && "height" in node && typeof node.width === "number" && typeof node.height === "number") {
-    const newWidth = node.width * scale;
-    const newHeight = node.height * scale;
+    let newWidth = node.width * scale;
+    let newHeight = node.height * scale;
+
+    if (isBackground) {
+      // Backgrounds should fill the target frame completely
+      newWidth = target.width;
+      newHeight = target.height;
+    }
+
     if ("resizeWithoutConstraints" in node && typeof node.resizeWithoutConstraints === "function") {
       node.resizeWithoutConstraints(newWidth, newHeight);
     } else if ("resize" in node && typeof node.resize === "function") {
@@ -471,7 +500,9 @@ async function scaleNodeRecursive(node: SceneNode, scale: number, fontCache: Set
   }
 
   if ("strokeWeight" in node && typeof node.strokeWeight === "number") {
-    node.strokeWeight *= scale;
+    if (node.strokeWeight > 0) {
+      node.strokeWeight = Math.max(node.strokeWeight * scale, 1);
+    }
   }
 
   if ("cornerRadius" in node) {
@@ -525,11 +556,13 @@ function adjustNodePosition(node: SceneNode, scale: number): void {
   }
 }
 
+const MIN_LEGIBLE_SIZE = 11;
+
 async function scaleTextNode(node: TextNode, scale: number, fontCache: Set<string>): Promise<void> {
   const characters = node.characters;
   if (characters.length === 0) {
     if (node.fontSize !== figma.mixed && typeof node.fontSize === "number") {
-      node.fontSize = node.fontSize * scale;
+      node.fontSize = Math.max(node.fontSize * scale, MIN_LEGIBLE_SIZE);
     }
     return;
   }
@@ -548,7 +581,8 @@ async function scaleTextNode(node: TextNode, scale: number, fontCache: Set<strin
 
     const fontSize = node.getRangeFontSize(i, nextIndex);
     if (fontSize !== figma.mixed && typeof fontSize === "number") {
-      node.setRangeFontSize(i, nextIndex, fontSize * scale);
+      const newFontSize = Math.max(fontSize * scale, MIN_LEGIBLE_SIZE);
+      node.setRangeFontSize(i, nextIndex, newFontSize);
     }
 
     const lineHeight = node.getRangeLineHeight(i, nextIndex);
@@ -609,7 +643,12 @@ function scalePaint(paint: Paint, scale: number): Paint {
   return clone as Paint;
 }
 
-function repositionChildren(parent: FrameNode, offsetX: number, offsetY: number): void {
+function repositionChildren(
+  parent: FrameNode,
+  offsetX: number,
+  offsetY: number,
+  rootSnapshot: AutoLayoutSnapshot | null
+): void {
   if (!("children" in parent)) {
     return;
   }
@@ -617,6 +656,14 @@ function repositionChildren(parent: FrameNode, offsetX: number, offsetY: number)
     if ("layoutPositioning" in child && child.layoutPositioning !== "ABSOLUTE") {
       continue;
     }
+    
+    // Check if background to reset position
+    if (rootSnapshot && isBackgroundLike(child, rootSnapshot.width, rootSnapshot.height)) {
+      if ("x" in child) child.x = 0;
+      if ("y" in child) child.y = 0;
+      continue;
+    }
+
     if ("x" in child && typeof child.x === "number") {
       child.x += offsetX;
     }
@@ -655,10 +702,10 @@ function adjustAutoLayoutProperties(node: SceneNode, scale: number): void {
   node.paddingRight = scaleAutoLayoutMetric(node.paddingRight, scale);
   node.paddingTop = scaleAutoLayoutMetric(node.paddingTop, scale);
   node.paddingBottom = scaleAutoLayoutMetric(node.paddingBottom, scale);
-  node.itemSpacing = scaleAutoLayoutMetric(node.itemSpacing, scale);
+  node.itemSpacing = scaleAutoLayoutMetric(node.itemSpacing, scale, 1);
 
   if (node.layoutWrap === "WRAP" && typeof node.counterAxisSpacing === "number") {
-    node.counterAxisSpacing = scaleAutoLayoutMetric(node.counterAxisSpacing, scale);
+    node.counterAxisSpacing = scaleAutoLayoutMetric(node.counterAxisSpacing, scale, 1);
   }
 }
 

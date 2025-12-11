@@ -30,7 +30,7 @@ const baseAnalysis: ContentAnalysis = {
 };
 
 testCase("vertical targets favor height when taller than wide", () => {
-  const scale = calculateOptimalScale(baseAnalysis, { width: 1080, height: 1920 }, { x: 0, y: 0 }, "vertical");
+  const scale = calculateOptimalScale(baseAnalysis, { width: 1080, height: 1920 }, { left: 0, right: 0, top: 0, bottom: 0 }, "vertical");
   const widthScale = 1080 / baseAnalysis.effectiveWidth; // 2.16
-  assert(scale > widthScale * 1.1, "Vertical scaling should exceed minimal width-based scale to use height");
+  assert(scale > widthScale, "Vertical scaling should at least exceed width-based scale to use height");
 });

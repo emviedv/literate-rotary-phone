@@ -5,7 +5,7 @@ import type { AiSignals } from "../types/ai-signals.js";
 import { UI_TEMPLATE } from "../ui/template.js";
 import { configureQaOverlay, createQaOverlay } from "./qa-overlay.js";
 import { resolveLayoutProfile } from "./layout-profile.js";
-import { createLayoutAdaptationPlan, applyLayoutAdaptation } from "./auto-layout-adapter.js";
+import { createLayoutAdaptationPlan, applyLayoutAdaptation, adaptNestedFrames } from "./auto-layout-adapter.js";
 import { readAiSignals, resolvePrimaryFocalPoint } from "./ai-signals.js";
 import { autoSelectLayoutPattern, normalizeLayoutAdvice, readLayoutAdvice, resolvePatternLabel } from "./layout-advice.js";
 import { requestAiInsights } from "./ai-service.js";
@@ -33,6 +33,8 @@ import {
 import { captureLayoutSnapshot } from "./layout-snapshot.js";
 
 export { collectWarnings, combineChildBounds } from "./warnings.js";
+
+declare const __BUILD_TIMESTAMP__: string;
 
 const MAX_SAFE_AREA_RATIO = 0.25;
 const MIN_PATTERN_CONFIDENCE = 0.65;
@@ -101,7 +103,8 @@ async function postInitialState(): Promise<void> {
     layoutAdvice: selectionState.layoutAdvice,
     targets: VARIANT_TARGETS,
     lastRun: lastRunSummary ?? undefined,
-    debugEnabled: isDebugFixEnabled()
+    debugEnabled: isDebugFixEnabled(),
+    buildTimestamp: typeof __BUILD_TIMESTAMP__ !== "undefined" ? __BUILD_TIMESTAMP__ : "unknown"
   };
 
   debugFixLog("initializing UI with targets", {
@@ -182,60 +185,64 @@ async function handleGenerateRequest(
         primaryFocal
       );
 
-      // Create and apply intelligent layout adaptation instead of just restoring
-      const layoutAdaptationPlan = createLayoutAdaptationPlan(
-        variantNode,
-        target,
-        layoutProfile,
-        safeAreaMetrics.scale,
-        {
-          sourceLayoutMode:
-            rootSnapshot?.layoutMode && rootSnapshot.layoutMode !== "GRID" ? rootSnapshot.layoutMode : "NONE",
-          sourceSize:
-            rootSnapshot && Number.isFinite(rootSnapshot.width) && Number.isFinite(rootSnapshot.height)
-              ? { width: rootSnapshot.width, height: rootSnapshot.height }
-              : undefined,
-          sourceFlowChildCount: rootSnapshot?.flowChildCount ?? undefined,
-          sourceItemSpacing: rootSnapshot?.itemSpacing ?? null,
-          adoptVerticalVariant: safeAreaMetrics.adoptVerticalVariant
-        }
-      );
-
-      debugFixLog("Layout adaptation plan created", {
-        targetId: target.id,
-        originalMode: rootSnapshot?.layoutMode ?? "NONE",
-        newMode: layoutAdaptationPlan.layoutMode,
-        profile: layoutProfile
-      });
-
-      // Apply the adaptation plan for intelligent layout restructuring
-      applyLayoutAdaptation(variantNode, layoutAdaptationPlan);
-
-      // Then apply any additional auto layout settings that weren't covered
+            // Create and apply intelligent layout adaptation instead of just restoring
+            const adviceEntry = layoutAdvice?.entries.find((entry) => entry.targetId === target.id);
+            const layoutAdaptationPlan = createLayoutAdaptationPlan(
+              variantNode,
+              target,
+              layoutProfile,
+              safeAreaMetrics.scale,
+              {
+                sourceLayoutMode:
+                  rootSnapshot?.layoutMode && rootSnapshot.layoutMode !== "GRID" ? rootSnapshot.layoutMode : "NONE",
+                sourceSize:
+                  rootSnapshot && Number.isFinite(rootSnapshot.width) && Number.isFinite(rootSnapshot.height)
+                    ? { width: rootSnapshot.width, height: rootSnapshot.height }
+                    : undefined,
+                sourceFlowChildCount: rootSnapshot?.flowChildCount ?? undefined,
+                sourceItemSpacing: rootSnapshot?.itemSpacing ?? null,
+                adoptVerticalVariant: safeAreaMetrics.adoptVerticalVariant,
+                layoutAdvice: adviceEntry
+              }
+            );
+      
+            debugFixLog("Layout adaptation plan created", {
+              targetId: target.id,
+              originalMode: rootSnapshot?.layoutMode ?? "NONE",
+              newMode: layoutAdaptationPlan.layoutMode,
+              profile: layoutProfile
+            });
+      
+                  // Apply the adaptation plan for intelligent layout restructuring
+                  applyLayoutAdaptation(variantNode, layoutAdaptationPlan);
+                  
+                  // Recursively adapt nested structural containers
+                  adaptNestedFrames(variantNode, target, layoutProfile, safeAreaMetrics.scale);
+            
+                  // Then apply any additional auto layout settings that weren't covered
       restoreAutoLayoutSettings(variantNode, autoLayoutSnapshots, safeAreaMetrics);
-      const overlay = createQaOverlay(target, safeAreaRatio);
-      variantNode.appendChild(overlay);
-      const overlayConfig = configureQaOverlay(overlay, { parentLayoutMode: variantNode.layoutMode });
-      overlaysToLock.push(overlay);
-      debugFixLog("qa overlay configured", {
-        overlayId: overlay.id,
-        variantId: variantNode.id,
-        positioningUpdated: overlayConfig.positioningUpdated,
-        layoutPositioning: "layoutPositioning" in overlay ? overlay.layoutPositioning : undefined,
-        constraints: "constraints" in overlay ? overlay.constraints : undefined,
-        locked: overlay.locked,
-        willLockAfterFlush: true
-      });
-
-  const patternSelection = autoSelectLayoutPattern(layoutAdvice, target.id, MIN_PATTERN_CONFIDENCE);
-  const userSelection = layoutPatterns[target.id];
-  const adviceEntry = layoutAdvice?.entries.find((entry) => entry.targetId === target.id);
-      const chosenPatternId =
-        userSelection ??
-        (patternSelection && !patternSelection.fallback
-          ? patternSelection.patternId ?? adviceEntry?.selectedId
-          : undefined);
-      const layoutFallback = !userSelection && (patternSelection?.fallback ?? false);
+            const overlay = createQaOverlay(target, safeAreaRatio);
+            variantNode.appendChild(overlay);
+            const overlayConfig = configureQaOverlay(overlay, { parentLayoutMode: variantNode.layoutMode });
+            overlaysToLock.push(overlay);
+            debugFixLog("qa overlay configured", {
+              overlayId: overlay.id,
+              variantId: variantNode.id,
+              positioningUpdated: overlayConfig.positioningUpdated,
+              layoutPositioning: "layoutPositioning" in overlay ? overlay.layoutPositioning : undefined,
+              constraints: "constraints" in overlay ? overlay.constraints : undefined,
+              locked: overlay.locked,
+              willLockAfterFlush: true
+            });
+      
+            const patternSelection = autoSelectLayoutPattern(layoutAdvice, target.id, MIN_PATTERN_CONFIDENCE);
+            const userSelection = layoutPatterns[target.id];
+            
+            const chosenPatternId =
+              userSelection ??
+              (patternSelection && !patternSelection.fallback
+                ? patternSelection.patternId ?? adviceEntry?.selectedId
+                : undefined);      const layoutFallback = !userSelection && (patternSelection?.fallback ?? false);
       const patternConfidence =
         chosenPatternId && patternSelection?.patternId === chosenPatternId && !layoutFallback
           ? patternSelection.confidence
@@ -420,7 +427,7 @@ async function handleRefreshAiRequest(): Promise<void> {
   }
   if (!getCachedAiApiKey()) {
     setAiStatus("missing-key", null);
-    figma.notify("Add an OpenAI API key to run AI insights.");
+    figma.notify("AI key is missing in this build. Contact an admin.");
     postToUI({ type: "selection-update", payload: createSelectionState(frame) });
     return;
   }

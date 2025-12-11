@@ -31,12 +31,9 @@ npm run dev          # rebuilds on changes for local development
 > **Note:** Network access is required for `npm install`. If the sandbox blocks it, request approval or install dependencies locally before running the build script.
 
 ## Configuring AI analysis
-1. Generate an OpenAI API key with access to `gpt-4o-mini`.
-2. Launch the plugin and open the new **AI setup** panel at the top of the UI.
-3. Paste the API key (it is stored only in your local `figma.clientStorage`) and click **Save key**. Use **Clear key** to remove it later.
-4. Select a single marketing frame and click **Run AI analysis** to request signals/layout advice. The plugin summarizes the frame, calls OpenAI’s Chat Completions API, and stores normalized results on the frame’s plugin data.
-5. The AI status badge will tell you whether a key is missing, an analysis is in-flight, or if an error occurred. When successful, the Layout Patterns + AI Signals sections will populate and auto-select high-confidence layouts.
-6. To ship a workspace default without prompting users, set the `BIBLIOSCALE_DEFAULT_OPENAI_KEY` environment variable before running `npm run build` (legacy `BIBLIO_DEFAULT_OPENAI_KEY` is still read for compatibility). The compiled plugin will use that key automatically while still allowing local overrides.
+1. Set the `BIBLIOSCALE_DEFAULT_OPENAI_KEY` environment variable (or legacy `BIBLIO_DEFAULT_OPENAI_KEY`) before running `npm run build` so the compiled plugin ships with a workspace AI key. Builds without a key will surface an “AI key missing” status and skip AI analysis.
+2. Launch the plugin, select a single marketing frame, and click **Run AI analysis** to request signals/layout advice. The plugin summarizes the frame, calls OpenAI’s Chat Completions API, and stores normalized results on the frame’s plugin data.
+3. The AI status badge will reflect whether a key is present, an analysis is in-flight, or if an error occurred. When successful, the Layout Patterns + AI Signals sections will populate and auto-select high-confidence layouts.
 
 ## Loading in Figma
 1. Open the Figma desktop app.

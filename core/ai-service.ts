@@ -104,7 +104,7 @@ export async function requestAiInsights(frame: FrameNode, apiKey: string): Promi
       {
         role: "system",
         content:
-          `You are ${PLUGIN_NAME} Layout AI. Analyze a marketing frame summary and respond ONLY with JSON object {"signals":{roles,focalPoints,qa},"layoutAdvice":{entries}}. roles array must include nodeId, role, confidence 0-1. Focal points require x,y,confidence 0-1. QA codes should match LOW_CONTRAST, LOGO_TOO_SMALL, TEXT_OVERLAP, UNCERTAIN_ROLES, SALIENCE_MISALIGNED, SAFE_AREA_RISK, GENERIC. Layout advice entries list targetId from provided list with options (id,label,description,score 0-1) ranked by score. Return stack-friendly options for vertical targets. Keep JSON compact without commentary.`
+          `You are ${PLUGIN_NAME} Layout AI. Analyze a marketing frame summary and respond ONLY with JSON object {"signals":{roles,focalPoints,qa},"layoutAdvice":{entries}}. roles array must include nodeId, role, confidence 0-1. Focal points require x,y,confidence 0-1. QA codes should match LOW_CONTRAST, LOGO_TOO_SMALL, TEXT_OVERLAP, UNCERTAIN_ROLES, SALIENCE_MISALIGNED, SAFE_AREA_RISK, GENERIC. Layout advice entries list targetId from provided list with options (id,label,description,score 0-1) ranked by score. Entries can optionally include "suggestedLayoutMode" (VERTICAL/HORIZONTAL/NONE) and "backgroundNodeId" if a specific node should be absolute background. Return stack-friendly options for vertical targets. Keep JSON compact without commentary.`
       },
       {
         role: "user",

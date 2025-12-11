@@ -251,11 +251,11 @@ function determineScalingStrategy(params: {
 export function calculateOptimalScale(
   analysis: ContentAnalysis,
   target: { width: number; height: number },
-  safeAreaInsets: { x: number; y: number },
+  safeAreaInsets: { left: number; right: number; top: number; bottom: number },
   profile: "horizontal" | "vertical" | "square"
 ): number {
-  const availableWidth = target.width - safeAreaInsets.x * 2;
-  const availableHeight = target.height - safeAreaInsets.y * 2;
+  const availableWidth = target.width - safeAreaInsets.left - safeAreaInsets.right;
+  const availableHeight = target.height - safeAreaInsets.top - safeAreaInsets.bottom;
 
   // Use effective dimensions from content analysis
   const sourceWidth = Math.max(analysis.effectiveWidth, 1);
@@ -311,8 +311,8 @@ export function calculateOptimalScale(
           scale = heightScale * 0.95;
         } else {
           const heightFirst = heightScale * 0.9;
-          // Allow some horizontal overshoot to unlock vertical fill on tall targets
-          const widthAllowance = widthScale * 1.35;
+          // Allow minimal horizontal overshoot (5%) to unlock vertical fill
+          const widthAllowance = widthScale * 1.05;
           scale = Math.min(heightFirst, widthAllowance);
         }
       } else if (profile === "horizontal") {
@@ -320,8 +320,9 @@ export function calculateOptimalScale(
         if (widthScale <= heightScale) {
           scale = widthScale * 0.95;
         } else {
-          // Blend with heavy weight toward filling width
-          scale = Math.min(heightScale, widthScale * 0.8 + heightScale * 0.2);
+          // Blend with heavy weight toward filling width, constrained by height
+          const blend = widthScale * 0.8 + heightScale * 0.2;
+          scale = Math.min(heightScale * 1.05, blend);
         }
       } else {
         // Square: balanced fill
