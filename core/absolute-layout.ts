@@ -1,4 +1,5 @@
 import { scaleCenterToRange } from "./absolute-geometry.js";
+import { debugFixLog } from "./debug.js";
 import type { LayoutProfile } from "./layout-profile.js";
 
 export interface AbsoluteChildSnapshot {
@@ -18,6 +19,7 @@ export interface AbsolutePlan {
 export interface PlanAbsoluteChildPositionsInput {
   readonly profile: LayoutProfile;
   readonly safeBounds: { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
+  readonly targetAspectRatio?: number;
   readonly children: ReadonlyArray<AbsoluteChildSnapshot>;
 }
 
@@ -30,17 +32,21 @@ export function planAbsoluteChildPositions(input: PlanAbsoluteChildPositionsInpu
   const contentBounds = measureBounds(input.children);
 
   if (input.profile === "vertical" && input.children.length >= 2) {
-    const targetRatio = safeBounds.height > 0 ? safeBounds.width / safeBounds.height : 1;
-    
-    // Only force stack for extreme vertical targets (like TikTok)
-    if (targetRatio < 0.57) {
-      const horizontalSpan = contentBounds.width;
-      const verticalSpan = contentBounds.height;
-      const layoutIsPredominantlyHorizontal = horizontalSpan > verticalSpan * 1.1;
+    const safeAspectRatio = safeBounds.height > 0 ? safeBounds.width / safeBounds.height : 1;
+    const targetAspectRatio =
+      typeof input.targetAspectRatio === "number" && Number.isFinite(input.targetAspectRatio)
+        ? Math.max(0, input.targetAspectRatio)
+        : safeAspectRatio;
+    const extremeVertical = Math.min(safeAspectRatio, targetAspectRatio) < 0.57;
 
-      if (layoutIsPredominantlyHorizontal) {
-        return planVerticalStack(input.children, safeBounds);
-      }
+    // Only force stack for extreme vertical targets (like TikTok)
+    if (extremeVertical) {
+      debugFixLog("stacking absolute children for vertical target", {
+        safeAspectRatio,
+        targetAspectRatio,
+        childCount: input.children.length
+      });
+      return planVerticalStack(input.children, safeBounds);
     }
   }
 

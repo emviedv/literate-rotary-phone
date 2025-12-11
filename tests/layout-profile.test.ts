@@ -99,13 +99,18 @@ testCase("resolveVerticalLayoutWrap preserves NO_WRAP", () => {
 });
 
 testCase("shouldExpandAbsoluteChildren returns true when adopting vertical variant", () => {
-  const result = shouldExpandAbsoluteChildren("HORIZONTAL", true);
+  const result = shouldExpandAbsoluteChildren("HORIZONTAL", true, "vertical");
   assertEqual(result, true, "Adopting vertical variant should expand absolute children.");
 });
 
 testCase("shouldExpandAbsoluteChildren only expands non-auto layouts otherwise", () => {
-  const adopt = shouldExpandAbsoluteChildren("HORIZONTAL", false);
-  const none = shouldExpandAbsoluteChildren("NONE", false);
+  const adopt = shouldExpandAbsoluteChildren("HORIZONTAL", false, "square");
+  const none = shouldExpandAbsoluteChildren("NONE", false, "square");
   assertEqual(adopt, false, "Horizontal layouts without vertical adoption should not expand.");
   assertEqual(none, true, "Root frames without auto layout still expand absolute children.");
+});
+
+testCase("shouldExpandAbsoluteChildren expands horizontal layouts for vertical targets", () => {
+  const result = shouldExpandAbsoluteChildren("HORIZONTAL", false, "vertical");
+  assertEqual(result, true, "Horizontal auto-layouts with absolute children should still expand for vertical targets.");
 });

@@ -1,6 +1,13 @@
+
+if (typeof globalThis !== "undefined" && typeof globalThis.DEBUG_FIX === "undefined") {
+  globalThis.DEBUG_FIX = "0";
+}
+
 "use strict";
 (() => {
   var __defProp = Object.defineProperty;
+  var __defProps = Object.defineProperties;
+  var __getOwnPropDescs = Object.getOwnPropertyDescriptors;
   var __getOwnPropSymbols = Object.getOwnPropertySymbols;
   var __hasOwnProp = Object.prototype.hasOwnProperty;
   var __propIsEnum = Object.prototype.propertyIsEnumerable;
@@ -16,6 +23,7 @@
       }
     return a;
   };
+  var __spreadProps = (a, b) => __defProps(a, __getOwnPropDescs(b));
 
   // types/targets.ts
   var VARIANT_TARGETS = [
@@ -297,6 +305,9 @@
       background: rgba(250, 176, 5, 0.12);
       color: #7a3b00;
     }
+    .warning.warn {
+      color: #ffffff;
+    }
     .warning.info {
       background: rgba(16, 156, 241, 0.12);
       color: #0f3b78;
@@ -429,7 +440,12 @@
           <h2>AI signals</h2>
           <p id="aiStatusText" class="status">AI analysis is built into this plugin. Select a frame to analyze.</p>
         </div>
-        <button id="refreshAiButton" class="secondary">Run AI analysis</button>
+        <div class="button-row">
+          <button id="refreshAiButton" class="secondary">Run AI analysis</button>
+          <button id="copySelectionButton" class="secondary" title="Copy current selection JSON for debugging.">
+            Copy selection JSON
+          </button>
+        </div>
       </div>
       <div id="aiEmpty" class="status">No AI signals found on selection.</div>
       <div id="aiRoles" class="ai-row" role="list"></div>
@@ -490,6 +506,11 @@
       <h2>Results</h2>
       <div id="resultsContainer" style="display: flex; flex-direction: column; gap: 8px;"></div>
     </section>
+
+    <section class="section" id="debugSection" hidden>
+      <h2>Debug Log</h2>
+      <pre id="debugLogOutput" style="max-height: 200px; overflow-y: auto; background: var(--figma-color-bg-tertiary, #eee); color: var(--figma-color-text-secondary, #333); padding: 8px; border-radius: 4px; white-space: pre-wrap; word-wrap: break-word;"></pre>
+    </section>
   </main>
 
   <script>
@@ -505,6 +526,7 @@
       const statusMessage = document.getElementById("statusMessage");
       const aiStatusText = document.getElementById("aiStatusText");
       const refreshAiButton = document.getElementById("refreshAiButton");
+      const copySelectionButton = document.getElementById("copySelectionButton");
       const lastRunSection = document.getElementById("lastRunSection");
       const lastRunContent = document.getElementById("lastRunContent");
       const resultsSection = document.getElementById("resultsSection");
@@ -518,6 +540,9 @@
       const layoutStatus = document.getElementById("layoutStatus");
       const layoutContainer = document.getElementById("layoutContainer");
 
+      const debugSection = document.getElementById("debugSection");
+      const debugLogOutput = document.getElementById("debugLogOutput");
+
       const LAYOUT_CONFIDENCE_THRESHOLD = 0.65;
       const QA_CONFIDENCE_THRESHOLD = 0.35;
       let availableTargets = [];
@@ -529,6 +554,7 @@
       let aiStatusState = "missing-key";
       let aiErrorMessage = "";
       let aiUsingDefaultKey = false;
+      let latestSelectionState = null;
 
       if (!(targetList instanceof HTMLElement)) {
         throw new Error("Target list element missing.");
@@ -539,12 +565,64 @@
       if (!(safeAreaSlider instanceof HTMLInputElement)) {
         throw new Error("Safe area slider missing.");
       }
+      if (!(copySelectionButton instanceof HTMLButtonElement)) {
+        throw new Error("Copy selection button missing.");
+      }
 
       function createChip(text, tone = "") {
         const chip = document.createElement("span");
         chip.className = "ai-chip" + (tone ? " " + tone : "");
         chip.textContent = text;
         return chip;
+      }
+
+      function buildSelectionDebugPayload() {
+        return JSON.stringify(
+          {
+            selection: latestSelectionState,
+            selectedTargetIds: Array.from(selectedTargetIds),
+            safeAreaRatio: Number(safeAreaSlider.value),
+            layoutSelections: { ...layoutSelections },
+            ai: {
+              configured: aiConfigured,
+              status: aiStatusState,
+              usingDefaultKey: aiUsingDefaultKey,
+              error: aiErrorMessage || undefined
+            }
+          },
+          null,
+          2
+        );
+      }
+
+      async function copyTextToClipboard(text) {
+        // Primary path: async clipboard API
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+          try {
+            await navigator.clipboard.writeText(text);
+            return { ok: true, method: "clipboard" };
+          } catch (error) {
+            console.debug("Clipboard writeText failed, falling back", error);
+          }
+        }
+
+        // Fallback: hidden textarea + execCommand
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.setAttribute("readonly", "");
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        textarea.setSelectionRange(0, text.length);
+        let success = false;
+        try {
+          success = document.execCommand("copy");
+        } catch (error) {
+          console.debug("execCommand copy failed", error);
+        }
+        document.body.removeChild(textarea);
+        return { ok: success, method: "textarea" };
       }
 
       function renderTargets(targets) {
@@ -770,29 +848,12 @@
       
       function autoSelectTargets(width, height) {
         if (!width || !height) return;
-        const ratio = width / height;
-        const isPortrait = ratio < 0.8;
-        const isLandscape = ratio > 1.2;
-        const isSquare = !isPortrait && !isLandscape;
         
         const newSelection = new Set();
+        // Default to selecting all targets to ensure users see all possibilities.
         availableTargets.forEach(target => {
-          const tRatio = target.width / target.height;
-          const tPortrait = tRatio < 0.8;
-          const tLandscape = tRatio > 1.2;
-          const tSquare = !tPortrait && !tLandscape;
-          
-          if ((isPortrait && tPortrait) || (isLandscape && tLandscape) || (isSquare && tSquare)) {
-             newSelection.add(target.id);
-          }
-          // Always select "Popular" ones if generic? 
-          // For now, simple aspect matching.
-          // Fallback: if no match (e.g. extreme aspect), select all?
+          newSelection.add(target.id);
         });
-        
-        if (newSelection.size === 0) {
-           availableTargets.forEach(t => newSelection.add(t.id));
-        }
         
         selectedTargetIds = newSelection;
         updateTargetVisuals();
@@ -828,7 +889,12 @@
           isBusy || !selectionReady || aiStatusState === "missing-key" || aiStatusState === "fetching";
       }
 
+      function updateDebugControls() {
+        copySelectionButton.disabled = isBusy || !selectionReady || !latestSelectionState;
+      }
+
       function applySelectionState(state) {
+        latestSelectionState = state;
         selectionReady = state.selectionOk;
         if (selectionReady) {
           if (state.selectionName) {
@@ -858,6 +924,7 @@
         renderAiSignals(state.aiSignals);
         renderLayoutAdvice(state.layoutAdvice);
         updateGenerateState();
+        updateDebugControls();
       }
 
       // Removing old select event listener
@@ -930,6 +997,7 @@
         }
         statusMessage.textContent = message;
         updateAiStatusDisplay();
+        updateDebugControls();
       }
 
       function formatLastRun(lastRun) {
@@ -1207,6 +1275,29 @@
       }
 
       refreshAiButton.addEventListener("click", requestAiRefresh);
+      copySelectionButton.addEventListener("click", copySelectionJson);
+
+      async function copySelectionJson() {
+        if (!selectionReady || !latestSelectionState) {
+          statusMessage.textContent = "Select a frame to copy debug JSON.";
+          return;
+        }
+        const payload = buildSelectionDebugPayload();
+        try {
+          const result = await copyTextToClipboard(payload);
+          if (result.ok) {
+            statusMessage.textContent =
+              result.method === "clipboard"
+                ? "Selection JSON copied to clipboard."
+                : "Selection JSON copied (fallback).";
+          } else {
+            statusMessage.textContent = "Copy failed. Clipboard is blocked.";
+          }
+        } catch (error) {
+          console.error("Copy selection JSON failed", error);
+          statusMessage.textContent = "Copy failed. See console.";
+        }
+      }
 
       window.onmessage = (event) => {
         const message = event.data.pluginMessage;
@@ -1215,6 +1306,10 @@
         }
         switch (message.type) {
           case "init": {
+            if (message.payload.debugEnabled && debugSection && debugLogOutput) {
+              debugSection.hidden = false;
+              debugLogOutput.textContent = "Debug mode enabled. Waiting for logs...\\n\\n";
+            }
             renderTargets(message.payload.targets);
             applySelectionState({
               selectionOk: message.payload.selectionOk,
@@ -1254,6 +1349,14 @@
           case "error":
             setBusy(false, message.payload.message || "Something went wrong.");
             break;
+          case "debug-log": {
+            if (debugSection && debugLogOutput) {
+              debugSection.hidden = false;
+              debugLogOutput.textContent = message.payload.message;
+              debugLogOutput.scrollTop = debugLogOutput.scrollHeight;
+            }
+            break;
+          }
           default:
             console.warn("Unhandled UI message", message);
         }
@@ -1261,283 +1364,15 @@
 
       updateSafeAreaValue();
       updateAiStatusDisplay();
+      updateDebugControls();
       parent.postMessage({ pluginMessage: { type: "request-initial-state" } }, "*");
     })();
   <\/script>
 </body>
 </html>`;
 
-  // core/layout-positions.ts
-  function computeVariantLayout(sizes, options) {
-    if (sizes.length === 0) {
-      return {
-        positions: [],
-        bounds: { width: 0, height: 0 }
-      };
-    }
-    const positions = [];
-    let cursorX = options.margin;
-    let cursorY = options.margin;
-    let rowHeight = 0;
-    let maxWidth = 0;
-    let maxHeight = 0;
-    for (const size of sizes) {
-      const requiresWrap = cursorX + size.width > options.maxRowWidth && cursorX > options.margin;
-      if (requiresWrap) {
-        cursorX = options.margin;
-        cursorY += rowHeight + options.gap;
-        rowHeight = 0;
-      }
-      positions.push({ x: cursorX, y: cursorY });
-      const rightEdge = cursorX + size.width + options.margin;
-      const bottomEdge = cursorY + size.height + options.margin;
-      if (rightEdge > maxWidth) {
-        maxWidth = rightEdge;
-      }
-      if (bottomEdge > maxHeight) {
-        maxHeight = bottomEdge;
-      }
-      cursorX += size.width + options.gap;
-      if (size.height > rowHeight) {
-        rowHeight = size.height;
-      }
-    }
-    return {
-      positions,
-      bounds: { width: maxWidth, height: maxHeight }
-    };
-  }
-
-  // core/padding-distribution.ts
-  function distributePadding(options) {
-    const totalExtra = Math.max(0, options.totalExtra);
-    const requestedInset = Math.max(0, options.safeInset);
-    if (totalExtra === 0) {
-      return { start: 0, end: 0 };
-    }
-    const insetPerSide = Math.min(requestedInset, totalExtra / 2);
-    const remaining = Math.max(totalExtra - insetPerSide * 2, 0);
-    let startShare = 0.5;
-    if (options.gaps && Number.isFinite(options.gaps.start) && Number.isFinite(options.gaps.end)) {
-      const startGap = Math.max(0, options.gaps.start);
-      const endGap = Math.max(0, options.gaps.end);
-      const totalGap = startGap + endGap;
-      if (totalGap > 0) {
-        startShare = startGap / totalGap;
-      }
-    }
-    if (typeof options.focus === "number" && Number.isFinite(options.focus)) {
-      const clampedFocus = clampRatio(options.focus);
-      const blend = 0.6;
-      startShare = clampRatio(startShare * (1 - blend) + clampedFocus * blend);
-    }
-    return {
-      start: insetPerSide + remaining * startShare,
-      end: insetPerSide + remaining * (1 - startShare)
-    };
-  }
-  function clampRatio(value) {
-    const clamped = Math.min(Math.max(value, 0), 1);
-    const epsilon = 0.05;
-    return Math.min(Math.max(clamped, epsilon), 1 - epsilon);
-  }
-
-  // core/layout-expansion.ts
-  function planAutoLayoutExpansion(context) {
-    var _a;
-    const totalExtra = Math.max(0, context.totalExtra);
-    if (totalExtra === 0) {
-      return { start: 0, end: 0, interior: 0 };
-    }
-    const requestedInset = Math.max(0, context.safeInset);
-    const insetPerSide = Math.min(requestedInset, totalExtra / 2);
-    const gaps = normaliseGaps(context.gaps);
-    const flowChildCount = Math.max(0, context.flowChildCount);
-    const baseItemSpacing = Math.max(0, (_a = context.baseItemSpacing) != null ? _a : 0);
-    const leftover = Math.max(totalExtra - insetPerSide * 2, 0);
-    const canReflow = context.allowInteriorExpansion !== false && flowChildCount >= 2 && leftover > 0;
-    let baseInteriorWeight = 0;
-    if (canReflow) {
-      const gapCount = Math.max(flowChildCount - 1, 1);
-      baseInteriorWeight = Math.min(0.58 + gapCount * 0.12, 0.82);
-      if (baseItemSpacing < 16) {
-        baseInteriorWeight *= 0.92;
-      }
-    }
-    const asymmetry = gaps ? computeAsymmetry(gaps) : 0;
-    const symmetryMultiplier = 1 - asymmetry * 0.6;
-    const interiorWeight = clamp(baseInteriorWeight * symmetryMultiplier, 0, 0.9);
-    const interiorExtra = round(leftover * interiorWeight);
-    const edgeBudget = Math.max(totalExtra - interiorExtra, insetPerSide * 2);
-    const distributed = distributePadding({
-      totalExtra: edgeBudget,
-      safeInset: insetPerSide,
-      gaps: gaps != null ? gaps : null,
-      focus: context.focalRatio
-    });
-    return {
-      start: round(distributed.start),
-      end: round(distributed.end),
-      interior: round(interiorExtra)
-    };
-  }
-  function normaliseGaps(gaps) {
-    if (!gaps) {
-      return null;
-    }
-    const start = Number.isFinite(gaps.start) ? Math.max(0, gaps.start) : 0;
-    const end = Number.isFinite(gaps.end) ? Math.max(0, gaps.end) : 0;
-    if (start === 0 && end === 0) {
-      return null;
-    }
-    return { start, end };
-  }
-  function computeAsymmetry(gaps) {
-    const total = gaps.start + gaps.end;
-    if (total === 0) {
-      return 0;
-    }
-    return Math.min(1, Math.abs(gaps.start - gaps.end) / total);
-  }
-  function round(value) {
-    return Math.round(value * 100) / 100;
-  }
-  function clamp(value, min, max) {
-    return Math.min(Math.max(value, min), max);
-  }
-
-  // core/absolute-geometry.ts
-  function scaleCenterToRange(value, from, to) {
-    const boundedFrom = normaliseRange(from);
-    const boundedTo = normaliseRange(to);
-    if (boundedTo.size === 0) {
-      return boundedTo.start;
-    }
-    if (boundedFrom.size === 0) {
-      return boundedTo.start + boundedTo.size / 2;
-    }
-    const fromCenter = boundedFrom.start + boundedFrom.size / 2;
-    const toCenter = boundedTo.start + boundedTo.size / 2;
-    const scale = boundedTo.size / boundedFrom.size;
-    return toCenter + (value - fromCenter) * scale;
-  }
-  function normaliseRange(range) {
-    const size = Math.max(0, Number.isFinite(range.size) ? range.size : 0);
-    const start = Number.isFinite(range.start) ? range.start : 0;
-    return { start, size };
-  }
-
-  // core/absolute-layout.ts
-  function planAbsoluteChildPositions(input) {
-    if (input.children.length === 0) {
-      return [];
-    }
-    const safeBounds = normaliseBounds(input.safeBounds);
-    const contentBounds = measureBounds(input.children);
-    if (input.profile === "vertical" && input.children.length >= 2) {
-      const targetRatio = safeBounds.height > 0 ? safeBounds.width / safeBounds.height : 1;
-      if (targetRatio < 0.57) {
-        const horizontalSpan = contentBounds.width;
-        const verticalSpan = contentBounds.height;
-        const layoutIsPredominantlyHorizontal = horizontalSpan > verticalSpan * 1.1;
-        if (layoutIsPredominantlyHorizontal) {
-          return planVerticalStack(input.children, safeBounds);
-        }
-      }
-    }
-    if (boundsContain(safeBounds, contentBounds)) {
-      return input.children.map((child) => ({ id: child.id, x: round2(child.x), y: round2(child.y) }));
-    }
-    return projectChildrenToBounds(input.children, contentBounds, safeBounds);
-  }
-  function planVerticalStack(children, safe) {
-    const ordered = [...children].sort((a, b) => {
-      if (a.x !== b.x) {
-        return a.x - b.x;
-      }
-      return a.y - b.y;
-    });
-    const plans = /* @__PURE__ */ new Map();
-    const totalChildHeight = ordered.reduce((sum, child) => sum + child.height, 0);
-    const gapCount = Math.max(ordered.length - 1, 0);
-    const availableForGaps = Math.max(safe.height - totalChildHeight, 0);
-    const gapSize = gapCount > 0 ? availableForGaps / gapCount : 0;
-    let cursorY = safe.y;
-    ordered.forEach((child, index) => {
-      const targetY = clamp2(cursorY, safe.y, safe.y + safe.height - child.height);
-      const targetX = clamp2(safe.x + (safe.width - child.width) / 2, safe.x, safe.x + safe.width - child.width);
-      plans.set(child.id, {
-        id: child.id,
-        x: round2(targetX),
-        y: round2(targetY)
-      });
-      cursorY = targetY + child.height + gapSize;
-    });
-    return children.map((child) => {
-      var _a;
-      return (_a = plans.get(child.id)) != null ? _a : { id: child.id, x: child.x, y: child.y };
-    });
-  }
-  function projectChildrenToBounds(children, source, target) {
-    const sourceRangeX = { start: source.x, size: source.width };
-    const sourceRangeY = { start: source.y, size: source.height };
-    const targetRangeX = { start: target.x, size: target.width };
-    const targetRangeY = { start: target.y, size: target.height };
-    return children.map((child) => {
-      const centerX = child.x + child.width / 2;
-      const centerY = child.y + child.height / 2;
-      const mappedCenterX = scaleCenterToRange(centerX, sourceRangeX, targetRangeX);
-      const mappedCenterY = scaleCenterToRange(centerY, sourceRangeY, targetRangeY);
-      const nextX = clamp2(mappedCenterX - child.width / 2, target.x, target.x + target.width - child.width);
-      const nextY = clamp2(mappedCenterY - child.height / 2, target.y, target.y + target.height - child.height);
-      return {
-        id: child.id,
-        x: round2(nextX),
-        y: round2(nextY)
-      };
-    });
-  }
-  function measureBounds(children) {
-    let minX = Number.POSITIVE_INFINITY;
-    let minY = Number.POSITIVE_INFINITY;
-    let maxX = Number.NEGATIVE_INFINITY;
-    let maxY = Number.NEGATIVE_INFINITY;
-    for (const child of children) {
-      minX = Math.min(minX, child.x);
-      minY = Math.min(minY, child.y);
-      maxX = Math.max(maxX, child.x + child.width);
-      maxY = Math.max(maxY, child.y + child.height);
-    }
-    if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
-      return { x: 0, y: 0, width: 0, height: 0 };
-    }
-    return {
-      x: minX,
-      y: minY,
-      width: Math.max(0, maxX - minX),
-      height: Math.max(0, maxY - minY)
-    };
-  }
-  function normaliseBounds(bounds) {
-    return {
-      x: Number.isFinite(bounds.x) ? bounds.x : 0,
-      y: Number.isFinite(bounds.y) ? bounds.y : 0,
-      width: Math.max(0, Number.isFinite(bounds.width) ? bounds.width : 0),
-      height: Math.max(0, Number.isFinite(bounds.height) ? bounds.height : 0)
-    };
-  }
-  function boundsContain(outer, inner) {
-    return inner.x >= outer.x && inner.y >= outer.y && inner.x + inner.width <= outer.x + outer.width + 0.01 && inner.y + inner.height <= outer.y + outer.height + 0.01;
-  }
-  function clamp2(value, min, max) {
-    return Math.min(Math.max(value, min), max);
-  }
-  function round2(value) {
-    return Math.round(value * 100) / 100;
-  }
-
   // core/plugin-constants.ts
-  var PLUGIN_NAME = "BiblioScale";
+  var PLUGIN_NAME = "BiblioScale: Social Media Resizer & Ad Generator";
   var STAGING_PAGE_NAME = "BiblioScale Variants";
   var PLUGIN_DATA_PREFIX = "biblioscale";
   var DEBUG_KEY = `${PLUGIN_DATA_PREFIX}:debug`;
@@ -1563,6 +1398,39 @@
   var LEGACY_LAYOUT_ADVICE_KEY = `${LEGACY_PLUGIN_DATA_PREFIX}:layout-advice`;
   var LEGACY_SAFE_AREA_KEY = `${LEGACY_PLUGIN_DATA_PREFIX}:safeArea`;
   var LEGACY_FOCAL_POINT_KEY = `${LEGACY_PLUGIN_DATA_PREFIX}:focalPoint`;
+
+  // core/safe-area.ts
+  function clampToNonNegative(value) {
+    return Math.max(0, value);
+  }
+  function resolveSafeAreaInsets(target, safeAreaRatio) {
+    if (target.id === "tiktok-vertical") {
+      return {
+        left: 44,
+        right: 120,
+        top: 108,
+        bottom: 320
+      };
+    }
+    if (target.id === "youtube-cover") {
+      const leftRight = (target.width - 1546) / 2;
+      const topBottom = (target.height - 423) / 2;
+      return {
+        left: leftRight,
+        right: leftRight,
+        top: topBottom,
+        bottom: topBottom
+      };
+    }
+    const insetX = clampToNonNegative(target.width * safeAreaRatio);
+    const insetY = clampToNonNegative(target.height * safeAreaRatio);
+    return {
+      left: insetX,
+      right: insetX,
+      top: insetY,
+      bottom: insetY
+    };
+  }
 
   // core/qa-overlay.ts
   function configureQaOverlay(overlay, options) {
@@ -1614,27 +1482,11 @@
     overlay.resizeWithoutConstraints(target.width, target.height);
     overlay.clipsContent = false;
     overlay.setPluginData(ROLE_KEY, "overlay");
-    if (target.id === "youtube-cover") {
-      const safeWidth = 1546;
-      const safeHeight = 423;
-      const insetX = (target.width - safeWidth) / 2;
-      const insetY = (target.height - safeHeight) / 2;
-      appendSafeRect(overlay, insetX, insetY, safeWidth, safeHeight, "Text & Logo Safe Area");
-    } else if (target.id === "tiktok-vertical") {
-      const top = 108;
-      const bottom = 320;
-      const left = 44;
-      const right = 120;
-      const safeWidth = target.width - left - right;
-      const safeHeight = target.height - top - bottom;
-      appendSafeRect(overlay, left, top, safeWidth, safeHeight, "Content Safe Zone");
-    } else {
-      const insetX = target.width * safeAreaRatio;
-      const insetY = target.height * safeAreaRatio;
-      const safeWidth = target.width - insetX * 2;
-      const safeHeight = target.height - insetY * 2;
-      appendSafeRect(overlay, insetX, insetY, safeWidth, safeHeight, "Safe Area");
-    }
+    const insets = resolveSafeAreaInsets(target, safeAreaRatio);
+    const safeWidth = target.width - insets.left - insets.right;
+    const safeHeight = target.height - insets.top - insets.bottom;
+    const label = target.id === "youtube-cover" ? "Text & Logo Safe Area" : target.id === "tiktok-vertical" ? "Content Safe Zone" : "Safe Area";
+    appendSafeRect(overlay, insets.left, insets.top, safeWidth, safeHeight, label);
     return overlay;
   }
   function appendSafeRect(parent, x, y, width, height, name, color = { r: 0.92, g: 0.4, b: 0.36 }) {
@@ -1688,8 +1540,44 @@
     }
     return snapshot.flowChildCount >= 1;
   }
-  function shouldExpandAbsoluteChildren(rootLayoutMode, adoptVerticalVariant) {
+  function computeVerticalSpacing(input) {
+    if (input.flowChildCount < 2) {
+      return roundSpacing(input.baseSpacing);
+    }
+    const gaps = Math.max(input.flowChildCount - 1, 1);
+    const interiorPerGap = Math.max(input.interior, 0) / gaps;
+    const softCap = input.baseSpacing * 3;
+    const extendedCap = input.baseSpacing * 12;
+    const clampedAddition = interiorPerGap > softCap * 1.5 ? Math.min(interiorPerGap * 0.75, extendedCap) : Math.min(interiorPerGap, softCap);
+    if (input.flowChildCount <= 3 && interiorPerGap > input.baseSpacing * 2) {
+      return roundSpacing(input.baseSpacing + clampedAddition * 0.8);
+    }
+    return roundSpacing(input.baseSpacing + clampedAddition);
+  }
+  function resolveVerticalAlignItems(current, options) {
+    if (current === "MIN") {
+      return current;
+    }
+    const interior = Math.max(0, options.interior);
+    if (interior > 0) {
+      return "MIN";
+    }
+    if (current === "SPACE_BETWEEN") {
+      return "SPACE_BETWEEN";
+    }
+    return "MIN";
+  }
+  function resolveVerticalLayoutWrap(current) {
+    if (current === "NO_WRAP") {
+      return current;
+    }
+    return "NO_WRAP";
+  }
+  function shouldExpandAbsoluteChildren(rootLayoutMode, adoptVerticalVariant, profile) {
     if (adoptVerticalVariant) {
+      return true;
+    }
+    if (profile === "vertical" && rootLayoutMode !== "VERTICAL") {
       return true;
     }
     if (!rootLayoutMode || rootLayoutMode === "NONE") {
@@ -1697,209 +1585,17 @@
     }
     return false;
   }
-
-  // core/content-analyzer.ts
-  function analyzeContent(frame) {
-    const actualBounds = findActualContentBounds(frame);
-    const effectiveWidth = actualBounds ? actualBounds.width : frame.width;
-    const effectiveHeight = actualBounds ? actualBounds.height : frame.height;
-    const hasText = hasTextContent(frame);
-    const hasImages = hasImageContent(frame);
-    const childCount = countVisibleChildren(frame);
-    const normalizedLayoutMode = normalizeLayoutMode(frame.layoutMode);
-    const hasAutoLayout = normalizedLayoutMode !== "NONE";
-    let contentDensity = "normal";
-    if (childCount === 0) {
-      contentDensity = "sparse";
-    } else if (childCount > 10) {
-      contentDensity = "dense";
-    } else if (childCount <= 2) {
-      contentDensity = "sparse";
-    }
-    const strategy = determineScalingStrategy({
-      hasAutoLayout,
-      layoutDirection: normalizedLayoutMode,
-      contentDensity,
-      hasText,
-      hasImages,
-      aspectRatio: effectiveWidth / Math.max(effectiveHeight, 1)
-    });
-    return {
-      actualContentBounds: actualBounds,
-      hasAutoLayout,
-      layoutDirection: normalizedLayoutMode,
-      childCount,
-      hasText,
-      hasImages,
-      contentDensity,
-      recommendedStrategy: strategy,
-      effectiveWidth,
-      effectiveHeight
-    };
-  }
-  function findActualContentBounds(frame) {
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    let hasVisibleContent = false;
-    function processNode(node, depth = 0) {
-      if (!node.visible || depth > 10) return;
-      if ("getPluginData" in node && (node.getPluginData(ROLE_KEY) === "overlay" || node.getPluginData(LEGACY_ROLE_KEY) === "overlay")) {
-        return;
-      }
-      const hasContent = node.type === "TEXT" && node.characters.length > 0 || (node.type === "RECTANGLE" || node.type === "ELLIPSE") || "fills" in node && Array.isArray(node.fills) && node.fills.length > 0 || "strokes" in node && Array.isArray(node.strokes) && node.strokes.length > 0;
-      if (hasContent && "absoluteBoundingBox" in node && node.absoluteBoundingBox) {
-        const bounds = node.absoluteBoundingBox;
-        minX = Math.min(minX, bounds.x);
-        minY = Math.min(minY, bounds.y);
-        maxX = Math.max(maxX, bounds.x + bounds.width);
-        maxY = Math.max(maxY, bounds.y + bounds.height);
-        hasVisibleContent = true;
-      }
-      if ("children" in node) {
-        for (const child of node.children) {
-          processNode(child, depth + 1);
-        }
-      }
-    }
-    processNode(frame);
-    if (!hasVisibleContent || !frame.absoluteBoundingBox) {
-      return null;
-    }
-    const frameBounds = frame.absoluteBoundingBox;
-    const relativeMinX = minX - frameBounds.x;
-    const relativeMinY = minY - frameBounds.y;
-    const contentWidth = maxX - minX;
-    const contentHeight = maxY - minY;
-    return {
-      x: Math.max(0, relativeMinX),
-      y: Math.max(0, relativeMinY),
-      width: Math.min(contentWidth, frame.width),
-      height: Math.min(contentHeight, frame.height)
-    };
-  }
-  function hasTextContent(frame) {
-    const checkNode = (node) => {
-      if (node.type === "TEXT") {
-        return node.characters.length > 0;
-      }
-      if ("children" in node) {
-        return node.children.some((child) => checkNode(child));
-      }
-      return false;
-    };
-    return checkNode(frame);
-  }
-  function hasImageContent(frame) {
-    const checkNode = (node) => {
-      if ("fills" in node && Array.isArray(node.fills)) {
-        const hasFills = node.fills;
-        if (hasFills.some((fill) => fill.type === "IMAGE" || fill.type === "VIDEO")) {
-          return true;
-        }
-      }
-      if ("children" in node) {
-        return node.children.some((child) => checkNode(child));
-      }
-      return false;
-    };
-    return checkNode(frame);
-  }
-  function countVisibleChildren(frame) {
-    return frame.children.filter((child) => {
-      if (!child.visible) return false;
-      if ("getPluginData" in child && (child.getPluginData(ROLE_KEY) === "overlay" || child.getPluginData(LEGACY_ROLE_KEY) === "overlay")) {
-        return false;
-      }
-      return true;
-    }).length;
-  }
-  function normalizeLayoutMode(mode) {
-    return mode === "GRID" ? "NONE" : mode;
-  }
-  function determineScalingStrategy(params) {
-    const { hasAutoLayout, contentDensity, hasText, hasImages, aspectRatio } = params;
-    if (contentDensity === "sparse") {
-      return "fill";
-    }
-    if (contentDensity === "dense" && hasAutoLayout) {
-      return "adaptive";
-    }
-    if (hasText && !hasImages) {
-      if (aspectRatio > 2 || aspectRatio < 0.5) {
-        return "reflow";
-      }
-      return "adaptive";
-    }
-    if (hasImages && !hasText) {
-      return "stretch";
-    }
-    return "adaptive";
-  }
-  function calculateOptimalScale(analysis, target, safeAreaInsets, profile) {
-    const availableWidth = target.width - safeAreaInsets.x * 2;
-    const availableHeight = target.height - safeAreaInsets.y * 2;
-    const sourceWidth = Math.max(analysis.effectiveWidth, 1);
-    const sourceHeight = Math.max(analysis.effectiveHeight, 1);
-    const widthScale = availableWidth / sourceWidth;
-    const heightScale = availableHeight / sourceHeight;
-    let scale;
-    switch (analysis.recommendedStrategy) {
-      case "fill":
-        scale = Math.max(widthScale, heightScale) * 0.95;
-        break;
-      case "fit":
-        scale = Math.min(widthScale, heightScale) * 0.98;
-        break;
-      case "stretch":
-        if (profile === "vertical") {
-          scale = heightScale * 0.9;
-        } else if (profile === "horizontal") {
-          scale = widthScale * 0.9;
-        } else {
-          scale = (widthScale + heightScale) / 2 * 0.9;
-        }
-        break;
-      case "reflow":
-        if (profile === "vertical") {
-          scale = Math.min(heightScale * 0.85, widthScale);
-        } else if (profile === "horizontal") {
-          scale = Math.min(widthScale * 0.85, heightScale);
-        } else {
-          scale = (Math.min(widthScale, heightScale) + Math.max(widthScale, heightScale)) / 2 * 0.9;
-        }
-        break;
-      case "adaptive":
-      default:
-        if (profile === "vertical") {
-          if (heightScale <= widthScale) {
-            scale = heightScale * 0.95;
-          } else {
-            scale = Math.min(widthScale, heightScale * 0.8 + widthScale * 0.2);
-          }
-        } else if (profile === "horizontal") {
-          if (widthScale <= heightScale) {
-            scale = widthScale * 0.95;
-          } else {
-            scale = Math.min(heightScale, widthScale * 0.8 + heightScale * 0.2);
-          }
-        } else {
-          const avgScale = (widthScale + heightScale) / 2;
-          const minScale = Math.min(widthScale, heightScale);
-          scale = minScale * 0.6 + avgScale * 0.4;
-        }
-        break;
-    }
-    const MIN_SCALE = 0.3;
-    const MAX_SCALE = analysis.hasImages ? 12 : 60;
-    return Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale));
+  function roundSpacing(value) {
+    return Math.round(value * 100) / 100;
   }
 
   // core/debug.ts
+  var logHandler = null;
+  function setLogHandler(handler) {
+    logHandler = handler;
+  }
   function computeDebugFlag() {
-    var _a;
-    if (typeof process !== "undefined" && ((_a = process == null ? void 0 : process.env) == null ? void 0 : _a.DEBUG_FIX) === "1") {
+    if (typeof process !== "undefined" && false) {
       return true;
     }
     if (typeof figma !== "undefined") {
@@ -1929,11 +1625,19 @@
     if (!isDebugFixEnabled()) {
       return;
     }
+    const logMessage = `${prefix} ${message}`;
     if (context) {
-      console.log(prefix, message, context);
+      console.log(logMessage, context);
+      if (logHandler) {
+        logHandler(`${logMessage}
+${JSON.stringify(context, null, 2)}`);
+      }
       return;
     }
-    console.log(prefix, message);
+    console.log(logMessage);
+    if (logHandler) {
+      logHandler(logMessage);
+    }
   }
   function debugFixLog(message, context) {
     log("[BiblioScale][frame-detach]", message, context);
@@ -1943,16 +1647,18 @@
   }
 
   // core/auto-layout-adapter.ts
-  function createLayoutAdaptationPlan(frame, target, profile, scale) {
-    const sourceLayoutMode = frame.layoutMode === "GRID" ? "NONE" : frame.layoutMode;
+  function createLayoutAdaptationPlan(frame, target, profile, scale, options) {
+    var _a, _b, _c, _d, _e, _f, _g, _h;
+    const sourceLayoutMode = (_a = options == null ? void 0 : options.sourceLayoutMode) != null ? _a : frame.layoutMode === "GRID" ? "NONE" : frame.layoutMode;
     const context = {
       sourceLayout: {
         mode: sourceLayoutMode,
-        width: frame.width,
-        height: frame.height,
-        childCount: frame.children.filter((c) => c.visible).length,
+        width: (_c = (_b = options == null ? void 0 : options.sourceSize) == null ? void 0 : _b.width) != null ? _c : frame.width,
+        height: (_e = (_d = options == null ? void 0 : options.sourceSize) == null ? void 0 : _d.height) != null ? _e : frame.height,
+        childCount: (_f = options == null ? void 0 : options.sourceFlowChildCount) != null ? _f : frame.children.filter((c) => c.visible).length,
         hasText: hasTextChildren(frame),
-        hasImages: hasImageChildren(frame)
+        hasImages: hasImageChildren(frame),
+        itemSpacing: (_g = options == null ? void 0 : options.sourceItemSpacing) != null ? _g : frame.layoutMode !== "NONE" ? frame.itemSpacing : null
       },
       targetProfile: {
         type: profile,
@@ -1960,7 +1666,8 @@
         height: target.height,
         aspectRatio: target.width / target.height
       },
-      scale
+      scale,
+      adoptVerticalVariant: (_h = options == null ? void 0 : options.adoptVerticalVariant) != null ? _h : false
     };
     const newLayoutMode = determineOptimalLayoutMode(context);
     const sizingModes = determineSizingModes(newLayoutMode, context);
@@ -1969,7 +1676,7 @@
     const spacing = calculateSpacing(frame, newLayoutMode, context);
     const padding = calculatePaddingAdjustments(frame, newLayoutMode, context);
     const childAdaptations = createChildAdaptations(frame, newLayoutMode, context);
-    return {
+    const plan = {
       layoutMode: newLayoutMode,
       primaryAxisSizingMode: sizingModes.primary,
       counterAxisSizingMode: sizingModes.counter,
@@ -1981,45 +1688,97 @@
       paddingAdjustments: padding,
       childAdaptations
     };
+    debugAutoLayoutLog("layout adaptation plan summary", {
+      targetType: context.targetProfile.type,
+      adoptVerticalVariant: context.adoptVerticalVariant,
+      targetSize: `${context.targetProfile.width}x${context.targetProfile.height}`,
+      sourceLayout: {
+        mode: context.sourceLayout.mode,
+        width: context.sourceLayout.width,
+        height: context.sourceLayout.height,
+        childCount: context.sourceLayout.childCount,
+        itemSpacing: context.sourceLayout.itemSpacing
+      },
+      scale: context.scale,
+      resolvedLayoutMode: plan.layoutMode,
+      alignments: {
+        primary: plan.primaryAxisAlignItems,
+        counter: plan.counterAxisAlignItems
+      },
+      sizing: {
+        primary: plan.primaryAxisSizingMode,
+        counter: plan.counterAxisSizingMode
+      },
+      layoutWrap: plan.layoutWrap,
+      itemSpacing: plan.itemSpacing,
+      paddingAdjustments: plan.paddingAdjustments,
+      childAdaptations: { count: childAdaptations.size }
+    });
+    return plan;
   }
   function determineOptimalLayoutMode(context) {
     const { sourceLayout, targetProfile } = context;
+    if (context.adoptVerticalVariant && targetProfile.type === "vertical") {
+      debugAutoLayoutLog("determining optimal layout: adopting vertical variant", { context });
+      return "VERTICAL";
+    }
     if (sourceLayout.mode === "NONE") {
       if (targetProfile.type === "vertical" && targetProfile.aspectRatio < 0.6) {
+        debugAutoLayoutLog("determining optimal layout: source is NONE, target is extreme vertical", { context });
         return "VERTICAL";
       }
       if (targetProfile.type === "horizontal" && targetProfile.aspectRatio > 1.5) {
+        debugAutoLayoutLog("determining optimal layout: source is NONE, target is extreme horizontal", { context });
         return "HORIZONTAL";
       }
+      debugAutoLayoutLog("determining optimal layout: source is NONE, target is square-ish, keeping NONE", { context });
       return "NONE";
     }
     if (targetProfile.type === "vertical" && targetProfile.aspectRatio < 0.57) {
       if (sourceLayout.mode === "HORIZONTAL" && sourceLayout.childCount >= 2) {
+        debugAutoLayoutLog("determining optimal layout: converting horizontal to vertical for extreme vertical target", {
+          context
+        });
         return "VERTICAL";
       }
-      return sourceLayout.mode === "VERTICAL" ? "VERTICAL" : "VERTICAL";
+      debugAutoLayoutLog("determining optimal layout: keeping vertical for extreme vertical target", { context });
+      return "VERTICAL";
     }
     if (targetProfile.type === "horizontal" && targetProfile.aspectRatio > 2.5) {
       if (sourceLayout.mode === "VERTICAL" && sourceLayout.childCount >= 2) {
+        debugAutoLayoutLog("determining optimal layout: converting vertical to horizontal for extreme horizontal target", {
+          context
+        });
         return "HORIZONTAL";
       }
-      return sourceLayout.mode === "HORIZONTAL" ? "HORIZONTAL" : "HORIZONTAL";
+      debugAutoLayoutLog("determining optimal layout: keeping horizontal for extreme horizontal target", { context });
+      return "HORIZONTAL";
     }
     if (targetProfile.type === "vertical") {
       if (sourceLayout.childCount > 3) {
+        debugAutoLayoutLog("determining optimal layout: many children, switching to vertical", { context });
         return "VERTICAL";
       }
       if (sourceLayout.mode === "HORIZONTAL") {
+        debugAutoLayoutLog("determining optimal layout: preserving horizontal for moderate vertical target with few children", {
+          context
+        });
         return "HORIZONTAL";
       }
+      debugAutoLayoutLog("determining optimal layout: default to vertical for moderate vertical target", { context });
       return "VERTICAL";
     }
     if (targetProfile.type === "horizontal") {
       if (sourceLayout.childCount > 3 && sourceLayout.mode === "VERTICAL") {
+        debugAutoLayoutLog("determining optimal layout: many children, switching to horizontal for wide target", {
+          context
+        });
         return "HORIZONTAL";
       }
-      return sourceLayout.mode === "VERTICAL" ? "VERTICAL" : sourceLayout.mode;
+      debugAutoLayoutLog("determining optimal layout: keeping source mode for horizontal target", { context });
+      return sourceLayout.mode;
     }
+    debugAutoLayoutLog("determining optimal layout: fallback, keeping source mode for square target", { context });
     return sourceLayout.mode;
   }
   function determineSizingModes(layoutMode, context) {
@@ -2046,8 +1805,9 @@
       return { primary: "MIN", counter: "MIN" };
     }
     if (layoutMode === "VERTICAL" && context.targetProfile.type === "vertical") {
+      const interiorEstimate = Math.max(context.targetProfile.height - context.sourceLayout.height * context.scale, 0);
       return {
-        primary: context.sourceLayout.childCount <= 3 ? "SPACE_BETWEEN" : "MIN",
+        primary: resolveVerticalAlignItems("CENTER", { interior: interiorEstimate }),
         counter: "CENTER"
       };
     }
@@ -2080,27 +1840,59 @@
     if (newLayoutMode === "NONE") {
       return { item: 0 };
     }
-    const baseSpacing = frame.layoutMode !== "NONE" ? frame.itemSpacing : 16;
-    const scaledSpacing = baseSpacing * context.scale;
+    const baseSpacingRaw = context.sourceLayout.itemSpacing != null ? context.sourceLayout.itemSpacing : frame.layoutMode !== "NONE" ? frame.itemSpacing : 16;
+    const scaledSpacing = baseSpacingRaw * context.scale;
+    debugAutoLayoutLog("spacing input resolved", {
+      targetType: context.targetProfile.type,
+      targetWidth: context.targetProfile.width,
+      targetHeight: context.targetProfile.height,
+      newLayoutMode,
+      sourceLayoutMode: context.sourceLayout.mode,
+      sourceChildCount: context.sourceLayout.childCount,
+      baseSpacing: baseSpacingRaw,
+      scaledSpacing,
+      scale: context.scale
+    });
     if (context.targetProfile.type === "vertical" && newLayoutMode === "VERTICAL") {
       const extraSpace = context.targetProfile.height - context.sourceLayout.height * context.scale;
       const gaps = Math.max(context.sourceLayout.childCount - 1, 1);
       const additionalSpacing = Math.max(0, extraSpace / gaps * 0.3);
-      return {
+      const result2 = {
         item: scaledSpacing + additionalSpacing,
         counter: frame.layoutWrap === "WRAP" ? scaledSpacing : void 0
       };
+      debugAutoLayoutLog("spacing calculated for vertical target", {
+        extraSpace,
+        gaps,
+        additionalSpacing,
+        itemSpacing: result2.item,
+        counterAxisSpacing: result2.counter
+      });
+      return result2;
     }
     if (context.targetProfile.type === "horizontal" && newLayoutMode === "HORIZONTAL") {
       const extraSpace = context.targetProfile.width - context.sourceLayout.width * context.scale;
       const gaps = Math.max(context.sourceLayout.childCount - 1, 1);
       const additionalSpacing = Math.max(0, extraSpace / gaps * 0.3);
-      return {
+      const result2 = {
         item: scaledSpacing + additionalSpacing,
         counter: frame.layoutWrap === "WRAP" ? scaledSpacing : void 0
       };
+      debugAutoLayoutLog("spacing calculated for horizontal target", {
+        extraSpace,
+        gaps,
+        additionalSpacing,
+        itemSpacing: result2.item,
+        counterAxisSpacing: result2.counter
+      });
+      return result2;
     }
-    return { item: scaledSpacing };
+    const result = { item: scaledSpacing };
+    debugAutoLayoutLog("spacing calculated for mixed target", {
+      itemSpacing: result.item,
+      counterAxisSpacing: result.counter
+    });
+    return result;
   }
   function calculatePaddingAdjustments(frame, newLayoutMode, context) {
     const basePadding = {
@@ -2154,21 +1946,13 @@
       var _a;
       if (!child.visible) return;
       const adaptation = {};
-      const containsImage = hasImageContent2(child);
+      const containsImage = hasImageContent(child);
       if (frame.layoutMode !== newLayoutMode && newLayoutMode !== "NONE") {
         if (newLayoutMode === "VERTICAL") {
-          adaptation.layoutAlign = containsImage ? "INHERIT" : "STRETCH";
+          adaptation.layoutAlign = containsImage || child.type !== "TEXT" ? "INHERIT" : "STRETCH";
           adaptation.layoutGrow = 0;
-          if (!containsImage && child.type === "TEXT") {
+          if (child.type === "TEXT") {
             adaptation.maxWidth = context.targetProfile.width * 0.8;
-          }
-          if (containsImage) {
-            debugAutoLayoutLog("preserving media aspect ratio in vertical flow", {
-              childId: child.id,
-              childType: child.type,
-              targetWidth: context.targetProfile.width,
-              targetHeight: context.targetProfile.height
-            });
           }
         }
         if (newLayoutMode === "HORIZONTAL") {
@@ -2239,7 +2023,7 @@
       (child) => child.type === "TEXT" || "children" in child && hasTextChildren(child)
     );
   }
-  function hasImageContent2(node) {
+  function hasImageContent(node) {
     if ("fills" in node) {
       const fills = node.fills;
       if (fills.some((fill) => fill.type === "IMAGE" || fill.type === "VIDEO")) {
@@ -2247,12 +2031,12 @@
       }
     }
     if ("children" in node) {
-      return node.children.some((child) => hasImageContent2(child));
+      return node.children.some((child) => hasImageContent(child));
     }
     return false;
   }
   function hasImageChildren(frame) {
-    return hasImageContent2(frame);
+    return hasImageContent(frame);
   }
 
   // core/ai-signals.ts
@@ -2657,14 +2441,14 @@
       name: node.name || node.type,
       type: node.type,
       rel: {
-        x: round3(bounds.x - originX),
-        y: round3(bounds.y - originY),
-        width: round3(bounds.width),
-        height: round3(bounds.height)
+        x: round(bounds.x - originX),
+        y: round(bounds.y - originY),
+        width: round(bounds.width),
+        height: round(bounds.height)
       }
     }, text ? { text } : {}), layoutDetails);
   }
-  function round3(value) {
+  function round(value) {
     return Math.round(value * 100) / 100;
   }
   function sanitizeAiSignals(raw) {
@@ -2770,281 +2554,90 @@
   var DEFAULT_AI_API_KEY = true ? "" : "";
   var HAS_DEFAULT_AI_API_KEY = DEFAULT_AI_API_KEY.length > 0;
 
-  // core/main.ts
-  var MAX_SAFE_AREA_RATIO = 0.25;
-  var RUN_GAP = 160;
-  var RUN_MARGIN = 48;
-  var MAX_ROW_WIDTH = 3200;
-  var MIN_PATTERN_CONFIDENCE = 0.65;
-  var HAS_DEFAULT_AI_KEY = HAS_DEFAULT_AI_API_KEY;
-  var cachedAiApiKey = null;
-  var aiKeyLoaded = false;
-  var aiStatus = "missing-key";
-  var aiStatusDetail = null;
-  var aiRequestToken = 0;
-  var aiUsingDefaultKey = false;
-  function hasOverlayRole(node) {
-    if (!("getPluginData" in node) || typeof node.getPluginData !== "function") {
-      return false;
-    }
-    try {
-      return node.getPluginData(ROLE_KEY) === "overlay" || node.getPluginData(LEGACY_ROLE_KEY) === "overlay";
-    } catch (e) {
-      return false;
-    }
-  }
-  figma.showUI(UI_TEMPLATE, {
-    width: 360,
-    height: 540,
-    themeColors: true
-  });
-  figma.ui.onmessage = async (rawMessage) => {
-    var _a;
-    switch (rawMessage.type) {
-      case "request-initial-state":
-        await postInitialState();
-        break;
-      case "generate-variants":
-        await handleGenerateRequest(
-          rawMessage.payload.targetIds,
-          rawMessage.payload.safeAreaRatio,
-          (_a = rawMessage.payload.layoutPatterns) != null ? _a : {}
-        );
-        break;
-      case "set-ai-signals":
-        await handleSetAiSignals(rawMessage.payload.signals);
-        break;
-      case "set-layout-advice":
-        await handleSetLayoutAdvice(rawMessage.payload.advice);
-        break;
-      case "set-api-key":
-        await handleSetApiKey(rawMessage.payload.key);
-        break;
-      case "refresh-ai":
-        await handleRefreshAiRequest();
-        break;
-      default:
-        console.warn("Unhandled message", rawMessage);
-    }
+  // core/ai-state.ts
+  var state = {
+    cachedAiApiKey: null,
+    aiUsingDefaultKey: false,
+    aiStatus: "missing-key",
+    aiStatusDetail: null,
+    aiKeyLoaded: false
   };
-  figma.on("selectionchange", () => {
-    void handleSelectionChange();
-  });
-  async function handleSelectionChange() {
-    await ensureAiKeyLoaded();
-    const frame = getSelectionFrame();
-    const selectionState = createSelectionState(frame);
-    postToUI({ type: "selection-update", payload: selectionState });
-    if (frame) {
-      void maybeRequestAiForFrame(frame);
-    }
-  }
-  async function postInitialState() {
-    await ensureAiKeyLoaded();
-    const selectionFrame = getSelectionFrame();
-    const selectionState = createSelectionState(selectionFrame);
-    const lastRunSummary = readLastRun();
-    const payload = {
-      selectionOk: selectionState.selectionOk,
-      selectionName: selectionState.selectionName,
-      error: selectionState.error,
-      aiSignals: selectionState.aiSignals,
-      layoutAdvice: selectionState.layoutAdvice,
-      targets: VARIANT_TARGETS,
-      lastRun: lastRunSummary != null ? lastRunSummary : void 0
-    };
-    debugFixLog("initializing UI with targets", {
-      targetIds: VARIANT_TARGETS.map((target) => target.id),
-      targetCount: VARIANT_TARGETS.length
+  function getAiState() {
+    return __spreadProps(__spreadValues({}, state), {
+      aiConfigured: Boolean(state.cachedAiApiKey)
     });
-    postToUI({ type: "init", payload });
-    if (selectionFrame) {
-      void maybeRequestAiForFrame(selectionFrame);
-    }
   }
-  async function handleGenerateRequest(targetIds, rawSafeAreaRatio, layoutPatterns) {
-    var _a, _b, _c, _d, _e;
-    const selectionFrame = getSelectionFrame();
-    if (!selectionFrame) {
-      postToUI({ type: "error", payload: { message: "Select exactly one frame before generating variants." } });
-      return;
+  function getCachedAiApiKey() {
+    return state.cachedAiApiKey;
+  }
+  async function ensureAiKeyLoaded() {
+    if (state.aiKeyLoaded) {
+      return getAiState();
     }
-    const targets = targetIds.map((id) => getTargetById(id)).filter((target) => Boolean(target));
-    if (targets.length === 0) {
-      postToUI({ type: "error", payload: { message: "Pick at least one target size." } });
-      return;
+    const stored = await figma.clientStorage.getAsync(AI_KEY_STORAGE_KEY);
+    const legacyStored = await figma.clientStorage.getAsync(LEGACY_AI_KEY_STORAGE_KEY);
+    const activeValue = typeof stored === "string" && stored.trim().length > 0 ? stored : typeof legacyStored === "string" ? legacyStored : "";
+    const trimmed = typeof activeValue === "string" ? activeValue.trim() : "";
+    const migratedFromLegacy = trimmed.length > 0 && (!stored || typeof stored === "string" && stored.trim().length === 0) && typeof legacyStored === "string" && legacyStored.trim().length > 0;
+    if (migratedFromLegacy) {
+      await figma.clientStorage.setAsync(AI_KEY_STORAGE_KEY, trimmed);
     }
-    const safeAreaRatio = clamp3(rawSafeAreaRatio, 0, MAX_SAFE_AREA_RATIO);
-    postToUI({ type: "status", payload: { status: "running" } });
-    try {
-      const stagingPage = ensureStagingPage();
-      const runId = `run-${Date.now()}`;
-      const runContainer = createRunContainer(stagingPage, runId, selectionFrame.name);
-      const results = [];
-      const variantNodes = [];
-      const overlaysToLock = [];
-      const fontCache = /* @__PURE__ */ new Set();
-      await loadFontsForNode(selectionFrame, fontCache);
-      const layoutAdvice = readLayoutAdvice(selectionFrame);
-      const aiSignals = readAiSignals(selectionFrame);
-      const primaryFocal = resolvePrimaryFocalPoint(aiSignals);
-      for (const target of targets) {
-        const layoutProfile = resolveLayoutProfile({ width: target.width, height: target.height });
-        debugFixLog("prepping variant target", {
-          targetId: target.id,
-          targetLabel: target.label,
-          dimensions: `${target.width}x${target.height}`,
-          runId,
-          safeAreaRatio,
-          layoutProfile
-        });
-        const variantNode = selectionFrame.clone();
-        variantNode.name = `${selectionFrame.name} \u2192 ${target.label}`;
-        variantNode.setPluginData(TARGET_ID_KEY, target.id);
-        variantNode.setPluginData(RUN_ID_KEY, runId);
-        runContainer.appendChild(variantNode);
-        const autoLayoutSnapshots = /* @__PURE__ */ new Map();
-        await prepareCloneForLayout(variantNode, autoLayoutSnapshots);
-        const rootSnapshot = (_a = autoLayoutSnapshots.get(variantNode.id)) != null ? _a : null;
-        const safeAreaMetrics = await scaleNodeTree(
-          variantNode,
-          target,
-          safeAreaRatio,
-          fontCache,
-          rootSnapshot,
-          layoutProfile,
-          primaryFocal
-        );
-        const layoutAdaptationPlan = createLayoutAdaptationPlan(
-          variantNode,
-          target,
-          layoutProfile,
-          safeAreaMetrics.scale
-        );
-        debugFixLog("Layout adaptation plan created", {
-          targetId: target.id,
-          originalMode: (_b = rootSnapshot == null ? void 0 : rootSnapshot.layoutMode) != null ? _b : "NONE",
-          newMode: layoutAdaptationPlan.layoutMode,
-          profile: layoutProfile
-        });
-        applyLayoutAdaptation(variantNode, layoutAdaptationPlan);
-        restoreAutoLayoutSettings(variantNode, autoLayoutSnapshots, safeAreaMetrics);
-        const overlay = createQaOverlay(target, safeAreaRatio);
-        variantNode.appendChild(overlay);
-        const overlayConfig = configureQaOverlay(overlay, { parentLayoutMode: variantNode.layoutMode });
-        overlaysToLock.push(overlay);
-        debugFixLog("qa overlay configured", {
-          overlayId: overlay.id,
-          variantId: variantNode.id,
-          positioningUpdated: overlayConfig.positioningUpdated,
-          layoutPositioning: "layoutPositioning" in overlay ? overlay.layoutPositioning : void 0,
-          constraints: "constraints" in overlay ? overlay.constraints : void 0,
-          locked: overlay.locked,
-          willLockAfterFlush: true
-        });
-        const patternSelection = autoSelectLayoutPattern(layoutAdvice, target.id, MIN_PATTERN_CONFIDENCE);
-        const userSelection = layoutPatterns[target.id];
-        const adviceEntry = layoutAdvice == null ? void 0 : layoutAdvice.entries.find((entry) => entry.targetId === target.id);
-        const chosenPatternId = userSelection != null ? userSelection : patternSelection && !patternSelection.fallback ? (_c = patternSelection.patternId) != null ? _c : adviceEntry == null ? void 0 : adviceEntry.selectedId : void 0;
-        const layoutFallback = !userSelection && ((_d = patternSelection == null ? void 0 : patternSelection.fallback) != null ? _d : false);
-        const patternConfidence = chosenPatternId && (patternSelection == null ? void 0 : patternSelection.patternId) === chosenPatternId && !layoutFallback ? patternSelection.confidence : void 0;
-        if (chosenPatternId) {
-          variantNode.setPluginData(LAYOUT_PATTERN_KEY, chosenPatternId);
-          debugFixLog("layout pattern tagged on variant", {
-            targetId: target.id,
-            patternId: chosenPatternId,
-            confidence: patternConfidence
-          });
-          trackEvent("LAYOUT_ADVICE_APPLIED", {
-            targetId: target.id,
-            patternId: chosenPatternId,
-            confidence: patternConfidence,
-            fallback: layoutFallback,
-            runId
-          });
-        }
-        const warnings = collectWarnings(variantNode, target, safeAreaRatio);
-        if (layoutFallback) {
-          warnings.push({
-            code: "AI_LAYOUT_FALLBACK",
-            severity: "info",
-            message: "AI confidence was low, so a deterministic layout was used."
-          });
-        }
-        warnings.forEach((w) => {
-          trackEvent("QA_ALERT_DISPLAYED", {
-            targetId: target.id,
-            code: w.code,
-            severity: w.severity,
-            runId
-          });
-        });
-        variantNodes.push(variantNode);
-        trackEvent("VARIANT_GENERATED", {
-          targetId: target.id,
-          warningsCount: warnings.length,
-          hasLayoutPattern: Boolean(chosenPatternId),
-          safeAreaRatio,
-          runId
-        });
-        results.push({
-          targetId: target.id,
-          nodeId: variantNode.id,
-          warnings,
-          layoutPatternId: chosenPatternId,
-          layoutPatternLabel: (_e = resolvePatternLabel(layoutAdvice, target.id, chosenPatternId)) != null ? _e : patternSelection == null ? void 0 : patternSelection.patternLabel,
-          layoutPatternConfidence: patternConfidence,
-          layoutPatternFallback: layoutFallback
-        });
+    if (trimmed.length > 0) {
+      state.cachedAiApiKey = trimmed;
+      state.aiUsingDefaultKey = HAS_DEFAULT_AI_API_KEY && trimmed === DEFAULT_AI_API_KEY;
+    } else if (HAS_DEFAULT_AI_API_KEY) {
+      state.cachedAiApiKey = DEFAULT_AI_API_KEY;
+      state.aiUsingDefaultKey = true;
+    } else {
+      state.cachedAiApiKey = null;
+      state.aiUsingDefaultKey = false;
+    }
+    state.aiKeyLoaded = true;
+    setAiStatus(resolveStatusFromKey(), null);
+    debugFixLog("ai key source resolved", {
+      source: state.cachedAiApiKey ? state.aiUsingDefaultKey ? "default" : "user-provided" : "missing",
+      usingDefault: state.aiUsingDefaultKey
+    });
+    return getAiState();
+  }
+  async function persistApiKey(rawKey) {
+    const trimmed = rawKey.trim();
+    if (trimmed.length === 0) {
+      await figma.clientStorage.deleteAsync(AI_KEY_STORAGE_KEY);
+      await figma.clientStorage.deleteAsync(LEGACY_AI_KEY_STORAGE_KEY);
+      if (HAS_DEFAULT_AI_API_KEY) {
+        state.cachedAiApiKey = DEFAULT_AI_API_KEY;
+        state.aiUsingDefaultKey = true;
+        state.aiStatus = "idle";
+      } else {
+        state.cachedAiApiKey = null;
+        state.aiUsingDefaultKey = false;
+        state.aiStatus = "missing-key";
       }
-      await lockOverlays(overlaysToLock);
-      layoutVariants(runContainer, variantNodes);
-      promoteVariantsToPage(stagingPage, runContainer, variantNodes);
-      exposeRun(stagingPage, variantNodes);
-      writeLastRun({
-        runId,
-        timestamp: Date.now(),
-        sourceNodeName: selectionFrame.name,
-        targetIds: targets.map((target) => target.id)
-      });
-      postToUI({
-        type: "generation-complete",
-        payload: {
-          runId,
-          results
-        }
-      });
-      postToUI({ type: "status", payload: { status: "idle" } });
-      figma.notify(`${PLUGIN_NAME}: Generated ${targets.length} variant${targets.length === 1 ? "" : "s"}.`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unexpected error while generating variants.";
-      console.error(`${PLUGIN_NAME} generation failed`, error);
-      postToUI({ type: "error", payload: { message } });
-      postToUI({ type: "status", payload: { status: "idle" } });
+      state.aiStatusDetail = null;
+    } else {
+      await figma.clientStorage.setAsync(AI_KEY_STORAGE_KEY, trimmed);
+      await figma.clientStorage.deleteAsync(LEGACY_AI_KEY_STORAGE_KEY);
+      state.cachedAiApiKey = trimmed;
+      state.aiUsingDefaultKey = HAS_DEFAULT_AI_API_KEY && trimmed === DEFAULT_AI_API_KEY;
+      setAiStatus("idle", null);
     }
+    state.aiKeyLoaded = true;
+    return getAiState();
   }
-  async function handleSetAiSignals(signals) {
-    var _a, _b, _c, _d;
-    const frame = getSelectionFrame();
-    if (!frame) {
-      postToUI({ type: "error", payload: { message: "Select a single frame before applying AI signals." } });
-      return;
-    }
-    try {
-      const serialized = JSON.stringify(signals);
-      frame.setPluginData(AI_SIGNALS_KEY, serialized);
-      debugFixLog("ai signals stored on selection", {
-        roleCount: (_b = (_a = signals.roles) == null ? void 0 : _a.length) != null ? _b : 0,
-        qaCount: (_d = (_c = signals.qa) == null ? void 0 : _c.length) != null ? _d : 0
-      });
-      figma.notify("AI signals applied to selection.");
-      const selectionState = createSelectionState(frame);
-      postToUI({ type: "selection-update", payload: selectionState });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to apply AI signals.";
-      postToUI({ type: "error", payload: { message } });
-    }
+  function setAiStatus(aiStatus, aiStatusDetail = null) {
+    state.aiStatus = aiStatus;
+    state.aiStatusDetail = aiStatusDetail;
+    return getAiState();
   }
+  function resolveStatusFromKey() {
+    return state.cachedAiApiKey ? "idle" : "missing-key";
+  }
+  function resetAiStatus() {
+    return setAiStatus(resolveStatusFromKey(), null);
+  }
+
+  // core/selection.ts
   function getSelectionFrame() {
     if (figma.currentPage.selection.length !== 1) {
       return null;
@@ -3056,6 +2649,7 @@
     return node;
   }
   function createSelectionState(frame) {
+    const { cachedAiApiKey, aiStatus, aiStatusDetail, aiUsingDefaultKey } = getAiState();
     if (frame) {
       const aiSignals = readAiSignals(frame);
       const layoutAdvice = readLayoutAdvice(frame);
@@ -3081,9 +2675,66 @@
       aiUsingDefaultKey: aiUsingDefaultKey || void 0
     };
   }
-  function postToUI(message) {
-    figma.ui.postMessage(message);
+
+  // core/layout-positions.ts
+  function computeVariantLayout(sizes, options) {
+    if (sizes.length === 0) {
+      return {
+        positions: [],
+        bounds: { width: 0, height: 0 }
+      };
+    }
+    const positions = [];
+    let maxWidth = 0;
+    let maxHeight = 0;
+    if (options.direction === "vertical") {
+      let cursorY = options.margin;
+      for (const size of sizes) {
+        const x = options.margin;
+        positions.push({ x, y: cursorY });
+        const rightEdge = x + size.width + options.margin;
+        if (rightEdge > maxWidth) {
+          maxWidth = rightEdge;
+        }
+        cursorY += size.height + options.gap;
+      }
+      maxHeight = cursorY - options.gap + options.margin;
+    } else {
+      let cursorX = options.margin;
+      let cursorY = options.margin;
+      let rowHeight = 0;
+      for (const size of sizes) {
+        const requiresWrap = cursorX + size.width > options.maxRowWidth && cursorX > options.margin;
+        if (requiresWrap) {
+          cursorX = options.margin;
+          cursorY += rowHeight + options.gap;
+          rowHeight = 0;
+        }
+        positions.push({ x: cursorX, y: cursorY });
+        const rightEdge = cursorX + size.width + options.margin;
+        const bottomEdge = cursorY + size.height + options.margin;
+        if (rightEdge > maxWidth) {
+          maxWidth = rightEdge;
+        }
+        if (bottomEdge > maxHeight) {
+          maxHeight = bottomEdge;
+        }
+        cursorX += size.width + options.gap;
+        if (size.height > rowHeight) {
+          rowHeight = size.height;
+        }
+      }
+    }
+    return {
+      positions,
+      bounds: { width: maxWidth, height: maxHeight }
+    };
   }
+
+  // core/run-ops.ts
+  var RUN_GAP = 160;
+  var RUN_MARGIN = 48;
+  var MAX_ROW_WIDTH = 3200;
   function ensureStagingPage() {
     const existing = figma.root.children.find(
       (child) => child.type === "PAGE" && child.name === STAGING_PAGE_NAME
@@ -3134,6 +2785,710 @@
     container.resizeWithoutConstraints(800, 800);
     return container;
   }
+  async function lockOverlays(overlays) {
+    if (overlays.length === 0) {
+      return;
+    }
+    const flushAsync = figma.flushAsync;
+    if (typeof flushAsync === "function") {
+      try {
+        await flushAsync.call(figma);
+        debugFixLog("flush completed before locking overlays", { overlayCount: overlays.length });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        debugFixLog("flush failed before locking overlays", {
+          overlayCount: overlays.length,
+          errorMessage: message
+        });
+      }
+    }
+    for (const overlay of overlays) {
+      overlay.locked = true;
+      debugFixLog("qa overlay locked", {
+        overlayId: overlay.id
+      });
+    }
+  }
+  function layoutVariants(container, variants) {
+    if (variants.length === 0) {
+      return;
+    }
+    const sizes = variants.map((variant) => ({ width: variant.width, height: variant.height }));
+    const layout = computeVariantLayout(sizes, { margin: RUN_MARGIN, gap: RUN_GAP, maxRowWidth: MAX_ROW_WIDTH });
+    layout.positions.forEach((position, index) => {
+      const variant = variants[index];
+      variant.x = position.x;
+      variant.y = position.y;
+    });
+    const containerWidth = Math.max(container.width, layout.bounds.width);
+    const containerHeight = Math.max(container.height, layout.bounds.height);
+    container.resizeWithoutConstraints(containerWidth, containerHeight);
+    debugFixLog("variants positioned within container", {
+      containerWidth,
+      containerHeight,
+      variantCount: variants.length
+    });
+  }
+  function promoteVariantsToPage(page, container, variants) {
+    var _a;
+    const parent = container.parent;
+    if (!parent || parent.type !== "PAGE") {
+      debugFixLog("skipped promotion because container parent is not a page", {
+        parentType: (_a = parent == null ? void 0 : parent.type) != null ? _a : "none"
+      });
+      return;
+    }
+    const baseX = container.x;
+    const baseY = container.y;
+    for (const variant of variants) {
+      const absoluteX = baseX + variant.x;
+      const absoluteY = baseY + variant.y;
+      page.appendChild(variant);
+      variant.x = absoluteX;
+      variant.y = absoluteY;
+    }
+    container.remove();
+    debugFixLog("variants promoted to top-level frames", {
+      baseX,
+      baseY,
+      variantCount: variants.length
+    });
+  }
+  function exposeRun(page, variants) {
+    if (variants.length === 0) {
+      return;
+    }
+    figma.currentPage = page;
+    figma.viewport.scrollAndZoomIntoView([...variants]);
+  }
+  function formatTimestamp(date) {
+    return `${date.toLocaleDateString()} \xB7 ${date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+  }
+
+  // core/run-store.ts
+  function writeLastRun(summary) {
+    const encoded = JSON.stringify(summary);
+    figma.root.setPluginData(LAST_RUN_KEY, encoded);
+  }
+  function readLastRun() {
+    const raw = figma.root.getPluginData(LAST_RUN_KEY) || figma.root.getPluginData(LEGACY_LAST_RUN_KEY);
+    if (!raw) {
+      return null;
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed.runId !== "string") {
+        return null;
+      }
+      return parsed;
+    } catch (error) {
+      console.warn(`Failed to parse ${PLUGIN_NAME} last run plugin data`, error);
+      return null;
+    }
+  }
+
+  // core/node-roles.ts
+  function hasOverlayRole(node) {
+    if (!("getPluginData" in node) || typeof node.getPluginData !== "function") {
+      return false;
+    }
+    try {
+      return node.getPluginData(ROLE_KEY) === "overlay" || node.getPluginData(LEGACY_ROLE_KEY) === "overlay";
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // core/warnings.ts
+  var IGNORED_ROLES = /* @__PURE__ */ new Set(["hero_image", "secondary_image", "decorative"]);
+  function collectWarnings(frame, target, safeAreaRatio) {
+    const warnings = [];
+    const insets = resolveSafeAreaInsets(target, safeAreaRatio);
+    const safeWidth = target.width - insets.left - insets.right;
+    const safeHeight = target.height - insets.top - insets.bottom;
+    const bounds = frame.absoluteBoundingBox;
+    if (!bounds) {
+      return warnings;
+    }
+    const safeArea = {
+      x: bounds.x + insets.left,
+      y: bounds.y + insets.top,
+      width: safeWidth,
+      height: safeHeight
+    };
+    const contentBounds = combineChildBounds(frame);
+    if (contentBounds && !isWithinSafeArea(contentBounds, safeArea)) {
+      warnings.push({
+        code: "OUTSIDE_SAFE_AREA",
+        severity: "warn",
+        message: "Some layers extend outside the safe area."
+      });
+    }
+    if (contentBounds) {
+      const contentCenterX = contentBounds.x + contentBounds.width / 2;
+      const frameCenterX = bounds.x + bounds.width / 2;
+      const delta = Math.abs(contentCenterX - frameCenterX);
+      if (delta > 32) {
+        warnings.push({
+          code: "MISALIGNED",
+          severity: "info",
+          message: "Primary content is offset; consider centering horizontally."
+        });
+      }
+    }
+    const aiSignals = readAiSignals(frame);
+    if (aiSignals) {
+      const aiWarnings = deriveWarningsFromAiSignals(aiSignals);
+      if (aiWarnings.length > 0) {
+        warnings.push(...aiWarnings);
+      }
+    }
+    return warnings;
+  }
+  function measureContentMargins(frame) {
+    const frameBounds = frame.absoluteBoundingBox;
+    if (!frameBounds) {
+      return null;
+    }
+    const aiSignals = readAiSignals(frame);
+    const contentBounds = combineChildBounds(frame, aiSignals || void 0);
+    if (!contentBounds) {
+      return null;
+    }
+    const left = Math.max(contentBounds.x - frameBounds.x, 0);
+    const top = Math.max(contentBounds.y - frameBounds.y, 0);
+    const right = Math.max(frameBounds.x + frameBounds.width - (contentBounds.x + contentBounds.width), 0);
+    const bottom = Math.max(frameBounds.y + frameBounds.height - (contentBounds.y + contentBounds.height), 0);
+    return { left, right, top, bottom };
+  }
+  function combineChildBounds(frame, aiSignals) {
+    let minX = Number.POSITIVE_INFINITY;
+    let minY = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let maxY = Number.NEGATIVE_INFINITY;
+    const queue = [...frame.children];
+    while (queue.length > 0) {
+      const node = queue.shift();
+      if (!node) {
+        continue;
+      }
+      if (isBackgroundOrIgnored(node, frame, aiSignals)) {
+        continue;
+      }
+      if ("children" in node) {
+        queue.push(...node.children);
+      }
+      if (!("absoluteBoundingBox" in node)) {
+        continue;
+      }
+      const bbox = node.absoluteBoundingBox;
+      if (!bbox) {
+        continue;
+      }
+      minX = Math.min(minX, bbox.x);
+      minY = Math.min(minY, bbox.y);
+      maxX = Math.max(maxX, bbox.x + bbox.width);
+      maxY = Math.max(maxY, bbox.y + bbox.height);
+    }
+    if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
+      return null;
+    }
+    return {
+      x: minX,
+      y: minY,
+      width: maxX - minX,
+      height: maxY - minY
+    };
+  }
+  function isBackgroundOrIgnored(node, rootFrame, aiSignals) {
+    if (hasOverlayRole(node)) {
+      return true;
+    }
+    if (aiSignals == null ? void 0 : aiSignals.roles) {
+      const roleEntry = aiSignals.roles.find((role) => role.nodeId === node.id);
+      if (roleEntry && IGNORED_ROLES.has(roleEntry.role)) {
+        return true;
+      }
+    }
+    if ("width" in node && "height" in node && typeof node.width === "number" && typeof node.height === "number") {
+      const nodeArea = node.width * node.height;
+      const rootArea = rootFrame.width * rootFrame.height;
+      if (rootArea > 0 && nodeArea >= rootArea * 0.95) {
+        return true;
+      }
+    }
+    return false;
+  }
+  function isWithinSafeArea(bounds, safe) {
+    const tolerance = 2;
+    return bounds.x >= safe.x - tolerance && bounds.y >= safe.y - tolerance && bounds.x + bounds.width <= safe.x + safe.width + tolerance && bounds.y + bounds.height <= safe.y + safe.height + tolerance;
+  }
+
+  // core/content-analyzer.ts
+  function analyzeContent(frame) {
+    const actualBounds = findActualContentBounds(frame);
+    const effectiveWidth = actualBounds ? actualBounds.width : frame.width;
+    const effectiveHeight = actualBounds ? actualBounds.height : frame.height;
+    const hasText = hasTextContent(frame);
+    const hasImages = hasImageContent2(frame);
+    const childCount = countVisibleChildren(frame);
+    const normalizedLayoutMode = normalizeLayoutMode(frame.layoutMode);
+    const hasAutoLayout = normalizedLayoutMode !== "NONE";
+    let contentDensity = "normal";
+    if (childCount === 0) {
+      contentDensity = "sparse";
+    } else if (childCount > 10) {
+      contentDensity = "dense";
+    } else if (childCount <= 2) {
+      contentDensity = "sparse";
+    }
+    const strategy = determineScalingStrategy({
+      hasAutoLayout,
+      layoutDirection: normalizedLayoutMode,
+      contentDensity,
+      hasText,
+      hasImages,
+      aspectRatio: effectiveWidth / Math.max(effectiveHeight, 1)
+    });
+    return {
+      actualContentBounds: actualBounds,
+      hasAutoLayout,
+      layoutDirection: normalizedLayoutMode,
+      childCount,
+      hasText,
+      hasImages,
+      contentDensity,
+      recommendedStrategy: strategy,
+      effectiveWidth,
+      effectiveHeight
+    };
+  }
+  function findActualContentBounds(frame) {
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    let hasVisibleContent = false;
+    function processNode(node, depth = 0) {
+      if (!node.visible || depth > 10) return;
+      if ("getPluginData" in node && (node.getPluginData(ROLE_KEY) === "overlay" || node.getPluginData(LEGACY_ROLE_KEY) === "overlay")) {
+        return;
+      }
+      const hasContent = node.type === "TEXT" && node.characters.length > 0 || (node.type === "RECTANGLE" || node.type === "ELLIPSE") || "fills" in node && Array.isArray(node.fills) && node.fills.length > 0 || "strokes" in node && Array.isArray(node.strokes) && node.strokes.length > 0;
+      if (hasContent && "absoluteBoundingBox" in node && node.absoluteBoundingBox) {
+        const bounds = node.absoluteBoundingBox;
+        minX = Math.min(minX, bounds.x);
+        minY = Math.min(minY, bounds.y);
+        maxX = Math.max(maxX, bounds.x + bounds.width);
+        maxY = Math.max(maxY, bounds.y + bounds.height);
+        hasVisibleContent = true;
+      }
+      if ("children" in node) {
+        for (const child of node.children) {
+          processNode(child, depth + 1);
+        }
+      }
+    }
+    processNode(frame);
+    if (!hasVisibleContent || !frame.absoluteBoundingBox) {
+      return null;
+    }
+    const frameBounds = frame.absoluteBoundingBox;
+    const relativeMinX = minX - frameBounds.x;
+    const relativeMinY = minY - frameBounds.y;
+    const contentWidth = maxX - minX;
+    const contentHeight = maxY - minY;
+    return {
+      x: Math.max(0, relativeMinX),
+      y: Math.max(0, relativeMinY),
+      width: Math.min(contentWidth, frame.width),
+      height: Math.min(contentHeight, frame.height)
+    };
+  }
+  function hasTextContent(frame) {
+    const checkNode = (node) => {
+      if (node.type === "TEXT") {
+        return node.characters.length > 0;
+      }
+      if ("children" in node) {
+        return node.children.some((child) => checkNode(child));
+      }
+      return false;
+    };
+    return checkNode(frame);
+  }
+  function hasImageContent2(frame) {
+    const checkNode = (node) => {
+      if ("fills" in node && Array.isArray(node.fills)) {
+        const hasFills = node.fills;
+        if (hasFills.some((fill) => fill.type === "IMAGE" || fill.type === "VIDEO")) {
+          return true;
+        }
+      }
+      if ("children" in node) {
+        return node.children.some((child) => checkNode(child));
+      }
+      return false;
+    };
+    return checkNode(frame);
+  }
+  function countVisibleChildren(frame) {
+    return frame.children.filter((child) => {
+      if (!child.visible) return false;
+      if ("getPluginData" in child && (child.getPluginData(ROLE_KEY) === "overlay" || child.getPluginData(LEGACY_ROLE_KEY) === "overlay")) {
+        return false;
+      }
+      return true;
+    }).length;
+  }
+  function normalizeLayoutMode(mode) {
+    return mode === "GRID" ? "NONE" : mode;
+  }
+  function determineScalingStrategy(params) {
+    const { hasAutoLayout, contentDensity, hasText, hasImages, aspectRatio } = params;
+    if (contentDensity === "sparse") {
+      return "fill";
+    }
+    if (contentDensity === "dense" && hasAutoLayout) {
+      return "adaptive";
+    }
+    if (hasText && !hasImages) {
+      if (aspectRatio > 2 || aspectRatio < 0.5) {
+        return "reflow";
+      }
+      return "adaptive";
+    }
+    if (hasImages && !hasText) {
+      return "stretch";
+    }
+    return "adaptive";
+  }
+  function calculateOptimalScale(analysis, target, safeAreaInsets, profile) {
+    const availableWidth = target.width - safeAreaInsets.x * 2;
+    const availableHeight = target.height - safeAreaInsets.y * 2;
+    const sourceWidth = Math.max(analysis.effectiveWidth, 1);
+    const sourceHeight = Math.max(analysis.effectiveHeight, 1);
+    const widthScale = availableWidth / sourceWidth;
+    const heightScale = availableHeight / sourceHeight;
+    let scale;
+    switch (analysis.recommendedStrategy) {
+      case "fill":
+        scale = Math.max(widthScale, heightScale) * 0.95;
+        break;
+      case "fit":
+        scale = Math.min(widthScale, heightScale) * 0.98;
+        break;
+      case "stretch":
+        if (profile === "vertical") {
+          scale = heightScale * 0.9;
+        } else if (profile === "horizontal") {
+          scale = widthScale * 0.9;
+        } else {
+          scale = (widthScale + heightScale) / 2 * 0.9;
+        }
+        break;
+      case "reflow":
+        if (profile === "vertical") {
+          scale = Math.min(heightScale * 0.85, widthScale);
+        } else if (profile === "horizontal") {
+          scale = Math.min(widthScale * 0.85, heightScale);
+        } else {
+          scale = (Math.min(widthScale, heightScale) + Math.max(widthScale, heightScale)) / 2 * 0.9;
+        }
+        break;
+      case "adaptive":
+      default:
+        if (profile === "vertical") {
+          if (heightScale <= widthScale) {
+            scale = heightScale * 0.95;
+          } else {
+            const heightFirst = heightScale * 0.9;
+            const widthAllowance = widthScale * 1.35;
+            scale = Math.min(heightFirst, widthAllowance);
+          }
+        } else if (profile === "horizontal") {
+          if (widthScale <= heightScale) {
+            scale = widthScale * 0.95;
+          } else {
+            scale = Math.min(heightScale, widthScale * 0.8 + heightScale * 0.2);
+          }
+        } else {
+          const avgScale = (widthScale + heightScale) / 2;
+          const minScale = Math.min(widthScale, heightScale);
+          scale = minScale * 0.6 + avgScale * 0.4;
+        }
+        break;
+    }
+    const MIN_SCALE = 0.3;
+    const MAX_SCALE = analysis.hasImages ? 12 : 60;
+    return Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale));
+  }
+
+  // core/padding-distribution.ts
+  function distributePadding(options) {
+    const totalExtra = Math.max(0, options.totalExtra);
+    const requested = normaliseSafeInset(options.safeInset);
+    const requestedTotal = requested.start + requested.end;
+    const scale = requestedTotal > 0 && totalExtra < requestedTotal ? totalExtra / requestedTotal : 1;
+    const appliedStart = requested.start * scale;
+    const appliedEnd = requested.end * scale;
+    const remaining = Math.max(totalExtra - appliedStart - appliedEnd, 0);
+    let startShare = 0.5;
+    if (options.gaps && Number.isFinite(options.gaps.start) && Number.isFinite(options.gaps.end)) {
+      const startGap = Math.max(0, options.gaps.start);
+      const endGap = Math.max(0, options.gaps.end);
+      const totalGap = startGap + endGap;
+      if (totalGap > 0) {
+        startShare = startGap / totalGap;
+      }
+    }
+    if (typeof options.focus === "number" && Number.isFinite(options.focus)) {
+      const clampedFocus = clampRatio(options.focus);
+      const blend = 0.6;
+      startShare = clampRatio(startShare * (1 - blend) + clampedFocus * blend);
+    }
+    return {
+      start: appliedStart + remaining * startShare,
+      end: appliedEnd + remaining * (1 - startShare)
+    };
+  }
+  function normaliseSafeInset(value) {
+    if (typeof value === "number") {
+      const inset = Math.max(0, value);
+      return { start: inset, end: inset };
+    }
+    return {
+      start: Math.max(0, value.start),
+      end: Math.max(0, value.end)
+    };
+  }
+  function clampRatio(value) {
+    const clamped = Math.min(Math.max(value, 0), 1);
+    const epsilon = 0.05;
+    return Math.min(Math.max(clamped, epsilon), 1 - epsilon);
+  }
+
+  // core/layout-expansion.ts
+  function planAutoLayoutExpansion(context) {
+    var _a;
+    const totalExtra = Math.max(0, context.totalExtra);
+    if (totalExtra === 0) {
+      return { start: 0, end: 0, interior: 0 };
+    }
+    const requestedInset = normaliseSafeInset2(context.safeInset);
+    const appliedSafe = applySafeInsetBudget(requestedInset, totalExtra);
+    const gaps = normaliseGaps(context.gaps);
+    const flowChildCount = Math.max(0, context.flowChildCount);
+    const baseItemSpacing = Math.max(0, (_a = context.baseItemSpacing) != null ? _a : 0);
+    const leftover = Math.max(totalExtra - appliedSafe.start - appliedSafe.end, 0);
+    const canReflow = context.allowInteriorExpansion !== false && flowChildCount >= 2 && leftover > 0;
+    let baseInteriorWeight = 0;
+    if (canReflow) {
+      const gapCount = Math.max(flowChildCount - 1, 1);
+      baseInteriorWeight = Math.min(0.58 + gapCount * 0.12, 0.82);
+      if (baseItemSpacing < 16) {
+        baseInteriorWeight *= 0.92;
+      }
+    }
+    const asymmetry = gaps ? computeAsymmetry(gaps) : 0;
+    const symmetryMultiplier = 1 - asymmetry * 0.6;
+    const interiorWeight = clamp(baseInteriorWeight * symmetryMultiplier, 0, 0.9);
+    const interiorExtra = round2(leftover * interiorWeight);
+    const edgeBudget = round2(totalExtra - interiorExtra);
+    const distributed = distributePadding({
+      totalExtra: edgeBudget,
+      safeInset: appliedSafe,
+      gaps: gaps != null ? gaps : null,
+      focus: context.focalRatio
+    });
+    return {
+      start: round2(distributed.start),
+      end: round2(distributed.end),
+      interior: round2(interiorExtra)
+    };
+  }
+  function normaliseGaps(gaps) {
+    if (!gaps) {
+      return null;
+    }
+    const start = Number.isFinite(gaps.start) ? Math.max(0, gaps.start) : 0;
+    const end = Number.isFinite(gaps.end) ? Math.max(0, gaps.end) : 0;
+    if (start === 0 && end === 0) {
+      return null;
+    }
+    return { start, end };
+  }
+  function computeAsymmetry(gaps) {
+    const total = gaps.start + gaps.end;
+    if (total === 0) {
+      return 0;
+    }
+    return Math.min(1, Math.abs(gaps.start - gaps.end) / total);
+  }
+  function round2(value) {
+    return Math.round(value * 100) / 100;
+  }
+  function clamp(value, min, max) {
+    return Math.min(Math.max(value, min), max);
+  }
+  function normaliseSafeInset2(value) {
+    if (typeof value === "number") {
+      const inset = Math.max(0, value);
+      return { start: inset, end: inset };
+    }
+    return {
+      start: Math.max(0, value.start),
+      end: Math.max(0, value.end)
+    };
+  }
+  function applySafeInsetBudget(requested, totalExtra) {
+    const totalRequested = requested.start + requested.end;
+    if (totalRequested === 0 || totalExtra === 0) {
+      return { start: 0, end: 0 };
+    }
+    if (totalExtra >= totalRequested) {
+      return requested;
+    }
+    const scale = totalExtra / totalRequested;
+    return {
+      start: requested.start * scale,
+      end: requested.end * scale
+    };
+  }
+
+  // core/absolute-geometry.ts
+  function scaleCenterToRange(value, from, to) {
+    const boundedFrom = normaliseRange(from);
+    const boundedTo = normaliseRange(to);
+    if (boundedTo.size === 0) {
+      return boundedTo.start;
+    }
+    if (boundedFrom.size === 0) {
+      return boundedTo.start + boundedTo.size / 2;
+    }
+    const fromCenter = boundedFrom.start + boundedFrom.size / 2;
+    const toCenter = boundedTo.start + boundedTo.size / 2;
+    const scale = boundedTo.size / boundedFrom.size;
+    return toCenter + (value - fromCenter) * scale;
+  }
+  function normaliseRange(range) {
+    const size = Math.max(0, Number.isFinite(range.size) ? range.size : 0);
+    const start = Number.isFinite(range.start) ? range.start : 0;
+    return { start, size };
+  }
+
+  // core/absolute-layout.ts
+  function planAbsoluteChildPositions(input) {
+    if (input.children.length === 0) {
+      return [];
+    }
+    const safeBounds = normaliseBounds(input.safeBounds);
+    const contentBounds = measureBounds(input.children);
+    if (input.profile === "vertical" && input.children.length >= 2) {
+      const safeAspectRatio = safeBounds.height > 0 ? safeBounds.width / safeBounds.height : 1;
+      const targetAspectRatio = typeof input.targetAspectRatio === "number" && Number.isFinite(input.targetAspectRatio) ? Math.max(0, input.targetAspectRatio) : safeAspectRatio;
+      const extremeVertical = Math.min(safeAspectRatio, targetAspectRatio) < 0.57;
+      if (extremeVertical) {
+        debugFixLog("stacking absolute children for vertical target", {
+          safeAspectRatio,
+          targetAspectRatio,
+          childCount: input.children.length
+        });
+        return planVerticalStack(input.children, safeBounds);
+      }
+    }
+    if (boundsContain(safeBounds, contentBounds)) {
+      return input.children.map((child) => ({ id: child.id, x: round3(child.x), y: round3(child.y) }));
+    }
+    return projectChildrenToBounds(input.children, contentBounds, safeBounds);
+  }
+  function planVerticalStack(children, safe) {
+    const ordered = [...children].sort((a, b) => {
+      if (a.x !== b.x) {
+        return a.x - b.x;
+      }
+      return a.y - b.y;
+    });
+    const plans = /* @__PURE__ */ new Map();
+    const totalChildHeight = ordered.reduce((sum, child) => sum + child.height, 0);
+    const gapCount = Math.max(ordered.length - 1, 0);
+    const availableForGaps = Math.max(safe.height - totalChildHeight, 0);
+    const gapSize = gapCount > 0 ? availableForGaps / gapCount : 0;
+    let cursorY = safe.y;
+    ordered.forEach((child, index) => {
+      const targetY = clamp2(cursorY, safe.y, safe.y + safe.height - child.height);
+      const targetX = clamp2(safe.x + (safe.width - child.width) / 2, safe.x, safe.x + safe.width - child.width);
+      plans.set(child.id, {
+        id: child.id,
+        x: round3(targetX),
+        y: round3(targetY)
+      });
+      cursorY = targetY + child.height + gapSize;
+    });
+    return children.map((child) => {
+      var _a;
+      return (_a = plans.get(child.id)) != null ? _a : { id: child.id, x: child.x, y: child.y };
+    });
+  }
+  function projectChildrenToBounds(children, source, target) {
+    const sourceRangeX = { start: source.x, size: source.width };
+    const sourceRangeY = { start: source.y, size: source.height };
+    const targetRangeX = { start: target.x, size: target.width };
+    const targetRangeY = { start: target.y, size: target.height };
+    return children.map((child) => {
+      const centerX = child.x + child.width / 2;
+      const centerY = child.y + child.height / 2;
+      const mappedCenterX = scaleCenterToRange(centerX, sourceRangeX, targetRangeX);
+      const mappedCenterY = scaleCenterToRange(centerY, sourceRangeY, targetRangeY);
+      const nextX = clamp2(mappedCenterX - child.width / 2, target.x, target.x + target.width - child.width);
+      const nextY = clamp2(mappedCenterY - child.height / 2, target.y, target.y + target.height - child.height);
+      return {
+        id: child.id,
+        x: round3(nextX),
+        y: round3(nextY)
+      };
+    });
+  }
+  function measureBounds(children) {
+    let minX = Number.POSITIVE_INFINITY;
+    let minY = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let maxY = Number.NEGATIVE_INFINITY;
+    for (const child of children) {
+      minX = Math.min(minX, child.x);
+      minY = Math.min(minY, child.y);
+      maxX = Math.max(maxX, child.x + child.width);
+      maxY = Math.max(maxY, child.y + child.height);
+    }
+    if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
+      return { x: 0, y: 0, width: 0, height: 0 };
+    }
+    return {
+      x: minX,
+      y: minY,
+      width: Math.max(0, maxX - minX),
+      height: Math.max(0, maxY - minY)
+    };
+  }
+  function normaliseBounds(bounds) {
+    return {
+      x: Number.isFinite(bounds.x) ? bounds.x : 0,
+      y: Number.isFinite(bounds.y) ? bounds.y : 0,
+      width: Math.max(0, Number.isFinite(bounds.width) ? bounds.width : 0),
+      height: Math.max(0, Number.isFinite(bounds.height) ? bounds.height : 0)
+    };
+  }
+  function boundsContain(outer, inner) {
+    return inner.x >= outer.x && inner.y >= outer.y && inner.x + inner.width <= outer.x + outer.width + 0.01 && inner.y + inner.height <= outer.y + outer.height + 0.01;
+  }
+  function clamp2(value, min, max) {
+    return Math.min(Math.max(value, min), max);
+  }
+  function round3(value) {
+    return Math.round(value * 100) / 100;
+  }
+
+  // core/variant-scaling.ts
   async function prepareCloneForLayout(frame, autoLayoutSnapshots) {
     const snapshot = captureAutoLayoutSnapshot(frame);
     if (snapshot) {
@@ -3171,6 +3526,8 @@
     }
     return {
       layoutMode: frame.layoutMode,
+      width: frame.width,
+      height: frame.height,
       primaryAxisSizingMode: frame.primaryAxisSizingMode,
       counterAxisSizingMode: frame.counterAxisSizingMode,
       layoutWrap: frame.layoutWrap,
@@ -3187,7 +3544,131 @@
       absoluteChildCount
     };
   }
-  function restoreAutoLayoutSettings(frame, autoLayoutSnapshots, metrics) {
+  async function scaleNodeTree(frame, target, safeAreaRatio, fontCache, rootSnapshot, profile, primaryFocal = null) {
+    var _a, _b, _c, _d, _e;
+    const contentAnalysis = analyzeContent(frame);
+    debugFixLog("Content analysis complete", {
+      frameId: frame.id,
+      frameName: frame.name,
+      effectiveDimensions: `${contentAnalysis.effectiveWidth}\xD7${contentAnalysis.effectiveHeight}`,
+      strategy: contentAnalysis.recommendedStrategy,
+      contentDensity: contentAnalysis.contentDensity,
+      hasText: contentAnalysis.hasText,
+      hasImages: contentAnalysis.hasImages,
+      actualBounds: contentAnalysis.actualContentBounds
+    });
+    const contentMargins = measureContentMargins(frame);
+    const sourceWidth = Math.max(contentAnalysis.effectiveWidth, 1);
+    const sourceHeight = Math.max(contentAnalysis.effectiveHeight, 1);
+    const safeInsets = resolveSafeAreaInsets(target, safeAreaRatio);
+    const safeInsetX = safeInsets.left;
+    const safeInsetY = safeInsets.top;
+    debugFixLog("safe area insets resolved", {
+      targetId: target.id,
+      ratio: safeAreaRatio,
+      insets: safeInsets
+    });
+    const rawScale = calculateOptimalScale(contentAnalysis, target, { x: safeInsetX, y: safeInsetY }, profile);
+    const frameMaxScale = Math.min(
+      target.width / Math.max(sourceWidth, 1),
+      target.height / Math.max(sourceHeight, 1)
+    );
+    const scale = Number.isFinite(frameMaxScale) && frameMaxScale > 0 ? Math.min(rawScale, frameMaxScale) : rawScale;
+    debugFixLog("Optimal scale calculated", {
+      scale,
+      rawScale,
+      frameMaxScale,
+      sourceEffective: `${sourceWidth}\xD7${sourceHeight}`,
+      target: `${target.width}\xD7${target.height}`,
+      profile,
+      strategy: contentAnalysis.recommendedStrategy
+    });
+    await scaleNodeRecursive(frame, scale, fontCache);
+    const scaledWidth = sourceWidth * scale;
+    const scaledHeight = sourceHeight * scale;
+    const extraWidth = Math.max(target.width - scaledWidth, 0);
+    const extraHeight = Math.max(target.height - scaledHeight, 0);
+    const horizontalGaps = contentMargins != null ? { start: contentMargins.left, end: contentMargins.right } : null;
+    const verticalGaps = contentMargins != null ? { start: contentMargins.top, end: contentMargins.bottom } : null;
+    const absoluteChildCount = countAbsoluteChildren(frame);
+    const verticalSummary = rootSnapshot ? {
+      layoutMode: rootSnapshot.layoutMode,
+      flowChildCount: rootSnapshot.flowChildCount
+    } : null;
+    const adoptVerticalVariant = shouldAdoptVerticalFlow(profile, verticalSummary);
+    const horizontalPlan = planAutoLayoutExpansion({
+      totalExtra: extraWidth,
+      safeInset: { start: safeInsets.left, end: safeInsets.right },
+      gaps: horizontalGaps,
+      flowChildCount: rootSnapshot && rootSnapshot.layoutMode === "HORIZONTAL" ? rootSnapshot.flowChildCount : absoluteChildCount,
+      baseItemSpacing: rootSnapshot && rootSnapshot.layoutMode === "HORIZONTAL" ? scaleAutoLayoutMetric(rootSnapshot.itemSpacing, scale) : 0,
+      allowInteriorExpansion: rootSnapshot && rootSnapshot.layoutMode === "HORIZONTAL" && rootSnapshot.flowChildCount >= 2 || (!rootSnapshot || rootSnapshot.layoutMode === "NONE" ? absoluteChildCount >= 2 : false),
+      focalRatio: (_a = primaryFocal == null ? void 0 : primaryFocal.x) != null ? _a : null
+    });
+    const verticalFlowChildCount = rootSnapshot && rootSnapshot.layoutMode === "VERTICAL" ? rootSnapshot.flowChildCount : adoptVerticalVariant ? (_b = rootSnapshot == null ? void 0 : rootSnapshot.flowChildCount) != null ? _b : absoluteChildCount : absoluteChildCount;
+    const verticalAllowInterior = adoptVerticalVariant || rootSnapshot && rootSnapshot.layoutMode === "VERTICAL" && rootSnapshot.flowChildCount >= 2 || (rootSnapshot == null ? void 0 : rootSnapshot.layoutWrap) === "WRAP" && rootSnapshot.flowChildCount >= 2 || (!rootSnapshot || rootSnapshot.layoutMode === "NONE" ? absoluteChildCount >= 2 : false);
+    const verticalPlan = planAutoLayoutExpansion({
+      totalExtra: extraHeight,
+      safeInset: { start: safeInsets.top, end: safeInsets.bottom },
+      gaps: verticalGaps,
+      flowChildCount: verticalFlowChildCount,
+      baseItemSpacing: rootSnapshot && rootSnapshot.layoutMode === "VERTICAL" ? scaleAutoLayoutMetric(rootSnapshot.itemSpacing, scale) : 0,
+      allowInteriorExpansion: verticalAllowInterior,
+      focalRatio: (_c = primaryFocal == null ? void 0 : primaryFocal.y) != null ? _c : null
+    });
+    const offsetX = horizontalPlan.start;
+    const offsetY = verticalPlan.start;
+    frame.resizeWithoutConstraints(target.width, target.height);
+    repositionChildren(frame, offsetX, offsetY);
+    if (shouldExpandAbsoluteChildren(rootSnapshot == null ? void 0 : rootSnapshot.layoutMode, adoptVerticalVariant, profile)) {
+      expandAbsoluteChildren(frame, horizontalPlan, verticalPlan, profile);
+    }
+    frame.setPluginData(
+      SAFE_AREA_KEY,
+      JSON.stringify({
+        insetX: safeInsetX,
+        insetY: safeInsetY,
+        left: safeInsets.left,
+        right: safeInsets.right,
+        top: safeInsets.top,
+        bottom: safeInsets.bottom,
+        width: target.width,
+        height: target.height
+      })
+    );
+    if (primaryFocal) {
+      frame.setPluginData(FOCAL_POINT_KEY, JSON.stringify(primaryFocal));
+    }
+    debugFixLog("axis expansion planned", {
+      nodeId: frame.id,
+      layoutMode: (_d = rootSnapshot == null ? void 0 : rootSnapshot.layoutMode) != null ? _d : "NONE",
+      flowChildCount: (_e = rootSnapshot == null ? void 0 : rootSnapshot.flowChildCount) != null ? _e : 0,
+      absoluteChildCount,
+      verticalFlowChildCount,
+      verticalAllowInterior,
+      extraWidth,
+      extraHeight,
+      horizontalPlan,
+      verticalPlan,
+      profile,
+      adoptVerticalVariant,
+      focal: primaryFocal ? { x: primaryFocal.x, y: primaryFocal.y, confidence: primaryFocal.confidence } : null
+    });
+    return {
+      scale,
+      scaledWidth,
+      scaledHeight,
+      safeInsetX,
+      safeInsetY,
+      targetWidth: target.width,
+      targetHeight: target.height,
+      horizontal: horizontalPlan,
+      vertical: verticalPlan,
+      profile,
+      adoptVerticalVariant
+    };
+  }
+  async function restoreAutoLayoutSettings(frame, autoLayoutSnapshots, metrics) {
     const snapshot = autoLayoutSnapshots.get(frame.id);
     if (!snapshot) {
       return;
@@ -3209,19 +3690,27 @@
     frame.paddingTop = round4(basePaddingTop + verticalPlan.start);
     frame.paddingBottom = round4(basePaddingBottom + verticalPlan.end);
     let nextItemSpacing = baseItemSpacing;
-    if (snapshot.layoutMode === "HORIZONTAL" && snapshot.flowChildCount >= 2) {
+    if (frame.layoutMode === "HORIZONTAL" && snapshot.flowChildCount >= 2) {
       const gaps = Math.max(snapshot.flowChildCount - 1, 1);
       const perGap = horizontalPlan.interior / gaps;
       nextItemSpacing = round4(baseItemSpacing + perGap);
-    } else if (snapshot.layoutMode === "VERTICAL" && snapshot.flowChildCount >= 2) {
-      const gaps = Math.max(snapshot.flowChildCount - 1, 1);
-      const perGap = verticalPlan.interior / gaps;
-      nextItemSpacing = round4(baseItemSpacing + perGap);
+    } else if (frame.layoutMode === "VERTICAL" && snapshot.flowChildCount >= 2) {
+      nextItemSpacing = computeVerticalSpacing({
+        baseSpacing: baseItemSpacing,
+        interior: verticalPlan.interior,
+        flowChildCount: snapshot.flowChildCount
+      });
     }
     frame.itemSpacing = nextItemSpacing;
     if (snapshot.layoutWrap === "WRAP" && snapshot.counterAxisSpacing != null && "counterAxisSpacing" in frame) {
       const baseCounterSpacing = scaleAutoLayoutMetric(snapshot.counterAxisSpacing, metrics.scale);
       frame.counterAxisSpacing = round4(baseCounterSpacing);
+    }
+    if (metrics.profile === "vertical" && frame.layoutMode === "VERTICAL") {
+      frame.primaryAxisAlignItems = resolveVerticalAlignItems(snapshot.primaryAxisAlignItems, {
+        interior: metrics.vertical.interior
+      });
+      frame.layoutWrap = resolveVerticalLayoutWrap(frame.layoutWrap);
     }
     debugFixLog("auto layout fine-tuned", {
       nodeId: frame.id,
@@ -3245,9 +3734,6 @@
       height: safeHeight
     };
     const absoluteChildren = frame.children.filter((child) => {
-      if (hasOverlayRole(child)) {
-        return false;
-      }
       if ("layoutPositioning" in child && child.layoutPositioning !== "ABSOLUTE" && frame.layoutMode !== "NONE") {
         return false;
       }
@@ -3271,6 +3757,7 @@
     const planned = planAbsoluteChildPositions({
       profile,
       safeBounds,
+      targetAspectRatio: frame.height > 0 ? frame.width / frame.height : safeBounds.width / Math.max(safeBounds.height, 1),
       children: childSnapshots
     });
     const lookup = new Map(planned.map((plan) => [plan.id, plan]));
@@ -3293,125 +3780,6 @@
       profile,
       appliedPlans: planned
     });
-  }
-  function adjustAutoLayoutProperties(node, scale) {
-    if (node.type !== "FRAME" && node.type !== "COMPONENT") {
-      return;
-    }
-    if (node.layoutMode === "NONE") {
-      return;
-    }
-    node.paddingLeft = scaleAutoLayoutMetric(node.paddingLeft, scale);
-    node.paddingRight = scaleAutoLayoutMetric(node.paddingRight, scale);
-    node.paddingTop = scaleAutoLayoutMetric(node.paddingTop, scale);
-    node.paddingBottom = scaleAutoLayoutMetric(node.paddingBottom, scale);
-    node.itemSpacing = scaleAutoLayoutMetric(node.itemSpacing, scale);
-    if (node.layoutWrap === "WRAP" && typeof node.counterAxisSpacing === "number") {
-      node.counterAxisSpacing = scaleAutoLayoutMetric(node.counterAxisSpacing, scale);
-    }
-  }
-  async function scaleNodeTree(frame, target, safeAreaRatio, fontCache, rootSnapshot, profile, primaryFocal = null) {
-    var _a, _b, _c, _d;
-    const contentAnalysis = analyzeContent(frame);
-    debugFixLog("Content analysis complete", {
-      frameId: frame.id,
-      frameName: frame.name,
-      effectiveDimensions: `${contentAnalysis.effectiveWidth}\xD7${contentAnalysis.effectiveHeight}`,
-      strategy: contentAnalysis.recommendedStrategy,
-      contentDensity: contentAnalysis.contentDensity,
-      hasText: contentAnalysis.hasText,
-      hasImages: contentAnalysis.hasImages,
-      actualBounds: contentAnalysis.actualContentBounds
-    });
-    const contentMargins = measureContentMargins(frame);
-    const sourceWidth = Math.max(contentAnalysis.effectiveWidth, 1);
-    const sourceHeight = Math.max(contentAnalysis.effectiveHeight, 1);
-    const safeInsetX = target.width * safeAreaRatio;
-    const safeInsetY = target.height * safeAreaRatio;
-    const scale = calculateOptimalScale(
-      contentAnalysis,
-      target,
-      { x: safeInsetX, y: safeInsetY },
-      profile
-    );
-    debugFixLog("Optimal scale calculated", {
-      scale,
-      sourceEffective: `${sourceWidth}\xD7${sourceHeight}`,
-      target: `${target.width}\xD7${target.height}`,
-      profile,
-      strategy: contentAnalysis.recommendedStrategy
-    });
-    await scaleNodeRecursive(frame, scale, fontCache);
-    const scaledWidth = sourceWidth * scale;
-    const scaledHeight = sourceHeight * scale;
-    const extraWidth = Math.max(target.width - scaledWidth, 0);
-    const extraHeight = Math.max(target.height - scaledHeight, 0);
-    const horizontalGaps = contentMargins != null ? { start: contentMargins.left, end: contentMargins.right } : null;
-    const verticalGaps = contentMargins != null ? { start: contentMargins.top, end: contentMargins.bottom } : null;
-    const absoluteChildCount = countAbsoluteChildren(frame);
-    const verticalSummary = rootSnapshot ? {
-      layoutMode: rootSnapshot.layoutMode,
-      flowChildCount: rootSnapshot.flowChildCount
-    } : null;
-    const adoptVerticalVariant = shouldAdoptVerticalFlow(profile, verticalSummary);
-    const horizontalPlan = planAutoLayoutExpansion({
-      totalExtra: extraWidth,
-      safeInset: safeInsetX,
-      gaps: horizontalGaps,
-      flowChildCount: rootSnapshot && rootSnapshot.layoutMode === "HORIZONTAL" ? rootSnapshot.flowChildCount : absoluteChildCount,
-      baseItemSpacing: rootSnapshot && rootSnapshot.layoutMode === "HORIZONTAL" ? scaleAutoLayoutMetric(rootSnapshot.itemSpacing, scale) : 0,
-      allowInteriorExpansion: rootSnapshot && rootSnapshot.layoutMode === "HORIZONTAL" && rootSnapshot.flowChildCount >= 2 || (!rootSnapshot || rootSnapshot.layoutMode === "NONE" ? absoluteChildCount >= 2 : false),
-      focalRatio: (_a = primaryFocal == null ? void 0 : primaryFocal.x) != null ? _a : null
-    });
-    const verticalFlowChildCount = rootSnapshot && rootSnapshot.layoutMode === "VERTICAL" ? rootSnapshot.flowChildCount : adoptVerticalVariant ? (_b = rootSnapshot == null ? void 0 : rootSnapshot.flowChildCount) != null ? _b : absoluteChildCount : absoluteChildCount;
-    const verticalAllowInterior = adoptVerticalVariant || rootSnapshot && rootSnapshot.layoutMode === "VERTICAL" && rootSnapshot.flowChildCount >= 2 || (rootSnapshot == null ? void 0 : rootSnapshot.layoutWrap) === "WRAP" && rootSnapshot.flowChildCount >= 2 || (!rootSnapshot || rootSnapshot.layoutMode === "NONE" ? absoluteChildCount >= 2 : false);
-    const verticalPlan = planAutoLayoutExpansion({
-      totalExtra: extraHeight,
-      safeInset: safeInsetY,
-      gaps: verticalGaps,
-      flowChildCount: verticalFlowChildCount,
-      baseItemSpacing: rootSnapshot && rootSnapshot.layoutMode === "VERTICAL" ? scaleAutoLayoutMetric(rootSnapshot.itemSpacing, scale) : 0,
-      allowInteriorExpansion: verticalAllowInterior,
-      focalRatio: (_c = primaryFocal == null ? void 0 : primaryFocal.y) != null ? _c : null
-    });
-    const offsetX = horizontalPlan.start;
-    const offsetY = verticalPlan.start;
-    frame.resizeWithoutConstraints(target.width, target.height);
-    repositionChildren(frame, offsetX, offsetY);
-    if (shouldExpandAbsoluteChildren(rootSnapshot == null ? void 0 : rootSnapshot.layoutMode, adoptVerticalVariant)) {
-      expandAbsoluteChildren(frame, horizontalPlan, verticalPlan, profile);
-    }
-    frame.setPluginData(
-      SAFE_AREA_KEY,
-      JSON.stringify({ insetX: safeInsetX, insetY: safeInsetY, width: target.width, height: target.height })
-    );
-    if (primaryFocal) {
-      frame.setPluginData(FOCAL_POINT_KEY, JSON.stringify(primaryFocal));
-    }
-    debugFixLog("axis expansion planned", {
-      nodeId: frame.id,
-      layoutMode: (_d = rootSnapshot == null ? void 0 : rootSnapshot.layoutMode) != null ? _d : "NONE",
-      extraWidth,
-      extraHeight,
-      horizontalPlan,
-      verticalPlan,
-      profile,
-      adoptVerticalVariant,
-      focal: primaryFocal ? { x: primaryFocal.x, y: primaryFocal.y, confidence: primaryFocal.confidence } : null
-    });
-    return {
-      scale,
-      scaledWidth,
-      scaledHeight,
-      safeInsetX,
-      safeInsetY,
-      targetWidth: target.width,
-      targetHeight: target.height,
-      horizontal: horizontalPlan,
-      vertical: verticalPlan,
-      profile,
-      adoptVerticalVariant
-    };
   }
   async function scaleNodeRecursive(node, scale, fontCache) {
     if ("children" in node) {
@@ -3577,229 +3945,348 @@
     }
     return count;
   }
-  async function lockOverlays(overlays) {
-    if (overlays.length === 0) {
+  function adjustAutoLayoutProperties(node, scale) {
+    if (node.type !== "FRAME" && node.type !== "COMPONENT") {
       return;
     }
-    const flushAsync = figma.flushAsync;
-    if (typeof flushAsync === "function") {
-      try {
-        await flushAsync.call(figma);
-        debugFixLog("flush completed before locking overlays", { overlayCount: overlays.length });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        debugFixLog("flush failed before locking overlays", {
-          overlayCount: overlays.length,
-          errorMessage: message
+    if (node.layoutMode === "NONE") {
+      return;
+    }
+    node.paddingLeft = scaleAutoLayoutMetric(node.paddingLeft, scale);
+    node.paddingRight = scaleAutoLayoutMetric(node.paddingRight, scale);
+    node.paddingTop = scaleAutoLayoutMetric(node.paddingTop, scale);
+    node.paddingBottom = scaleAutoLayoutMetric(node.paddingBottom, scale);
+    node.itemSpacing = scaleAutoLayoutMetric(node.itemSpacing, scale);
+    if (node.layoutWrap === "WRAP" && typeof node.counterAxisSpacing === "number") {
+      node.counterAxisSpacing = scaleAutoLayoutMetric(node.counterAxisSpacing, scale);
+    }
+  }
+  function cloneValue(value) {
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  // core/layout-snapshot.ts
+  function captureLayoutSnapshot(frame) {
+    const flowChildren = [];
+    let absoluteChildCount = 0;
+    for (const child of frame.children) {
+      if (hasOverlayRole(child)) {
+        continue;
+      }
+      const positioning = "layoutPositioning" in child ? child.layoutPositioning : null;
+      const participatesInFlow = frame.layoutMode !== "NONE" && positioning !== "ABSOLUTE";
+      if (participatesInFlow) {
+        flowChildren.push({
+          id: child.id,
+          name: child.name,
+          layoutGrow: "layoutGrow" in child ? child.layoutGrow : void 0,
+          layoutAlign: "layoutAlign" in child ? child.layoutAlign : void 0,
+          width: "width" in child ? child.width : void 0,
+          height: "height" in child ? child.height : void 0
         });
+      } else {
+        absoluteChildCount += 1;
       }
-    }
-    for (const overlay of overlays) {
-      overlay.locked = true;
-      debugFixLog("qa overlay locked", {
-        overlayId: overlay.id
-      });
-    }
-  }
-  function layoutVariants(container, variants) {
-    if (variants.length === 0) {
-      return;
-    }
-    const sizes = variants.map((variant) => ({ width: variant.width, height: variant.height }));
-    const layout = computeVariantLayout(sizes, { margin: RUN_MARGIN, gap: RUN_GAP, maxRowWidth: MAX_ROW_WIDTH });
-    layout.positions.forEach((position, index) => {
-      const variant = variants[index];
-      variant.x = position.x;
-      variant.y = position.y;
-    });
-    const containerWidth = Math.max(container.width, layout.bounds.width);
-    const containerHeight = Math.max(container.height, layout.bounds.height);
-    container.resizeWithoutConstraints(containerWidth, containerHeight);
-    debugFixLog("variants positioned within container", {
-      containerWidth,
-      containerHeight,
-      variantCount: variants.length
-    });
-  }
-  function promoteVariantsToPage(page, container, variants) {
-    var _a;
-    const parent = container.parent;
-    if (!parent || parent.type !== "PAGE") {
-      debugFixLog("skipped promotion because container parent is not a page", {
-        parentType: (_a = parent == null ? void 0 : parent.type) != null ? _a : "none"
-      });
-      return;
-    }
-    const baseX = container.x;
-    const baseY = container.y;
-    for (const variant of variants) {
-      const absoluteX = baseX + variant.x;
-      const absoluteY = baseY + variant.y;
-      page.appendChild(variant);
-      variant.x = absoluteX;
-      variant.y = absoluteY;
-    }
-    container.remove();
-    debugFixLog("variants promoted to top-level frames", {
-      baseX,
-      baseY,
-      variantCount: variants.length
-    });
-  }
-  function exposeRun(page, variants) {
-    if (variants.length === 0) {
-      return;
-    }
-    figma.currentPage = page;
-    figma.viewport.scrollAndZoomIntoView([...variants]);
-  }
-  function collectWarnings(frame, target, safeAreaRatio) {
-    const warnings = [];
-    const safeInsetX = target.width * safeAreaRatio;
-    const safeInsetY = target.height * safeAreaRatio;
-    const safeWidth = target.width - safeInsetX * 2;
-    const safeHeight = target.height - safeInsetY * 2;
-    const bounds = frame.absoluteBoundingBox;
-    if (!bounds) {
-      return warnings;
-    }
-    const safeArea = {
-      x: bounds.x + safeInsetX,
-      y: bounds.y + safeInsetY,
-      width: safeWidth,
-      height: safeHeight
-    };
-    const contentBounds = combineChildBounds(frame);
-    if (contentBounds && !isWithinSafeArea(contentBounds, safeArea)) {
-      warnings.push({
-        code: "OUTSIDE_SAFE_AREA",
-        severity: "warn",
-        message: "Some layers extend outside the safe area."
-      });
-    }
-    if (contentBounds) {
-      const contentCenterX = contentBounds.x + contentBounds.width / 2;
-      const frameCenterX = bounds.x + bounds.width / 2;
-      const delta = Math.abs(contentCenterX - frameCenterX);
-      if (delta > 32) {
-        warnings.push({
-          code: "MISALIGNED",
-          severity: "info",
-          message: "Primary content is offset; consider centering horizontally."
-        });
-      }
-    }
-    const aiSignals = readAiSignals(frame);
-    if (aiSignals) {
-      const aiWarnings = deriveWarningsFromAiSignals(aiSignals);
-      if (aiWarnings.length > 0) {
-        warnings.push(...aiWarnings);
-      }
-    }
-    return warnings;
-  }
-  function measureContentMargins(frame) {
-    const frameBounds = frame.absoluteBoundingBox;
-    if (!frameBounds) {
-      return null;
-    }
-    const aiSignals = readAiSignals(frame);
-    const contentBounds = combineChildBounds(frame, aiSignals || void 0);
-    if (!contentBounds) {
-      return null;
-    }
-    const left = Math.max(contentBounds.x - frameBounds.x, 0);
-    const top = Math.max(contentBounds.y - frameBounds.y, 0);
-    const right = Math.max(frameBounds.x + frameBounds.width - (contentBounds.x + contentBounds.width), 0);
-    const bottom = Math.max(frameBounds.y + frameBounds.height - (contentBounds.y + contentBounds.height), 0);
-    return { left, right, top, bottom };
-  }
-  var IGNORED_ROLES = /* @__PURE__ */ new Set(["hero_image", "secondary_image", "decorative"]);
-  function isBackgroundOrIgnored(node, rootFrame, aiSignals) {
-    if (hasOverlayRole(node)) {
-      return true;
-    }
-    if (aiSignals == null ? void 0 : aiSignals.roles) {
-      const roleEntry = aiSignals.roles.find((r) => r.nodeId === node.id);
-      if (roleEntry && IGNORED_ROLES.has(roleEntry.role)) {
-        return true;
-      }
-    }
-    if ("width" in node && "height" in node && typeof node.width === "number" && typeof node.height === "number") {
-      const nodeArea = node.width * node.height;
-      const rootArea = rootFrame.width * rootFrame.height;
-      if (rootArea > 0 && nodeArea >= rootArea * 0.95) {
-        return true;
-      }
-    }
-    return false;
-  }
-  function combineChildBounds(frame, aiSignals) {
-    let minX = Number.POSITIVE_INFINITY;
-    let minY = Number.POSITIVE_INFINITY;
-    let maxX = Number.NEGATIVE_INFINITY;
-    let maxY = Number.NEGATIVE_INFINITY;
-    const queue = [...frame.children];
-    while (queue.length > 0) {
-      const node = queue.shift();
-      if (!node) {
-        continue;
-      }
-      if (isBackgroundOrIgnored(node, frame, aiSignals)) {
-        continue;
-      }
-      if ("children" in node) {
-        queue.push(...node.children);
-      }
-      if (!("absoluteBoundingBox" in node)) {
-        continue;
-      }
-      const bbox = node.absoluteBoundingBox;
-      if (!bbox) {
-        continue;
-      }
-      minX = Math.min(minX, bbox.x);
-      minY = Math.min(minY, bbox.y);
-      maxX = Math.max(maxX, bbox.x + bbox.width);
-      maxY = Math.max(maxY, bbox.y + bbox.height);
-    }
-    if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
-      return null;
     }
     return {
-      x: minX,
-      y: minY,
-      width: maxX - minX,
-      height: maxY - minY
+      layoutMode: frame.layoutMode,
+      layoutWrap: frame.layoutWrap,
+      primaryAxisAlignItems: frame.primaryAxisAlignItems,
+      counterAxisAlignItems: frame.counterAxisAlignItems,
+      primaryAxisSizingMode: frame.primaryAxisSizingMode,
+      counterAxisSizingMode: frame.counterAxisSizingMode,
+      itemSpacing: frame.itemSpacing,
+      counterAxisSpacing: frame.layoutWrap === "WRAP" ? frame.counterAxisSpacing : void 0,
+      padding: {
+        left: frame.paddingLeft,
+        right: frame.paddingRight,
+        top: frame.paddingTop,
+        bottom: frame.paddingBottom
+      },
+      flowChildCount: flowChildren.length,
+      absoluteChildCount,
+      flowChildren
     };
   }
-  function isWithinSafeArea(bounds, safe) {
-    const tolerance = 2;
-    return bounds.x >= safe.x - tolerance && bounds.y >= safe.y - tolerance && bounds.x + bounds.width <= safe.x + safe.width + tolerance && bounds.y + bounds.height <= safe.y + safe.height + tolerance;
+
+  // core/main.ts
+  var MAX_SAFE_AREA_RATIO = 0.25;
+  var MIN_PATTERN_CONFIDENCE = 0.65;
+  var aiRequestToken = 0;
+  figma.showUI(UI_TEMPLATE, {
+    width: 360,
+    height: 540,
+    themeColors: true
+  });
+  figma.ui.onmessage = async (rawMessage) => {
+    var _a;
+    switch (rawMessage.type) {
+      case "request-initial-state":
+        await postInitialState();
+        break;
+      case "generate-variants":
+        await handleGenerateRequest(
+          rawMessage.payload.targetIds,
+          rawMessage.payload.safeAreaRatio,
+          (_a = rawMessage.payload.layoutPatterns) != null ? _a : {}
+        );
+        break;
+      case "set-ai-signals":
+        await handleSetAiSignals(rawMessage.payload.signals);
+        break;
+      case "set-layout-advice":
+        await handleSetLayoutAdvice(rawMessage.payload.advice);
+        break;
+      case "set-api-key":
+        await handleSetApiKey(rawMessage.payload.key);
+        break;
+      case "refresh-ai":
+        await handleRefreshAiRequest();
+        break;
+      default:
+        console.warn("Unhandled message", rawMessage);
+    }
+  };
+  figma.on("selectionchange", () => {
+    void handleSelectionChange();
+  });
+  async function handleSelectionChange() {
+    await ensureAiKeyLoaded();
+    const frame = getSelectionFrame();
+    const selectionState = createSelectionState(frame);
+    postToUI({ type: "selection-update", payload: selectionState });
   }
-  function formatTimestamp(date) {
-    return `${date.toLocaleDateString()} \xB7 ${date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+  async function postInitialState() {
+    await ensureAiKeyLoaded();
+    const selectionFrame = getSelectionFrame();
+    const selectionState = createSelectionState(selectionFrame);
+    const lastRunSummary = readLastRun();
+    const payload = {
+      selectionOk: selectionState.selectionOk,
+      selectionName: selectionState.selectionName,
+      error: selectionState.error,
+      aiSignals: selectionState.aiSignals,
+      layoutAdvice: selectionState.layoutAdvice,
+      targets: VARIANT_TARGETS,
+      lastRun: lastRunSummary != null ? lastRunSummary : void 0,
+      debugEnabled: isDebugFixEnabled()
+    };
+    debugFixLog("initializing UI with targets", {
+      targetIds: VARIANT_TARGETS.map((target) => target.id),
+      targetCount: VARIANT_TARGETS.length
+    });
+    postToUI({ type: "init", payload });
   }
-  function writeLastRun(summary) {
-    const encoded = JSON.stringify(summary);
-    figma.root.setPluginData(LAST_RUN_KEY, encoded);
+  async function handleGenerateRequest(targetIds, rawSafeAreaRatio, layoutPatterns) {
+    var _a, _b, _c, _d, _e, _f, _g;
+    debugFixLog("`handleGenerateRequest` entered", { targetIds, rawSafeAreaRatio });
+    const selectionFrame = getSelectionFrame();
+    if (!selectionFrame) {
+      postToUI({ type: "error", payload: { message: "Select exactly one frame before generating variants." } });
+      return;
+    }
+    const targets = targetIds.map((id) => getTargetById(id)).filter((target) => Boolean(target));
+    if (targets.length === 0) {
+      postToUI({ type: "error", payload: { message: "Pick at least one target size." } });
+      return;
+    }
+    const safeAreaRatio = clamp3(rawSafeAreaRatio, 0, MAX_SAFE_AREA_RATIO);
+    postToUI({ type: "status", payload: { status: "running" } });
+    try {
+      const stagingPage = ensureStagingPage();
+      const runId = `run-${Date.now()}`;
+      const runContainer = createRunContainer(stagingPage, runId, selectionFrame.name);
+      const results = [];
+      const variantNodes = [];
+      const overlaysToLock = [];
+      const fontCache = /* @__PURE__ */ new Set();
+      await loadFontsForNode(selectionFrame, fontCache);
+      const layoutAdvice = readLayoutAdvice(selectionFrame);
+      const aiSignals = readAiSignals(selectionFrame);
+      const primaryFocal = resolvePrimaryFocalPoint(aiSignals);
+      for (const target of targets) {
+        const layoutProfile = resolveLayoutProfile({ width: target.width, height: target.height });
+        debugFixLog("prepping variant target", {
+          targetId: target.id,
+          targetLabel: target.label,
+          dimensions: `${target.width}x${target.height}`,
+          runId,
+          safeAreaRatio,
+          layoutProfile
+        });
+        const variantNode = selectionFrame.clone();
+        variantNode.name = `${selectionFrame.name} \u2192 ${target.label}`;
+        variantNode.setPluginData(TARGET_ID_KEY, target.id);
+        variantNode.setPluginData(RUN_ID_KEY, runId);
+        runContainer.appendChild(variantNode);
+        const autoLayoutSnapshots = /* @__PURE__ */ new Map();
+        await prepareCloneForLayout(variantNode, autoLayoutSnapshots);
+        const rootSnapshot = (_a = autoLayoutSnapshots.get(variantNode.id)) != null ? _a : null;
+        const safeAreaMetrics = await scaleNodeTree(
+          variantNode,
+          target,
+          safeAreaRatio,
+          fontCache,
+          rootSnapshot,
+          layoutProfile,
+          primaryFocal
+        );
+        const layoutAdaptationPlan = createLayoutAdaptationPlan(
+          variantNode,
+          target,
+          layoutProfile,
+          safeAreaMetrics.scale,
+          {
+            sourceLayoutMode: (rootSnapshot == null ? void 0 : rootSnapshot.layoutMode) && rootSnapshot.layoutMode !== "GRID" ? rootSnapshot.layoutMode : "NONE",
+            sourceSize: rootSnapshot && Number.isFinite(rootSnapshot.width) && Number.isFinite(rootSnapshot.height) ? { width: rootSnapshot.width, height: rootSnapshot.height } : void 0,
+            sourceFlowChildCount: (_b = rootSnapshot == null ? void 0 : rootSnapshot.flowChildCount) != null ? _b : void 0,
+            sourceItemSpacing: (_c = rootSnapshot == null ? void 0 : rootSnapshot.itemSpacing) != null ? _c : null,
+            adoptVerticalVariant: safeAreaMetrics.adoptVerticalVariant
+          }
+        );
+        debugFixLog("Layout adaptation plan created", {
+          targetId: target.id,
+          originalMode: (_d = rootSnapshot == null ? void 0 : rootSnapshot.layoutMode) != null ? _d : "NONE",
+          newMode: layoutAdaptationPlan.layoutMode,
+          profile: layoutProfile
+        });
+        applyLayoutAdaptation(variantNode, layoutAdaptationPlan);
+        restoreAutoLayoutSettings(variantNode, autoLayoutSnapshots, safeAreaMetrics);
+        const overlay = createQaOverlay(target, safeAreaRatio);
+        variantNode.appendChild(overlay);
+        const overlayConfig = configureQaOverlay(overlay, { parentLayoutMode: variantNode.layoutMode });
+        overlaysToLock.push(overlay);
+        debugFixLog("qa overlay configured", {
+          overlayId: overlay.id,
+          variantId: variantNode.id,
+          positioningUpdated: overlayConfig.positioningUpdated,
+          layoutPositioning: "layoutPositioning" in overlay ? overlay.layoutPositioning : void 0,
+          constraints: "constraints" in overlay ? overlay.constraints : void 0,
+          locked: overlay.locked,
+          willLockAfterFlush: true
+        });
+        const patternSelection = autoSelectLayoutPattern(layoutAdvice, target.id, MIN_PATTERN_CONFIDENCE);
+        const userSelection = layoutPatterns[target.id];
+        const adviceEntry = layoutAdvice == null ? void 0 : layoutAdvice.entries.find((entry) => entry.targetId === target.id);
+        const chosenPatternId = userSelection != null ? userSelection : patternSelection && !patternSelection.fallback ? (_e = patternSelection.patternId) != null ? _e : adviceEntry == null ? void 0 : adviceEntry.selectedId : void 0;
+        const layoutFallback = !userSelection && ((_f = patternSelection == null ? void 0 : patternSelection.fallback) != null ? _f : false);
+        const patternConfidence = chosenPatternId && (patternSelection == null ? void 0 : patternSelection.patternId) === chosenPatternId && !layoutFallback ? patternSelection.confidence : void 0;
+        const layoutSnapshot = captureLayoutSnapshot(variantNode);
+        if (chosenPatternId) {
+          variantNode.setPluginData(LAYOUT_PATTERN_KEY, chosenPatternId);
+          debugFixLog("layout pattern tagged on variant", {
+            targetId: target.id,
+            patternId: chosenPatternId,
+            confidence: patternConfidence
+          });
+          trackEvent("LAYOUT_ADVICE_APPLIED", {
+            targetId: target.id,
+            patternId: chosenPatternId,
+            confidence: patternConfidence,
+            fallback: layoutFallback,
+            runId
+          });
+        }
+        debugFixLog("layout output ready", {
+          targetId: target.id,
+          variantId: variantNode.id,
+          dimensions: `${variantNode.width}x${variantNode.height}`,
+          profile: layoutProfile,
+          safeAreaScale: safeAreaMetrics.scale,
+          adoptVerticalVariant: safeAreaMetrics.adoptVerticalVariant,
+          patternId: chosenPatternId != null ? chosenPatternId : null,
+          patternConfidence,
+          fallback: layoutFallback,
+          layout: layoutSnapshot
+        });
+        const warnings = collectWarnings(variantNode, target, safeAreaRatio);
+        if (layoutFallback) {
+          warnings.push({
+            code: "AI_LAYOUT_FALLBACK",
+            severity: "info",
+            message: "AI confidence was low, so a deterministic layout was used."
+          });
+        }
+        warnings.forEach((w) => {
+          trackEvent("QA_ALERT_DISPLAYED", {
+            targetId: target.id,
+            code: w.code,
+            severity: w.severity,
+            runId
+          });
+        });
+        variantNodes.push(variantNode);
+        trackEvent("VARIANT_GENERATED", {
+          targetId: target.id,
+          warningsCount: warnings.length,
+          hasLayoutPattern: Boolean(chosenPatternId),
+          safeAreaRatio,
+          runId
+        });
+        results.push({
+          targetId: target.id,
+          nodeId: variantNode.id,
+          warnings,
+          layoutPatternId: chosenPatternId,
+          layoutPatternLabel: (_g = resolvePatternLabel(layoutAdvice, target.id, chosenPatternId)) != null ? _g : patternSelection == null ? void 0 : patternSelection.patternLabel,
+          layoutPatternConfidence: patternConfidence,
+          layoutPatternFallback: layoutFallback
+        });
+      }
+      await lockOverlays(overlaysToLock);
+      layoutVariants(runContainer, variantNodes);
+      promoteVariantsToPage(stagingPage, runContainer, variantNodes);
+      exposeRun(stagingPage, variantNodes);
+      writeLastRun({
+        runId,
+        timestamp: Date.now(),
+        sourceNodeName: selectionFrame.name,
+        targetIds: targets.map((target) => target.id)
+      });
+      postToUI({
+        type: "generation-complete",
+        payload: {
+          runId,
+          results
+        }
+      });
+      postToUI({ type: "status", payload: { status: "idle" } });
+      figma.notify(`${PLUGIN_NAME}: Generated ${targets.length} variant${targets.length === 1 ? "" : "s"}.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unexpected error while generating variants.";
+      console.error(`${PLUGIN_NAME} generation failed`, error);
+      postToUI({ type: "error", payload: { message } });
+      postToUI({ type: "status", payload: { status: "idle" } });
+    }
   }
-  function readLastRun() {
-    const raw = figma.root.getPluginData(LAST_RUN_KEY) || figma.root.getPluginData(LEGACY_LAST_RUN_KEY);
-    if (!raw) {
-      return null;
+  async function handleSetAiSignals(signals) {
+    var _a, _b, _c, _d;
+    const frame = getSelectionFrame();
+    if (!frame) {
+      postToUI({ type: "error", payload: { message: "Select a single frame before applying AI signals." } });
+      return;
     }
     try {
-      const parsed = JSON.parse(raw);
-      if (!parsed || typeof parsed.runId !== "string") {
-        return null;
-      }
-      return parsed;
+      const serialized = JSON.stringify(signals);
+      frame.setPluginData(AI_SIGNALS_KEY, serialized);
+      debugFixLog("ai signals stored on selection", {
+        roleCount: (_b = (_a = signals.roles) == null ? void 0 : _a.length) != null ? _b : 0,
+        qaCount: (_d = (_c = signals.qa) == null ? void 0 : _c.length) != null ? _d : 0
+      });
+      figma.notify("AI signals applied to selection.");
+      const selectionState = createSelectionState(frame);
+      postToUI({ type: "selection-update", payload: selectionState });
     } catch (error) {
-      console.warn(`Failed to parse ${PLUGIN_NAME} last run plugin data`, error);
-      return null;
+      const message = error instanceof Error ? error.message : "Failed to apply AI signals.";
+      postToUI({ type: "error", payload: { message } });
     }
   }
+  function postToUI(message) {
+    figma.ui.postMessage(message);
+  }
+  setLogHandler((message) => {
+    postToUI({ type: "debug-log", payload: { message } });
+  });
   async function loadFontsForNode(node, cache) {
     if (node.type === "TEXT") {
       const characters = node.characters;
@@ -3821,74 +4308,19 @@
   function clamp3(value, min, max) {
     return Math.min(Math.max(value, min), max);
   }
-  function cloneValue(value) {
-    return JSON.parse(JSON.stringify(value));
-  }
-  async function ensureAiKeyLoaded() {
-    if (aiKeyLoaded) {
-      return;
-    }
-    const stored = await figma.clientStorage.getAsync(AI_KEY_STORAGE_KEY);
-    const legacyStored = await figma.clientStorage.getAsync(LEGACY_AI_KEY_STORAGE_KEY);
-    const activeValue = typeof stored === "string" && stored.trim().length > 0 ? stored : typeof legacyStored === "string" ? legacyStored : "";
-    const trimmed = typeof activeValue === "string" ? activeValue.trim() : "";
-    const migratedFromLegacy = trimmed.length > 0 && (!stored || typeof stored === "string" && stored.trim().length === 0) && typeof legacyStored === "string" && legacyStored.trim().length > 0;
-    if (migratedFromLegacy) {
-      await figma.clientStorage.setAsync(AI_KEY_STORAGE_KEY, trimmed);
-    }
-    if (trimmed.length > 0) {
-      cachedAiApiKey = trimmed;
-      aiUsingDefaultKey = HAS_DEFAULT_AI_KEY && trimmed === DEFAULT_AI_API_KEY;
-    } else if (HAS_DEFAULT_AI_KEY) {
-      cachedAiApiKey = DEFAULT_AI_API_KEY;
-      aiUsingDefaultKey = true;
-    } else {
-      cachedAiApiKey = null;
-      aiUsingDefaultKey = false;
-    }
-    aiKeyLoaded = true;
-    aiStatus = cachedAiApiKey ? "idle" : "missing-key";
-    aiStatusDetail = null;
-    debugFixLog("ai key source resolved", {
-      source: cachedAiApiKey ? aiUsingDefaultKey ? "default" : "user-provided" : "missing",
-      usingDefault: aiUsingDefaultKey
-    });
-  }
   async function handleSetApiKey(key) {
+    const snapshot = await persistApiKey(key);
     const trimmed = key.trim();
     if (trimmed.length === 0) {
-      await figma.clientStorage.deleteAsync(AI_KEY_STORAGE_KEY);
-      await figma.clientStorage.deleteAsync(LEGACY_AI_KEY_STORAGE_KEY);
-      if (HAS_DEFAULT_AI_KEY) {
-        cachedAiApiKey = DEFAULT_AI_API_KEY;
-        aiUsingDefaultKey = true;
-        aiStatus = "idle";
-        figma.notify("OpenAI key cleared. Using workspace default key.");
-      } else {
-        cachedAiApiKey = null;
-        aiUsingDefaultKey = false;
-        aiStatus = "missing-key";
-        figma.notify("OpenAI key cleared.");
-      }
-      aiStatusDetail = null;
+      figma.notify(snapshot.aiUsingDefaultKey ? "OpenAI key cleared. Using workspace default key." : "OpenAI key cleared.");
     } else {
-      await figma.clientStorage.setAsync(AI_KEY_STORAGE_KEY, trimmed);
-      await figma.clientStorage.deleteAsync(LEGACY_AI_KEY_STORAGE_KEY);
-      cachedAiApiKey = trimmed;
-      aiUsingDefaultKey = HAS_DEFAULT_AI_KEY && trimmed === DEFAULT_AI_API_KEY;
-      aiStatus = "idle";
-      aiStatusDetail = null;
       figma.notify(
-        aiUsingDefaultKey ? "OpenAI key saved. Matching workspace default key." : "OpenAI key saved locally."
+        snapshot.aiUsingDefaultKey ? "OpenAI key saved. Matching workspace default key." : "OpenAI key saved locally."
       );
     }
-    aiKeyLoaded = true;
     const frame = getSelectionFrame();
     const selectionState = createSelectionState(frame);
     postToUI({ type: "selection-update", payload: selectionState });
-    if (frame && cachedAiApiKey) {
-      void maybeRequestAiForFrame(frame, { force: true });
-    }
   }
   async function handleRefreshAiRequest() {
     await ensureAiKeyLoaded();
@@ -3898,22 +4330,40 @@
       postToUI({ type: "selection-update", payload: createSelectionState(null) });
       return;
     }
-    if (!cachedAiApiKey) {
-      aiStatus = "missing-key";
-      aiStatusDetail = null;
+    if (!getCachedAiApiKey()) {
+      setAiStatus("missing-key", null);
       figma.notify("Add an OpenAI API key to run AI insights.");
       postToUI({ type: "selection-update", payload: createSelectionState(frame) });
       return;
     }
     await maybeRequestAiForFrame(frame, { force: true });
   }
+  function resolveLiveFrame(frameId) {
+    try {
+      const node = figma.getNodeById(frameId);
+      if (node && node.type === "FRAME" && !node.removed) {
+        return node;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      debugFixLog("failed to resolve frame after ai request", {
+        frameId,
+        errorMessage: message
+      });
+    }
+    return null;
+  }
   async function maybeRequestAiForFrame(frame, options) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
-    if (!cachedAiApiKey) {
-      aiStatus = "missing-key";
-      aiStatusDetail = null;
+    const cachedKey = getCachedAiApiKey();
+    if (!cachedKey) {
+      setAiStatus("missing-key", null);
       const current = getSelectionFrame();
       postToUI({ type: "selection-update", payload: createSelectionState(current) });
+      return;
+    }
+    if (frame.removed) {
+      debugFixLog("skipping ai request because frame was removed before fetch", { frameId: frame.id });
       return;
     }
     const existingSignals = readAiSignals(frame);
@@ -3922,8 +4372,7 @@
       return;
     }
     const requestId = ++aiRequestToken;
-    aiStatus = "fetching";
-    aiStatusDetail = null;
+    setAiStatus("fetching", null);
     const currentSelection = getSelectionFrame();
     if (currentSelection && currentSelection.id === frame.id) {
       postToUI({ type: "selection-update", payload: createSelectionState(frame) });
@@ -3932,45 +4381,48 @@
     try {
       debugFixLog("requesting ai insights", { frameId: frame.id, nodeName: frame.name });
       trackEvent("AI_ANALYSIS_REQUESTED", { frameId: frame.id, requestId });
-      const result = await requestAiInsights(frame, cachedAiApiKey);
+      const result = await requestAiInsights(frame, cachedKey);
       if (!result) {
         encounteredError = true;
-        aiStatus = "error";
-        aiStatusDetail = "AI response missing structured layout data.";
-        trackEvent("AI_ANALYSIS_FAILED", { frameId: frame.id, reason: aiStatusDetail });
+        setAiStatus("error", "AI response missing structured layout data.");
+        trackEvent("AI_ANALYSIS_FAILED", { frameId: frame.id, reason: getAiState().aiStatusDetail });
+        return;
+      }
+      const targetFrame = resolveLiveFrame(frame.id);
+      if (!targetFrame) {
+        debugFixLog("ai insights skipped because frame no longer exists", { frameId: frame.id });
         return;
       }
       if (result.signals) {
-        frame.setPluginData(AI_SIGNALS_KEY, JSON.stringify(result.signals));
+        targetFrame.setPluginData(AI_SIGNALS_KEY, JSON.stringify(result.signals));
       } else {
-        frame.setPluginData(AI_SIGNALS_KEY, "");
+        targetFrame.setPluginData(AI_SIGNALS_KEY, "");
       }
       if (result.layoutAdvice) {
-        frame.setPluginData(LAYOUT_ADVICE_KEY, JSON.stringify(result.layoutAdvice));
+        targetFrame.setPluginData(LAYOUT_ADVICE_KEY, JSON.stringify(result.layoutAdvice));
       } else {
-        frame.setPluginData(LAYOUT_ADVICE_KEY, "");
+        targetFrame.setPluginData(LAYOUT_ADVICE_KEY, "");
       }
       debugFixLog("ai insights stored on frame", {
-        frameId: frame.id,
+        frameId: targetFrame.id,
         roles: (_b = (_a = result.signals) == null ? void 0 : _a.roles.length) != null ? _b : 0,
         layoutEntries: (_d = (_c = result.layoutAdvice) == null ? void 0 : _c.entries.length) != null ? _d : 0
       });
       trackEvent("AI_ANALYSIS_COMPLETED", {
-        frameId: frame.id,
+        frameId: targetFrame.id,
         roleCount: (_f = (_e = result.signals) == null ? void 0 : _e.roles.length) != null ? _f : 0,
         qaCount: (_h = (_g = result.signals) == null ? void 0 : _g.qa.length) != null ? _h : 0,
         layoutEntries: (_j = (_i = result.layoutAdvice) == null ? void 0 : _i.entries.length) != null ? _j : 0
       });
     } catch (error) {
       encounteredError = true;
-      aiStatus = "error";
-      aiStatusDetail = error instanceof Error ? error.message : String(error);
+      const detail = error instanceof Error ? error.message : String(error);
+      setAiStatus("error", detail);
       console.error(`${PLUGIN_NAME} AI request failed`, error);
-      trackEvent("AI_ANALYSIS_FAILED", { frameId: frame.id, reason: aiStatusDetail });
+      trackEvent("AI_ANALYSIS_FAILED", { frameId: frame.id, reason: detail });
     } finally {
       if (!encounteredError) {
-        aiStatus = cachedAiApiKey ? "idle" : "missing-key";
-        aiStatusDetail = null;
+        resetAiStatus();
       }
       if (requestId === aiRequestToken) {
         const current = getSelectionFrame();

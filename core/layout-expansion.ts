@@ -3,7 +3,7 @@ import type { AxisGaps, DistributedPadding } from "./padding-distribution.js";
 
 export interface LayoutExpansionContext {
   readonly totalExtra: number;
-  readonly safeInset: number;
+  readonly safeInset: number | { readonly start: number; readonly end: number };
   readonly gaps?: AxisGaps | null;
   readonly flowChildCount: number;
   readonly baseItemSpacing?: number;
@@ -21,13 +21,13 @@ export function planAutoLayoutExpansion(context: LayoutExpansionContext): AxisEx
     return { start: 0, end: 0, interior: 0 };
   }
 
-  const requestedInset = Math.max(0, context.safeInset);
-  const insetPerSide = Math.min(requestedInset, totalExtra / 2);
+  const requestedInset = normaliseSafeInset(context.safeInset);
+  const appliedSafe = applySafeInsetBudget(requestedInset, totalExtra);
   const gaps = normaliseGaps(context.gaps);
   const flowChildCount = Math.max(0, context.flowChildCount);
   const baseItemSpacing = Math.max(0, context.baseItemSpacing ?? 0);
 
-  const leftover = Math.max(totalExtra - insetPerSide * 2, 0);
+  const leftover = Math.max(totalExtra - appliedSafe.start - appliedSafe.end, 0);
   const canReflow = context.allowInteriorExpansion !== false && flowChildCount >= 2 && leftover > 0;
 
   let baseInteriorWeight = 0;
@@ -44,10 +44,10 @@ export function planAutoLayoutExpansion(context: LayoutExpansionContext): AxisEx
   const interiorWeight = clamp(baseInteriorWeight * symmetryMultiplier, 0, 0.9);
   const interiorExtra = round(leftover * interiorWeight);
 
-  const edgeBudget = Math.max(totalExtra - interiorExtra, insetPerSide * 2);
+  const edgeBudget = round(totalExtra - interiorExtra);
   const distributed = distributePadding({
     totalExtra: edgeBudget,
-    safeInset: insetPerSide,
+    safeInset: appliedSafe,
     gaps: gaps ?? null,
     focus: context.focalRatio
   });
@@ -85,4 +85,30 @@ function round(value: number): number {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
+}
+
+function normaliseSafeInset(value: number | { readonly start: number; readonly end: number }): DistributedPadding {
+  if (typeof value === "number") {
+    const inset = Math.max(0, value);
+    return { start: inset, end: inset };
+  }
+  return {
+    start: Math.max(0, value.start),
+    end: Math.max(0, value.end)
+  };
+}
+
+function applySafeInsetBudget(requested: DistributedPadding, totalExtra: number): DistributedPadding {
+  const totalRequested = requested.start + requested.end;
+  if (totalRequested === 0 || totalExtra === 0) {
+    return { start: 0, end: 0 };
+  }
+  if (totalExtra >= totalRequested) {
+    return requested;
+  }
+  const scale = totalExtra / totalRequested;
+  return {
+    start: requested.start * scale,
+    end: requested.end * scale
+  };
 }

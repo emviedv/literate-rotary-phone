@@ -10,6 +10,20 @@ const defaultAiKey =
   process.env.BIBLIO_DEFAULT_OPENAI_KEY ??
   "";
 
+const envDebug = process.env.BIBLIOSCALE_DEBUG_FIX ?? process.env.DEBUG_FIX;
+let debugFixDefault;
+if (envDebug) {
+  debugFixDefault = envDebug === "1" ? "1" : "0";
+} else {
+  debugFixDefault = watchMode ? "1" : "0";
+}
+
+const debugBanner = `
+if (typeof globalThis !== "undefined" && typeof globalThis.DEBUG_FIX === "undefined") {
+  globalThis.DEBUG_FIX = ${JSON.stringify(debugFixDefault)};
+}
+`;
+
 const buildOptions = {
   bundle: true,
   entryPoints: ["core/main.ts"],
@@ -23,8 +37,12 @@ const buildOptions = {
   color: true,
   treeShaking: true,
   mainFields: ["module", "main"],
+  banner: {
+    js: debugBanner
+  },
   define: {
-    __BIBLIOSCALE_DEFAULT_AI_KEY__: JSON.stringify(defaultAiKey)
+    __BIBLIOSCALE_DEFAULT_AI_KEY__: JSON.stringify(defaultAiKey),
+    "process.env.DEBUG_FIX": JSON.stringify(debugFixDefault)
   }
 };
 

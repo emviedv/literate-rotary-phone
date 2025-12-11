@@ -1,5 +1,6 @@
 import { ROLE_KEY } from "./plugin-constants.js";
 import type { VariantTarget } from "../types/targets.js";
+import { resolveSafeAreaInsets } from "./safe-area.js";
 
 type OverlayNode = Pick<FrameNode, "x" | "y"> &
   Partial<Pick<FrameNode, "layoutPositioning" | "constraints" | "locked">>;
@@ -78,42 +79,18 @@ export function createQaOverlay(target: VariantTarget, safeAreaRatio: number): F
   overlay.clipsContent = false;
   overlay.setPluginData(ROLE_KEY, "overlay");
 
-  if (target.id === "youtube-cover") {
-    // YouTube Mobile/Desktop Safe Area (1546x423 centered)
-    const safeWidth = 1546;
-    const safeHeight = 423;
-    const insetX = (target.width - safeWidth) / 2;
-    const insetY = (target.height - safeHeight) / 2;
-    
-    appendSafeRect(overlay, insetX, insetY, safeWidth, safeHeight, "Text & Logo Safe Area");
-    
-    // Optional: Tablet Safe Area (1855x423)
-    // appendSafeRect(overlay, (target.width - 1855) / 2, insetY, 1855, safeHeight, "Tablet Safe Area", { r: 0.4, g: 0.4, b: 0.9 });
-    
-  } else if (target.id === "tiktok-vertical") {
-    // TikTok Safe Area approx
-    // Top: ~108px (system bar + tabs)
-    // Bottom: ~320px (caption + nav)
-    // Right: ~120px (actions)
-    // Left: ~44px
-    const top = 108;
-    const bottom = 320;
-    const left = 44;
-    const right = 120;
-    const safeWidth = target.width - left - right;
-    const safeHeight = target.height - top - bottom;
-    
-    appendSafeRect(overlay, left, top, safeWidth, safeHeight, "Content Safe Zone");
-    
-  } else {
-    // Standard percentage-based safe area
-    const insetX = target.width * safeAreaRatio;
-    const insetY = target.height * safeAreaRatio;
-    const safeWidth = target.width - insetX * 2;
-    const safeHeight = target.height - insetY * 2;
-    
-    appendSafeRect(overlay, insetX, insetY, safeWidth, safeHeight, "Safe Area");
-  }
+  const insets = resolveSafeAreaInsets(target, safeAreaRatio);
+  const safeWidth = target.width - insets.left - insets.right;
+  const safeHeight = target.height - insets.top - insets.bottom;
+
+  const label =
+    target.id === "youtube-cover"
+      ? "Text & Logo Safe Area"
+      : target.id === "tiktok-vertical"
+        ? "Content Safe Zone"
+        : "Safe Area";
+
+  appendSafeRect(overlay, insets.left, insets.top, safeWidth, safeHeight, label);
 
   return overlay;
 }

@@ -10,7 +10,7 @@ export interface DistributedPadding {
 
 export interface DistributePaddingOptions {
   readonly totalExtra: number;
-  readonly safeInset: number;
+  readonly safeInset: number | { readonly start: number; readonly end: number };
   readonly gaps?: AxisGaps | null;
   readonly focus?: number | null;
 }
@@ -22,14 +22,12 @@ export interface DistributePaddingOptions {
  */
 export function distributePadding(options: DistributePaddingOptions): DistributedPadding {
   const totalExtra = Math.max(0, options.totalExtra);
-  const requestedInset = Math.max(0, options.safeInset);
-
-  if (totalExtra === 0) {
-    return { start: 0, end: 0 };
-  }
-
-  const insetPerSide = Math.min(requestedInset, totalExtra / 2);
-  const remaining = Math.max(totalExtra - insetPerSide * 2, 0);
+  const requested = normaliseSafeInset(options.safeInset);
+  const requestedTotal = requested.start + requested.end;
+  const scale = requestedTotal > 0 && totalExtra < requestedTotal ? totalExtra / requestedTotal : 1;
+  const appliedStart = requested.start * scale;
+  const appliedEnd = requested.end * scale;
+  const remaining = Math.max(totalExtra - appliedStart - appliedEnd, 0);
 
   let startShare = 0.5;
 
@@ -50,8 +48,19 @@ export function distributePadding(options: DistributePaddingOptions): Distribute
   }
 
   return {
-    start: insetPerSide + remaining * startShare,
-    end: insetPerSide + remaining * (1 - startShare)
+    start: appliedStart + remaining * startShare,
+    end: appliedEnd + remaining * (1 - startShare)
+  };
+}
+
+function normaliseSafeInset(value: number | { readonly start: number; readonly end: number }): DistributedPadding {
+  if (typeof value === "number") {
+    const inset = Math.max(0, value);
+    return { start: inset, end: inset };
+  }
+  return {
+    start: Math.max(0, value.start),
+    end: Math.max(0, value.end)
   };
 }
 

@@ -6,6 +6,7 @@
   "scripts": {
     "build": "node build.mjs",
     "watch": "node build.mjs --watch",
+    "dev": "npm run watch",
     "clean": "rm -rf dist build-tests",
     "size": "node -e \"const fs=require('fs');const path=require('path');let d=process.cwd();let f=null;while(true){const p=path.join(d,'tools','loc-top20.js');if(fs.existsSync(p)){f=p;break;}const up=path.dirname(d);if(up===d)break;d=up;}if(!f){console.error('tools/loc-top20.js not found');process.exit(1);}require(f);\"",
     "typecheck": "tsc --noEmit",

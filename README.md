@@ -25,6 +25,7 @@ BiblioScale automates the transformation of marketing frames into multiple Figma
 ```bash
 npm install          # generates node_modules and lockfile (requires registry access)
 npm run build        # emits dist/main.js
+npm run dev          # rebuilds on changes for local development
 ```
 
 > **Note:** Network access is required for `npm install`. If the sandbox blocks it, request approval or install dependencies locally before running the build script.

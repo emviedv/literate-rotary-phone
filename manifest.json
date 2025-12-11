@@ -1,5 +1,5 @@
 {
-  "name": "BiblioScale",
+  "name": "BiblioScale: Social Media Resizer & Ad Generator",
   "id": "biblioscale",
   "api": "1.0.0",
   "main": "dist/main.js",

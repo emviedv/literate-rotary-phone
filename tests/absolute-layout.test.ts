@@ -54,6 +54,29 @@ testCase("stacks horizontally arranged absolute children for vertical targets", 
   );
 });
 
+testCase("stacks horizontal siblings for TikTok safe bounds even after cropping", () => {
+  const children: Child[] = [
+    { id: "logo", x: 120, y: 180, width: 360, height: 360 },
+    { id: "title", x: 540, y: 180, width: 360, height: 360 }
+  ];
+
+  const plan = planAbsoluteChildPositions({
+    profile: "vertical",
+    safeBounds: { x: 44, y: 108, width: 916, height: 1492 },
+    targetAspectRatio: 1080 / 1920,
+    children
+  });
+
+  const [first, second] = plan;
+
+  assert(plan.length === children.length, "should plan all children");
+  assert(first.y < second.y, "extreme vertical targets should reflow side-by-side items into a stack");
+  assert(
+    Math.abs(first.x + children[0].width / 2 - (44 + 916 / 2)) < 5,
+    "first child should be centered in the safe area"
+  );
+});
+
 testCase("preserves layout when target profile is horizontal", () => {
   const children: Child[] = [
     { id: "left", x: 120, y: 100, width: 400, height: 360 },
@@ -68,4 +91,22 @@ testCase("preserves layout when target profile is horizontal", () => {
 
   assert(plan[0].x === children[0].x, "horizontal profile should keep x positions untouched");
   assert(plan[1].y === children[1].y, "horizontal profile should keep y positions untouched");
+});
+
+testCase("always stacks for extreme vertical targets even if not wide", () => {
+  const children: Child[] = [
+    { id: "item1", x: 0, y: 0, width: 100, height: 300 },
+    { id: "item2", x: 200, y: 0, width: 100, height: 300 }
+  ];
+
+  const plan = planAbsoluteChildPositions({
+    profile: "vertical",
+    safeBounds: { x: 0, y: 0, width: 1080, height: 1920 },
+    targetAspectRatio: 1080 / 1920,
+    children
+  });
+
+  const [first, second] = plan;
+
+  assert(first.y < second.y, "should stack children vertically for extreme vertical targets regardless of original layout width");
 });
