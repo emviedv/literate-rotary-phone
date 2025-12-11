@@ -66,7 +66,8 @@ export type ToUIMessage =
   | { readonly type: "selection-update"; readonly payload: SelectionState }
   | { readonly type: "status"; readonly payload: { readonly status: "running" | "idle" } }
   | { readonly type: "generation-complete"; readonly payload: GenerationCompletePayload }
-  | { readonly type: "error"; readonly payload: { readonly message: string } };
+  | { readonly type: "error"; readonly payload: { readonly message: string } }
+  | { readonly type: "debug-log"; readonly payload: { readonly message: string } };
 
 export type ToCoreMessage =
   | { readonly type: "request-initial-state" }

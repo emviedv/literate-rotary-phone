@@ -85,16 +85,19 @@ export function computeVerticalSpacing(input: {
   const gaps = Math.max(input.flowChildCount - 1, 1);
   const interiorPerGap = Math.max(input.interior, 0) / gaps;
 
-  // For layouts with lots of children, limit individual gap expansion
-  // to prevent excessive spacing
-  const maxGapExpansion = input.baseSpacing * 3; // Don't expand gaps more than 3x original
-  const clampedAddition = Math.min(interiorPerGap, maxGapExpansion);
+  // Allow vertical stacks to consume more of the interior when tall targets add slack.
+  const softCap = input.baseSpacing * 3;
+  const extendedCap = input.baseSpacing * 12;
+  const clampedAddition =
+    interiorPerGap > softCap * 1.5
+      ? Math.min(interiorPerGap * 0.75, extendedCap)
+      : Math.min(interiorPerGap, softCap);
 
   // For layouts with very few children and lots of space,
   // distribute more conservatively to avoid awkward spacing
   if (input.flowChildCount <= 3 && interiorPerGap > input.baseSpacing * 2) {
-    // Use only 60% of available interior space for very sparse layouts
-    return roundSpacing(input.baseSpacing + clampedAddition * 0.6);
+    // Use a softened portion of interior space for sparse layouts
+    return roundSpacing(input.baseSpacing + clampedAddition * 0.8);
   }
 
   return roundSpacing(input.baseSpacing + clampedAddition);
@@ -141,9 +144,15 @@ export function resolveVerticalLayoutWrap(current: LayoutWrap): LayoutWrap {
  */
 export function shouldExpandAbsoluteChildren(
   rootLayoutMode: FrameNode["layoutMode"] | null | undefined,
-  adoptVerticalVariant: boolean
+  adoptVerticalVariant: boolean,
+  profile: LayoutProfile
 ): boolean {
   if (adoptVerticalVariant) {
+    return true;
+  }
+  // For vertical targets, always expand children if the root isn't already a vertical auto layout.
+  // This handles both `NONE` and `HORIZONTAL` source frames.
+  if (profile === "vertical" && rootLayoutMode !== "VERTICAL") {
     return true;
   }
   if (!rootLayoutMode || rootLayoutMode === "NONE") {

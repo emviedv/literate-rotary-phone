@@ -168,3 +168,64 @@ testCase("image children do not grow to fill width in ultra-wide targets", () =>
     "image children should not grow across the main axis when preserving aspect ratio"
   );
 });
+
+testCase("adopts vertical flow using source snapshot hints and top-aligns stack", () => {
+  const frame = createFrame({
+    layoutMode: "NONE",
+    width: 1200,
+    height: 800
+  });
+
+  const plan = createLayoutAdaptationPlan(
+    frame,
+    { width: 1080, height: 1920 },
+    "vertical",
+    1,
+    { sourceLayoutMode: "HORIZONTAL", sourceSize: { width: 1200, height: 800 }, adoptVerticalVariant: true }
+  );
+
+  assert(plan.layoutMode === "VERTICAL", "layout mode should switch to VERTICAL for tall targets");
+  assert(plan.primaryAxisAlignItems === "MIN", "vertical stacks should top-align to hug the safe area");
+});
+
+testCase("converts horizontal moderate vertical targets when adoptVerticalVariant is true", () => {
+  const frame = createFrame({
+    layoutMode: "HORIZONTAL",
+    width: 1000,
+    height: 200,
+    children: [createChild(), createChild()]
+  });
+
+  const plan = createLayoutAdaptationPlan(
+    frame,
+    { width: 1080, height: 1350 }, // Moderate vertical
+    "vertical",
+    1,
+    { sourceLayoutMode: "HORIZONTAL", adoptVerticalVariant: true }
+  );
+
+  assert(plan.layoutMode === "VERTICAL", "should respect adoptVerticalVariant flag even for moderate vertical targets");
+});
+
+testCase("should not stretch non-image children in vertical layouts", () => {
+  const shapeChild = createChild({
+    id: "shape",
+    type: "RECTANGLE",
+  });
+
+  const frame = createFrame({
+    layoutMode: "HORIZONTAL",
+    children: [shapeChild]
+  });
+
+  const plan = createLayoutAdaptationPlan(
+    frame,
+    { width: 1080, height: 1920 },
+    "vertical",
+    1,
+    { adoptVerticalVariant: true }
+  );
+  
+  const shapeAdaptation = plan.childAdaptations.get("shape");
+  assert(shapeAdaptation?.layoutAlign === "INHERIT", "non-image children should not be stretched by default");
+});

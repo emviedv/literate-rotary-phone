@@ -1,4 +1,5 @@
 import { debugAutoLayoutLog } from "./debug.js";
+import { resolveVerticalAlignItems } from "./layout-profile.js";
 
 /**
  * Auto Layout Adapter - Intelligently restructures auto layouts for different target formats
@@ -41,6 +42,7 @@ type LayoutContext = {
     childCount: number;
     hasText: boolean;
     hasImages: boolean;
+    itemSpacing: number | null;
   };
   targetProfile: {
     type: "horizontal" | "vertical" | "square";
@@ -49,6 +51,8 @@ type LayoutContext = {
     aspectRatio: number;
   };
   scale: number;
+  adoptVerticalVariant: boolean;
+  sourceItemSpacing?: number | null;
 };
 
 /**
@@ -58,19 +62,29 @@ export function createLayoutAdaptationPlan(
   frame: FrameNode,
   target: { width: number; height: number },
   profile: "horizontal" | "vertical" | "square",
-  scale: number
+  scale: number,
+  options?: {
+    readonly sourceLayoutMode?: "HORIZONTAL" | "VERTICAL" | "NONE";
+    readonly sourceSize?: { readonly width: number; readonly height: number };
+    readonly sourceFlowChildCount?: number;
+    readonly adoptVerticalVariant?: boolean;
+    readonly sourceItemSpacing?: number | null;
+  }
 ): LayoutAdaptationPlan {
   const sourceLayoutMode: LayoutContext["sourceLayout"]["mode"] =
-    frame.layoutMode === "GRID" ? "NONE" : frame.layoutMode;
+    options?.sourceLayoutMode ??
+    (frame.layoutMode === "GRID" ? "NONE" : frame.layoutMode);
 
   const context: LayoutContext = {
     sourceLayout: {
       mode: sourceLayoutMode,
-      width: frame.width,
-      height: frame.height,
-      childCount: frame.children.filter(c => c.visible).length,
+      width: options?.sourceSize?.width ?? frame.width,
+      height: options?.sourceSize?.height ?? frame.height,
+      childCount:
+        options?.sourceFlowChildCount ?? frame.children.filter(c => c.visible).length,
       hasText: hasTextChildren(frame),
-      hasImages: hasImageChildren(frame)
+      hasImages: hasImageChildren(frame),
+      itemSpacing: options?.sourceItemSpacing ?? (frame.layoutMode !== "NONE" ? frame.itemSpacing : null)
     },
     targetProfile: {
       type: profile,
@@ -78,7 +92,8 @@ export function createLayoutAdaptationPlan(
       height: target.height,
       aspectRatio: target.width / target.height
     },
-    scale
+    scale,
+    adoptVerticalVariant: options?.adoptVerticalVariant ?? false
   };
 
   // Determine the best layout mode for the target
@@ -102,7 +117,7 @@ export function createLayoutAdaptationPlan(
   // Create child-specific adaptations
   const childAdaptations = createChildAdaptations(frame, newLayoutMode, context);
 
-  return {
+  const plan: LayoutAdaptationPlan = {
     layoutMode: newLayoutMode,
     primaryAxisSizingMode: sizingModes.primary,
     counterAxisSizingMode: sizingModes.counter,
@@ -114,6 +129,35 @@ export function createLayoutAdaptationPlan(
     paddingAdjustments: padding,
     childAdaptations
   };
+
+  debugAutoLayoutLog("layout adaptation plan summary", {
+    targetType: context.targetProfile.type,
+    adoptVerticalVariant: context.adoptVerticalVariant,
+    targetSize: `${context.targetProfile.width}x${context.targetProfile.height}`,
+    sourceLayout: {
+      mode: context.sourceLayout.mode,
+      width: context.sourceLayout.width,
+      height: context.sourceLayout.height,
+      childCount: context.sourceLayout.childCount,
+      itemSpacing: context.sourceLayout.itemSpacing
+    },
+    scale: context.scale,
+    resolvedLayoutMode: plan.layoutMode,
+    alignments: {
+      primary: plan.primaryAxisAlignItems,
+      counter: plan.counterAxisAlignItems
+    },
+    sizing: {
+      primary: plan.primaryAxisSizingMode,
+      counter: plan.counterAxisSizingMode
+    },
+    layoutWrap: plan.layoutWrap,
+    itemSpacing: plan.itemSpacing,
+    paddingAdjustments: plan.paddingAdjustments,
+    childAdaptations: { count: childAdaptations.size }
+  });
+
+  return plan;
 }
 
 /**
@@ -122,58 +166,77 @@ export function createLayoutAdaptationPlan(
 function determineOptimalLayoutMode(context: LayoutContext): "HORIZONTAL" | "VERTICAL" | "NONE" {
   const { sourceLayout, targetProfile } = context;
 
+  if (context.adoptVerticalVariant && targetProfile.type === "vertical") {
+    debugAutoLayoutLog("determining optimal layout: adopting vertical variant", { context });
+    return "VERTICAL";
+  }
+
   // If source has no auto layout, determine best mode for target
   if (sourceLayout.mode === "NONE") {
     if (targetProfile.type === "vertical" && targetProfile.aspectRatio < 0.6) {
+      debugAutoLayoutLog("determining optimal layout: source is NONE, target is extreme vertical", { context });
       return "VERTICAL";
     }
     if (targetProfile.type === "horizontal" && targetProfile.aspectRatio > 1.5) {
+      debugAutoLayoutLog("determining optimal layout: source is NONE, target is extreme horizontal", { context });
       return "HORIZONTAL";
     }
+    debugAutoLayoutLog("determining optimal layout: source is NONE, target is square-ish, keeping NONE", { context });
     return "NONE"; // Keep as is for square-ish targets
   }
 
   // For extreme vertical targets (like TikTok)
   if (targetProfile.type === "vertical" && targetProfile.aspectRatio < 0.57) {
-    // Convert horizontal to vertical for better fill
     if (sourceLayout.mode === "HORIZONTAL" && sourceLayout.childCount >= 2) {
+      debugAutoLayoutLog("determining optimal layout: converting horizontal to vertical for extreme vertical target", {
+        context
+      });
       return "VERTICAL";
     }
-    return sourceLayout.mode === "VERTICAL" ? "VERTICAL" : "VERTICAL";
+    debugAutoLayoutLog("determining optimal layout: keeping vertical for extreme vertical target", { context });
+    return "VERTICAL";
   }
 
   // For extreme horizontal targets (like ultra-wide banners)
   if (targetProfile.type === "horizontal" && targetProfile.aspectRatio > 2.5) {
-    // Convert vertical to horizontal for better fill
     if (sourceLayout.mode === "VERTICAL" && sourceLayout.childCount >= 2) {
+      debugAutoLayoutLog("determining optimal layout: converting vertical to horizontal for extreme horizontal target", {
+        context
+      });
       return "HORIZONTAL";
     }
-    return sourceLayout.mode === "HORIZONTAL" ? "HORIZONTAL" : "HORIZONTAL";
+    debugAutoLayoutLog("determining optimal layout: keeping horizontal for extreme horizontal target", { context });
+    return "HORIZONTAL";
   }
 
   // For moderate aspect ratios, adapt based on child count and content
   if (targetProfile.type === "vertical") {
-    // Prefer vertical for tall targets with many children
     if (sourceLayout.childCount > 3) {
+      debugAutoLayoutLog("determining optimal layout: many children, switching to vertical", { context });
       return "VERTICAL";
     }
-    // For 2-3 children, prefer keeping the source layout to avoid jumping
     if (sourceLayout.mode === "HORIZONTAL") {
+      debugAutoLayoutLog("determining optimal layout: preserving horizontal for moderate vertical target with few children", {
+        context
+      });
       return "HORIZONTAL";
     }
+    debugAutoLayoutLog("determining optimal layout: default to vertical for moderate vertical target", { context });
     return "VERTICAL";
   }
 
   if (targetProfile.type === "horizontal") {
-    // Prefer horizontal for wide targets
     if (sourceLayout.childCount > 3 && sourceLayout.mode === "VERTICAL") {
-      // Consider converting to horizontal wrap for many children
+      debugAutoLayoutLog("determining optimal layout: many children, switching to horizontal for wide target", {
+        context
+      });
       return "HORIZONTAL";
     }
-    return sourceLayout.mode === "VERTICAL" ? "VERTICAL" : sourceLayout.mode;
+    debugAutoLayoutLog("determining optimal layout: keeping source mode for horizontal target", { context });
+    return sourceLayout.mode;
   }
 
-  // For square targets, keep original or use best fit
+  debugAutoLayoutLog("determining optimal layout: fallback, keeping source mode for square target", { context });
   return sourceLayout.mode;
 }
 
@@ -220,8 +283,9 @@ function determineAlignments(
 
   // For vertical layouts in tall targets
   if (layoutMode === "VERTICAL" && context.targetProfile.type === "vertical") {
+    const interiorEstimate = Math.max(context.targetProfile.height - context.sourceLayout.height * context.scale, 0);
     return {
-      primary: context.sourceLayout.childCount <= 3 ? "SPACE_BETWEEN" : "MIN",
+      primary: resolveVerticalAlignItems("CENTER", { interior: interiorEstimate }),
       counter: "CENTER"
     };
   }
@@ -280,8 +344,25 @@ function calculateSpacing(
     return { item: 0 };
   }
 
-  const baseSpacing = frame.layoutMode !== "NONE" ? frame.itemSpacing : 16;
-  const scaledSpacing = baseSpacing * context.scale;
+  const baseSpacingRaw =
+    context.sourceLayout.itemSpacing != null
+      ? context.sourceLayout.itemSpacing
+      : frame.layoutMode !== "NONE"
+        ? frame.itemSpacing
+        : 16;
+  const scaledSpacing = baseSpacingRaw * context.scale;
+
+  debugAutoLayoutLog("spacing input resolved", {
+    targetType: context.targetProfile.type,
+    targetWidth: context.targetProfile.width,
+    targetHeight: context.targetProfile.height,
+    newLayoutMode,
+    sourceLayoutMode: context.sourceLayout.mode,
+    sourceChildCount: context.sourceLayout.childCount,
+    baseSpacing: baseSpacingRaw,
+    scaledSpacing,
+    scale: context.scale
+  });
 
   // Adjust spacing based on target format
   if (context.targetProfile.type === "vertical" && newLayoutMode === "VERTICAL") {
@@ -289,10 +370,18 @@ function calculateSpacing(
     const extraSpace = context.targetProfile.height - (context.sourceLayout.height * context.scale);
     const gaps = Math.max(context.sourceLayout.childCount - 1, 1);
     const additionalSpacing = Math.max(0, extraSpace / gaps * 0.3); // Use 30% of extra space
-    return {
+    const result = {
       item: scaledSpacing + additionalSpacing,
       counter: frame.layoutWrap === "WRAP" ? scaledSpacing : undefined
     };
+    debugAutoLayoutLog("spacing calculated for vertical target", {
+      extraSpace,
+      gaps,
+      additionalSpacing,
+      itemSpacing: result.item,
+      counterAxisSpacing: result.counter
+    });
+    return result;
   }
 
   if (context.targetProfile.type === "horizontal" && newLayoutMode === "HORIZONTAL") {
@@ -300,13 +389,26 @@ function calculateSpacing(
     const extraSpace = context.targetProfile.width - (context.sourceLayout.width * context.scale);
     const gaps = Math.max(context.sourceLayout.childCount - 1, 1);
     const additionalSpacing = Math.max(0, extraSpace / gaps * 0.3);
-    return {
+    const result = {
       item: scaledSpacing + additionalSpacing,
       counter: frame.layoutWrap === "WRAP" ? scaledSpacing : undefined
     };
+    debugAutoLayoutLog("spacing calculated for horizontal target", {
+      extraSpace,
+      gaps,
+      additionalSpacing,
+      itemSpacing: result.item,
+      counterAxisSpacing: result.counter
+    });
+    return result;
   }
 
-  return { item: scaledSpacing };
+  const result: { item: number; counter?: number } = { item: scaledSpacing };
+  debugAutoLayoutLog("spacing calculated for mixed target", {
+    itemSpacing: result.item,
+    counterAxisSpacing: result.counter
+  });
+  return result;
 }
 
 /**
@@ -392,24 +494,15 @@ function createChildAdaptations(
     if (frame.layoutMode !== newLayoutMode && newLayoutMode !== "NONE") {
       // When converting to vertical, make children stretch horizontally
       if (newLayoutMode === "VERTICAL") {
-        adaptation.layoutAlign = containsImage ? "INHERIT" : "STRETCH";
+        // Only stretch text boxes by default; other elements should maintain their intrinsic size.
+        adaptation.layoutAlign = (containsImage || child.type !== 'TEXT') ? "INHERIT" : "STRETCH";
         adaptation.layoutGrow = 0;
 
         // Set max width for text elements to prevent over-stretching
-        if (!containsImage && child.type === "TEXT") {
+        if (child.type === "TEXT") {
           adaptation.maxWidth = context.targetProfile.width * 0.8;
         }
-
-        if (containsImage) {
-          debugAutoLayoutLog("preserving media aspect ratio in vertical flow", {
-            childId: child.id,
-            childType: child.type,
-            targetWidth: context.targetProfile.width,
-            targetHeight: context.targetProfile.height
-          });
-        }
       }
-
       // When converting to horizontal, control heights
       if (newLayoutMode === "HORIZONTAL") {
         adaptation.layoutAlign = "INHERIT";

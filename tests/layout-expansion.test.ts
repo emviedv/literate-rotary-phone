@@ -54,3 +54,16 @@ testCase("falls back to edge padding when auto layout lacks reflow capacity", ()
   assertAlmostEqual(plan.interior, 0, "without flow children there is no spacing to inflate");
   assertAlmostEqual(plan.start + plan.end, 400, "all extra width stays on the edges");
 });
+
+testCase("respects asymmetric safe insets while keeping interior expansion", () => {
+  const plan = planAutoLayoutExpansion({
+    totalExtra: 700,
+    safeInset: { start: 108, end: 320 },
+    gaps: { start: 40, end: 120 },
+    flowChildCount: 3,
+    baseItemSpacing: 24
+  });
+
+  assertGreaterThan(plan.end, plan.start, "end inset should remain larger when requested");
+  assertGreaterThan(plan.interior, 0, "interior spacing should still receive slack");
+});

@@ -85,3 +85,22 @@ testCase("handles single variant with width wider than row budget by placing alo
   assertEqual(result.bounds.width, 3696, "width uses variant width even if larger than budget");
   assertEqual(result.bounds.height, 496, "height accounts for margin on both axes");
 });
+
+testCase("stacks variants vertically when direction is vertical", () => {
+  const sizes = [
+    { width: 800, height: 600 },
+    { width: 700, height: 500 }
+  ];
+
+  const result = computeVariantLayout(sizes, { ...defaultOptions, direction: 'vertical' });
+
+  const expectedPositions: Position[] = [
+    { x: 48, y: 48 },
+    { x: 48, y: 808 } // 48 (margin) + 600 (height1) + 160 (gap)
+  ];
+
+  assertDeepEqual(result.positions, expectedPositions, "variants should stack top-to-bottom");
+
+  assertEqual(result.bounds.width, 896, "total width is max variant width plus margin");
+  assertEqual(result.bounds.height, 1356, "total height is sum of heights, gaps, and margins");
+});

@@ -4,6 +4,13 @@ declare const figma: PluginAPI | undefined;
 declare const process: { env?: Record<string, string | undefined> } | undefined;
 
 type DebugContext = Record<string, unknown>;
+type LogHandler = (message: string) => void;
+
+let logHandler: LogHandler | null = null;
+
+export function setLogHandler(handler: LogHandler): void {
+  logHandler = handler;
+}
 
 function computeDebugFlag(): boolean {
   if (typeof process !== "undefined" && process?.env?.DEBUG_FIX === "1") {
@@ -48,12 +55,19 @@ function log(prefix: string, message: string, context?: DebugContext): void {
     return;
   }
 
+  const logMessage = `${prefix} ${message}`;
   if (context) {
-    console.log(prefix, message, context);
+    console.log(logMessage, context);
+    if (logHandler) {
+      logHandler(`${logMessage}\n${JSON.stringify(context, null, 2)}`);
+    }
     return;
   }
 
-  console.log(prefix, message);
+  console.log(logMessage);
+  if (logHandler) {
+    logHandler(logMessage);
+  }
 }
 
 export function debugFixLog(message: string, context?: DebugContext): void {

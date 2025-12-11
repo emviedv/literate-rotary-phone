@@ -207,6 +207,9 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
       background: rgba(250, 176, 5, 0.12);
       color: #7a3b00;
     }
+    .warning.warn {
+      color: #ffffff;
+    }
     .warning.info {
       background: rgba(16, 156, 241, 0.12);
       color: #0f3b78;
@@ -339,7 +342,12 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
           <h2>AI signals</h2>
           <p id="aiStatusText" class="status">AI analysis is built into this plugin. Select a frame to analyze.</p>
         </div>
-        <button id="refreshAiButton" class="secondary">Run AI analysis</button>
+        <div class="button-row">
+          <button id="refreshAiButton" class="secondary">Run AI analysis</button>
+          <button id="copySelectionButton" class="secondary" title="Copy current selection JSON for debugging.">
+            Copy selection JSON
+          </button>
+        </div>
       </div>
       <div id="aiEmpty" class="status">No AI signals found on selection.</div>
       <div id="aiRoles" class="ai-row" role="list"></div>
@@ -400,6 +408,11 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
       <h2>Results</h2>
       <div id="resultsContainer" style="display: flex; flex-direction: column; gap: 8px;"></div>
     </section>
+
+    <section class="section" id="debugSection" hidden>
+      <h2>Debug Log</h2>
+      <pre id="debugLogOutput" style="max-height: 200px; overflow-y: auto; background: var(--figma-color-bg-tertiary, #eee); color: var(--figma-color-text-secondary, #333); padding: 8px; border-radius: 4px; white-space: pre-wrap; word-wrap: break-word;"></pre>
+    </section>
   </main>
 
   <script>
@@ -415,6 +428,7 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
       const statusMessage = document.getElementById("statusMessage");
       const aiStatusText = document.getElementById("aiStatusText");
       const refreshAiButton = document.getElementById("refreshAiButton");
+      const copySelectionButton = document.getElementById("copySelectionButton");
       const lastRunSection = document.getElementById("lastRunSection");
       const lastRunContent = document.getElementById("lastRunContent");
       const resultsSection = document.getElementById("resultsSection");
@@ -428,6 +442,9 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
       const layoutStatus = document.getElementById("layoutStatus");
       const layoutContainer = document.getElementById("layoutContainer");
 
+      const debugSection = document.getElementById("debugSection");
+      const debugLogOutput = document.getElementById("debugLogOutput");
+
       const LAYOUT_CONFIDENCE_THRESHOLD = 0.65;
       const QA_CONFIDENCE_THRESHOLD = 0.35;
       let availableTargets = [];
@@ -439,6 +456,7 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
       let aiStatusState = "missing-key";
       let aiErrorMessage = "";
       let aiUsingDefaultKey = false;
+      let latestSelectionState = null;
 
       if (!(targetList instanceof HTMLElement)) {
         throw new Error("Target list element missing.");
@@ -449,12 +467,64 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
       if (!(safeAreaSlider instanceof HTMLInputElement)) {
         throw new Error("Safe area slider missing.");
       }
+      if (!(copySelectionButton instanceof HTMLButtonElement)) {
+        throw new Error("Copy selection button missing.");
+      }
 
       function createChip(text, tone = "") {
         const chip = document.createElement("span");
         chip.className = "ai-chip" + (tone ? " " + tone : "");
         chip.textContent = text;
         return chip;
+      }
+
+      function buildSelectionDebugPayload() {
+        return JSON.stringify(
+          {
+            selection: latestSelectionState,
+            selectedTargetIds: Array.from(selectedTargetIds),
+            safeAreaRatio: Number(safeAreaSlider.value),
+            layoutSelections: { ...layoutSelections },
+            ai: {
+              configured: aiConfigured,
+              status: aiStatusState,
+              usingDefaultKey: aiUsingDefaultKey,
+              error: aiErrorMessage || undefined
+            }
+          },
+          null,
+          2
+        );
+      }
+
+      async function copyTextToClipboard(text) {
+        // Primary path: async clipboard API
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+          try {
+            await navigator.clipboard.writeText(text);
+            return { ok: true, method: "clipboard" };
+          } catch (error) {
+            console.debug("Clipboard writeText failed, falling back", error);
+          }
+        }
+
+        // Fallback: hidden textarea + execCommand
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.setAttribute("readonly", "");
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        textarea.setSelectionRange(0, text.length);
+        let success = false;
+        try {
+          success = document.execCommand("copy");
+        } catch (error) {
+          console.debug("execCommand copy failed", error);
+        }
+        document.body.removeChild(textarea);
+        return { ok: success, method: "textarea" };
       }
 
       function renderTargets(targets) {
@@ -680,29 +750,12 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
       
       function autoSelectTargets(width, height) {
         if (!width || !height) return;
-        const ratio = width / height;
-        const isPortrait = ratio < 0.8;
-        const isLandscape = ratio > 1.2;
-        const isSquare = !isPortrait && !isLandscape;
         
         const newSelection = new Set();
+        // Default to selecting all targets to ensure users see all possibilities.
         availableTargets.forEach(target => {
-          const tRatio = target.width / target.height;
-          const tPortrait = tRatio < 0.8;
-          const tLandscape = tRatio > 1.2;
-          const tSquare = !tPortrait && !tLandscape;
-          
-          if ((isPortrait && tPortrait) || (isLandscape && tLandscape) || (isSquare && tSquare)) {
-             newSelection.add(target.id);
-          }
-          // Always select "Popular" ones if generic? 
-          // For now, simple aspect matching.
-          // Fallback: if no match (e.g. extreme aspect), select all?
+          newSelection.add(target.id);
         });
-        
-        if (newSelection.size === 0) {
-           availableTargets.forEach(t => newSelection.add(t.id));
-        }
         
         selectedTargetIds = newSelection;
         updateTargetVisuals();
@@ -738,7 +791,12 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
           isBusy || !selectionReady || aiStatusState === "missing-key" || aiStatusState === "fetching";
       }
 
+      function updateDebugControls() {
+        copySelectionButton.disabled = isBusy || !selectionReady || !latestSelectionState;
+      }
+
       function applySelectionState(state) {
+        latestSelectionState = state;
         selectionReady = state.selectionOk;
         if (selectionReady) {
           if (state.selectionName) {
@@ -768,6 +826,7 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
         renderAiSignals(state.aiSignals);
         renderLayoutAdvice(state.layoutAdvice);
         updateGenerateState();
+        updateDebugControls();
       }
 
       // Removing old select event listener
@@ -840,6 +899,7 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
         }
         statusMessage.textContent = message;
         updateAiStatusDisplay();
+        updateDebugControls();
       }
 
       function formatLastRun(lastRun) {
@@ -1117,6 +1177,29 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
       }
 
       refreshAiButton.addEventListener("click", requestAiRefresh);
+      copySelectionButton.addEventListener("click", copySelectionJson);
+
+      async function copySelectionJson() {
+        if (!selectionReady || !latestSelectionState) {
+          statusMessage.textContent = "Select a frame to copy debug JSON.";
+          return;
+        }
+        const payload = buildSelectionDebugPayload();
+        try {
+          const result = await copyTextToClipboard(payload);
+          if (result.ok) {
+            statusMessage.textContent =
+              result.method === "clipboard"
+                ? "Selection JSON copied to clipboard."
+                : "Selection JSON copied (fallback).";
+          } else {
+            statusMessage.textContent = "Copy failed. Clipboard is blocked.";
+          }
+        } catch (error) {
+          console.error("Copy selection JSON failed", error);
+          statusMessage.textContent = "Copy failed. See console.";
+        }
+      }
 
       window.onmessage = (event) => {
         const message = event.data.pluginMessage;
@@ -1125,6 +1208,10 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
         }
         switch (message.type) {
           case "init": {
+            if (message.payload.debugEnabled && debugSection && debugLogOutput) {
+              debugSection.hidden = false;
+              debugLogOutput.textContent = "Debug mode enabled. Waiting for logs...\\n\\n";
+            }
             renderTargets(message.payload.targets);
             applySelectionState({
               selectionOk: message.payload.selectionOk,
@@ -1164,6 +1251,14 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
           case "error":
             setBusy(false, message.payload.message || "Something went wrong.");
             break;
+          case "debug-log": {
+            if (debugSection && debugLogOutput) {
+              debugSection.hidden = false;
+              debugLogOutput.textContent = message.payload.message;
+              debugLogOutput.scrollTop = debugLogOutput.scrollHeight;
+            }
+            break;
+          }
           default:
             console.warn("Unhandled UI message", message);
         }
@@ -1171,6 +1266,7 @@ export const UI_TEMPLATE = `<!DOCTYPE html>
 
       updateSafeAreaValue();
       updateAiStatusDisplay();
+      updateDebugControls();
       parent.postMessage({ pluginMessage: { type: "request-initial-state" } }, "*");
     })();
   </script>

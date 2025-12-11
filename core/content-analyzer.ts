@@ -310,8 +310,10 @@ export function calculateOptimalScale(
         if (heightScale <= widthScale) {
           scale = heightScale * 0.95;
         } else {
-          // Blend with heavy weight toward filling height
-          scale = Math.min(widthScale, heightScale * 0.8 + widthScale * 0.2);
+          const heightFirst = heightScale * 0.9;
+          // Allow some horizontal overshoot to unlock vertical fill on tall targets
+          const widthAllowance = widthScale * 1.35;
+          scale = Math.min(heightFirst, widthAllowance);
         }
       } else if (profile === "horizontal") {
         // Horizontal: prioritize width but ensure height fits
