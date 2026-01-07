@@ -458,7 +458,7 @@ function isBackgroundLike(node: SceneNode, rootWidth: number, rootHeight: number
   return rootArea > 0 && nodeArea >= rootArea * 0.95;
 }
 
-async function scaleNodeRecursive(
+export async function scaleNodeRecursive(
   node: SceneNode,
   scale: number,
   fontCache: Set<string>,
@@ -478,13 +478,78 @@ async function scaleNodeRecursive(
   }
 
   if (node.type === "TEXT") {
-    await scaleTextNode(node, scale, fontCache);
+    await scaleTextNode(node, scale, fontCache, target);
     return;
   }
 
   if ("width" in node && "height" in node && typeof node.width === "number" && typeof node.height === "number") {
     let newWidth = node.width * scale;
     let newHeight = node.height * scale;
+
+    // Safe constraint scaling with validation
+    const scaledConstraints = {
+      minWidth: null as number | null,
+      maxWidth: null as number | null,
+      minHeight: null as number | null,
+      maxHeight: null as number | null
+    };
+
+    // Collect and scale all constraints
+    if ("minWidth" in node && typeof (node as any).minWidth === "number") {
+      scaledConstraints.minWidth = (node as any).minWidth * scale;
+    }
+    if ("maxWidth" in node && typeof (node as any).maxWidth === "number") {
+      scaledConstraints.maxWidth = (node as any).maxWidth * scale;
+    }
+    if ("minHeight" in node && typeof (node as any).minHeight === "number") {
+      scaledConstraints.minHeight = (node as any).minHeight * scale;
+    }
+    if ("maxHeight" in node && typeof (node as any).maxHeight === "number") {
+      scaledConstraints.maxHeight = (node as any).maxHeight * scale;
+    }
+
+    // Validate and resolve conflicts: min > max
+    if (scaledConstraints.minWidth !== null && scaledConstraints.maxWidth !== null) {
+      if (scaledConstraints.minWidth > scaledConstraints.maxWidth) {
+        const avgWidth = (scaledConstraints.minWidth + scaledConstraints.maxWidth) / 2;
+        scaledConstraints.minWidth = Math.min(avgWidth, newWidth);
+        scaledConstraints.maxWidth = Math.max(avgWidth, newWidth);
+      }
+    }
+    if (scaledConstraints.minHeight !== null && scaledConstraints.maxHeight !== null) {
+      if (scaledConstraints.minHeight > scaledConstraints.maxHeight) {
+        const avgHeight = (scaledConstraints.minHeight + scaledConstraints.maxHeight) / 2;
+        scaledConstraints.minHeight = Math.min(avgHeight, newHeight);
+        scaledConstraints.maxHeight = Math.max(avgHeight, newHeight);
+      }
+    }
+
+    // Ensure constraints don't prevent intended sizing
+    if (scaledConstraints.minWidth !== null && scaledConstraints.minWidth > newWidth) {
+      scaledConstraints.minWidth = newWidth;
+    }
+    if (scaledConstraints.maxWidth !== null && scaledConstraints.maxWidth < newWidth) {
+      scaledConstraints.maxWidth = newWidth;
+    }
+    if (scaledConstraints.minHeight !== null && scaledConstraints.minHeight > newHeight) {
+      scaledConstraints.minHeight = newHeight;
+    }
+    if (scaledConstraints.maxHeight !== null && scaledConstraints.maxHeight < newHeight) {
+      scaledConstraints.maxHeight = newHeight;
+    }
+
+    // Apply constraints in safe order (depends on scale direction)
+    if (scale < 1) {
+      if (scaledConstraints.minWidth !== null) (node as any).minWidth = scaledConstraints.minWidth;
+      if (scaledConstraints.minHeight !== null) (node as any).minHeight = scaledConstraints.minHeight;
+      if (scaledConstraints.maxWidth !== null) (node as any).maxWidth = scaledConstraints.maxWidth;
+      if (scaledConstraints.maxHeight !== null) (node as any).maxHeight = scaledConstraints.maxHeight;
+    } else {
+      if (scaledConstraints.maxWidth !== null) (node as any).maxWidth = scaledConstraints.maxWidth;
+      if (scaledConstraints.maxHeight !== null) (node as any).maxHeight = scaledConstraints.maxHeight;
+      if (scaledConstraints.minWidth !== null) (node as any).minWidth = scaledConstraints.minWidth;
+      if (scaledConstraints.minHeight !== null) (node as any).minHeight = scaledConstraints.minHeight;
+    }
 
     if (isBackground) {
       // Backgrounds should fill the target frame completely
@@ -501,14 +566,67 @@ async function scaleNodeRecursive(
 
   if ("strokeWeight" in node && typeof node.strokeWeight === "number") {
     if (node.strokeWeight > 0) {
-      node.strokeWeight = Math.max(node.strokeWeight * scale, 1);
+      const originalWeight = node.strokeWeight;
+      let newWeight: number;
+
+      if (scale > 1) {
+        // Scale-aware dampening power:
+        // - Small scales (1-2x): lighter dampening (0.75) for icon fidelity
+        // - Medium scales (2-5x): moderate dampening (0.6)
+        // - Large scales (5x+): heavy dampening (0.5) to prevent cartoon effect
+        let dampeningPower: number;
+        if (scale <= 2) {
+          dampeningPower = 0.75;
+        } else if (scale <= 5) {
+          dampeningPower = 0.6;
+        } else {
+          dampeningPower = 0.5;
+        }
+
+        newWeight = originalWeight * Math.pow(scale, dampeningPower);
+
+        // Cap maximum stroke weight to prevent cartoonish appearance
+        const maxWeight = Math.max(originalWeight * 4, 8);
+        newWeight = Math.min(newWeight, maxWeight);
+      } else {
+        // Downscaling: linear but preserve visibility
+        newWeight = originalWeight * scale;
+
+        // Minimum based on target resolution
+        const minStroke = target.width < 600 ? 0.5 : 1;
+        newWeight = Math.max(newWeight, minStroke);
+      }
+
+      node.strokeWeight = Math.round(newWeight * 100) / 100;
     }
   }
+
+  // Helper for dampened corner radius scaling
+  const scaleCornerRadius = (value: number): number => {
+    if (value === 0) return 0;
+
+    let scaledValue: number;
+    if (scale > 2) {
+      // Dampen large upscales to prevent oversized corners
+      scaledValue = value * Math.pow(scale, 0.7);
+    } else if (scale < 1) {
+      // Preserve visibility on downscale
+      scaledValue = Math.max(value * scale, value > 0 ? 1 : 0);
+    } else {
+      scaledValue = value * scale;
+    }
+
+    // Cap at half the smaller node dimension to prevent invalid corners
+    const nodeWidth = "width" in node && typeof node.width === "number" ? node.width * scale : 100;
+    const nodeHeight = "height" in node && typeof node.height === "number" ? node.height * scale : 100;
+    const maxRadius = Math.min(nodeWidth, nodeHeight) / 2;
+    return Math.min(scaledValue, maxRadius);
+  };
 
   if ("cornerRadius" in node) {
     const withCornerRadius = node as SceneNode & { cornerRadius?: number | typeof figma.mixed };
     if (withCornerRadius.cornerRadius !== figma.mixed && typeof withCornerRadius.cornerRadius === "number") {
-      withCornerRadius.cornerRadius *= scale;
+      withCornerRadius.cornerRadius = scaleCornerRadius(withCornerRadius.cornerRadius);
     }
   }
   const rectangleCorners = node as SceneNode & {
@@ -518,16 +636,16 @@ async function scaleNodeRecursive(
     bottomRightRadius?: number;
   };
   if (typeof rectangleCorners.topLeftRadius === "number") {
-    rectangleCorners.topLeftRadius *= scale;
+    rectangleCorners.topLeftRadius = scaleCornerRadius(rectangleCorners.topLeftRadius);
   }
   if (typeof rectangleCorners.topRightRadius === "number") {
-    rectangleCorners.topRightRadius *= scale;
+    rectangleCorners.topRightRadius = scaleCornerRadius(rectangleCorners.topRightRadius);
   }
   if (typeof rectangleCorners.bottomLeftRadius === "number") {
-    rectangleCorners.bottomLeftRadius *= scale;
+    rectangleCorners.bottomLeftRadius = scaleCornerRadius(rectangleCorners.bottomLeftRadius);
   }
   if (typeof rectangleCorners.bottomRightRadius === "number") {
-    rectangleCorners.bottomRightRadius *= scale;
+    rectangleCorners.bottomRightRadius = scaleCornerRadius(rectangleCorners.bottomRightRadius);
   }
 
   if ("effects" in node && Array.isArray(node.effects)) {
@@ -556,13 +674,30 @@ function adjustNodePosition(node: SceneNode, scale: number): void {
   }
 }
 
-const MIN_LEGIBLE_SIZE = 11;
+/**
+ * Get minimum legible font size based on target resolution
+ * Thumbnails can use smaller text, large displays need larger text
+ */
+function getMinLegibleSize(target: VariantTarget): number {
+  const minDimension = Math.min(target.width, target.height);
+  if (minDimension < 600) {
+    // Thumbnails: smaller text is acceptable (viewed at small size)
+    return 9;
+  }
+  if (target.width >= 2000 || target.height >= 2000) {
+    // Large displays (YouTube 2560px): need larger text
+    return 14;
+  }
+  // Social/standard: baseline minimum
+  return 11;
+}
 
-async function scaleTextNode(node: TextNode, scale: number, fontCache: Set<string>): Promise<void> {
+async function scaleTextNode(node: TextNode, scale: number, fontCache: Set<string>, target: VariantTarget): Promise<void> {
+  const minLegibleSize = getMinLegibleSize(target);
   const characters = node.characters;
   if (characters.length === 0) {
     if (node.fontSize !== figma.mixed && typeof node.fontSize === "number") {
-      node.fontSize = Math.max(node.fontSize * scale, MIN_LEGIBLE_SIZE);
+      node.fontSize = Math.max(node.fontSize * scale, minLegibleSize);
     }
     return;
   }
@@ -581,7 +716,7 @@ async function scaleTextNode(node: TextNode, scale: number, fontCache: Set<strin
 
     const fontSize = node.getRangeFontSize(i, nextIndex);
     if (fontSize !== figma.mixed && typeof fontSize === "number") {
-      const newFontSize = Math.max(fontSize * scale, MIN_LEGIBLE_SIZE);
+      const newFontSize = Math.max(fontSize * scale, minLegibleSize);
       node.setRangeFontSize(i, nextIndex, newFontSize);
     }
 
@@ -605,13 +740,47 @@ async function scaleTextNode(node: TextNode, scale: number, fontCache: Set<strin
 
 function scaleEffect(effect: Effect, scale: number): Effect {
   const clone = cloneValue(effect);
-  if ((clone.type === "DROP_SHADOW" || clone.type === "INNER_SHADOW") && typeof clone.radius === "number") {
-    clone.radius *= scale;
-    clone.offset = { x: clone.offset.x * scale, y: clone.offset.y * scale };
+
+  if (clone.type === "DROP_SHADOW" || clone.type === "INNER_SHADOW") {
+    if (typeof clone.radius === "number") {
+      // Dampen shadow radius for large scales to prevent extreme blurs
+      if (scale > 2) {
+        clone.radius = clone.radius * Math.pow(scale, 0.65);
+      } else {
+        clone.radius *= scale;
+      }
+      // Cap shadow radius to prevent extreme effects
+      clone.radius = Math.min(clone.radius, 100);
+    }
+
+    if (clone.offset) {
+      // Dampen offset for large scales
+      const offsetScale = scale > 2 ? Math.pow(scale, 0.7) : scale;
+      clone.offset = {
+        x: clone.offset.x * offsetScale,
+        y: clone.offset.y * offsetScale
+      };
+    }
+
+    // Scale spread if present
+    if (typeof clone.spread === "number") {
+      clone.spread = clone.spread * Math.pow(scale, 0.6);
+    }
   }
-  if ((clone.type === "LAYER_BLUR" || clone.type === "BACKGROUND_BLUR") && typeof clone.radius === "number") {
-    clone.radius *= scale;
+
+  if (clone.type === "LAYER_BLUR" || clone.type === "BACKGROUND_BLUR") {
+    if (typeof clone.radius === "number") {
+      // Dampen blur radius for large scales
+      if (scale > 2) {
+        clone.radius = clone.radius * Math.pow(scale, 0.6);
+      } else {
+        clone.radius *= scale;
+      }
+      // Cap blur radius to prevent extreme effects
+      clone.radius = Math.min(clone.radius, 50);
+    }
   }
+
   return clone as Effect;
 }
 

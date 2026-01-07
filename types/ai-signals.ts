@@ -31,7 +31,10 @@ export type AiQaCode =
   | "UNCERTAIN_ROLES"
   | "SALIENCE_MISALIGNED"
   | "SAFE_AREA_RISK"
-  | "GENERIC";
+  | "GENERIC"
+  | "EXCESSIVE_TEXT"
+  | "MISSING_CTA"
+  | "ASPECT_MISMATCH";
 
 export interface AiQaSignal {
   readonly code: AiQaCode;

@@ -167,11 +167,12 @@ export function createLayoutAdaptationPlan(
 
 /**
  * Determines the optimal layout mode based on source and target
+ * Uses transition zones for smoother aspect ratio handling
  */
 function determineOptimalLayoutMode(context: LayoutContext): "HORIZONTAL" | "VERTICAL" | "NONE" {
   const { sourceLayout, targetProfile, layoutAdvice } = context;
 
-  // AI Override
+  // AI Override - highest priority
   if (layoutAdvice?.suggestedLayoutMode) {
     debugAutoLayoutLog("determining optimal layout: using AI suggestion", {
       suggestedMode: layoutAdvice.suggestedLayoutMode,
@@ -185,56 +186,84 @@ function determineOptimalLayoutMode(context: LayoutContext): "HORIZONTAL" | "VER
     return "VERTICAL";
   }
 
+  const aspectRatio = targetProfile.aspectRatio;
+  const sourceAspect = sourceLayout.width / Math.max(sourceLayout.height, 1);
+
+  // Define transition zones (more granular than before)
+  const isExtremeVertical = aspectRatio < 0.57;      // 9:16 ratio (TikTok)
+  const isModerateVertical = aspectRatio < 0.75;     // 3:4 ratio
+  const isExtremeHorizontal = aspectRatio > 2.5;    // 5:2 ratio
+  const isModerateHorizontal = aspectRatio > 1.6;   // 16:10 ratio
+
+  // Content awareness signals
+  const hasSignificantText = sourceLayout.hasText && sourceLayout.childCount >= 3;
+  const isImageDominant = sourceLayout.hasImages && !sourceLayout.hasText;
+
   // If source has no auto layout, determine best mode for target
   if (sourceLayout.mode === "NONE") {
-    if (targetProfile.type === "vertical" && targetProfile.aspectRatio < 0.6) {
-      debugAutoLayoutLog("determining optimal layout: source is NONE, target is extreme vertical", { context });
+    // Consider source-target aspect delta for major reorientation
+    const aspectDelta = Math.abs(sourceAspect - aspectRatio);
+
+    if (isExtremeVertical && aspectDelta > 1.0) {
+      debugAutoLayoutLog("determining optimal layout: source is NONE, major reorientation to vertical", { context, aspectDelta });
       return "VERTICAL";
     }
-    if (targetProfile.type === "horizontal" && targetProfile.aspectRatio > 1.5) {
-      debugAutoLayoutLog("determining optimal layout: source is NONE, target is extreme horizontal", { context });
+    if (isExtremeHorizontal && aspectDelta > 1.0) {
+      debugAutoLayoutLog("determining optimal layout: source is NONE, major reorientation to horizontal", { context, aspectDelta });
       return "HORIZONTAL";
     }
-    debugAutoLayoutLog("determining optimal layout: source is NONE, target is square-ish, keeping NONE", { context });
-    return "NONE"; // Keep as is for square-ish targets
+    // Preserve original positioning for moderate changes
+    debugAutoLayoutLog("determining optimal layout: source is NONE, preserving for moderate change", { context, aspectDelta });
+    return "NONE";
   }
 
   // For extreme vertical targets (like TikTok)
-  if (targetProfile.type === "vertical" && targetProfile.aspectRatio < 0.57) {
-    if (sourceLayout.mode === "HORIZONTAL" && sourceLayout.childCount >= 2) {
-      debugAutoLayoutLog("determining optimal layout: converting horizontal to vertical for extreme vertical target", {
-        context
-      });
+  if (isExtremeVertical) {
+    if (sourceLayout.mode === "HORIZONTAL" && hasSignificantText) {
+      debugAutoLayoutLog("determining optimal layout: converting text-heavy horizontal to vertical for extreme vertical", { context });
       return "VERTICAL";
     }
-    debugAutoLayoutLog("determining optimal layout: keeping vertical for extreme vertical target", { context });
+    if (isImageDominant && sourceLayout.childCount < 3) {
+      // Image-dominant with few elements might look better with original orientation
+      debugAutoLayoutLog("determining optimal layout: preserving image-dominant layout for extreme vertical", { context });
+      return sourceLayout.mode;
+    }
+    debugAutoLayoutLog("determining optimal layout: forcing vertical for extreme vertical target", { context });
     return "VERTICAL";
+  }
+
+  // For moderate vertical targets
+  if (isModerateVertical) {
+    if (sourceLayout.mode === "HORIZONTAL" && sourceLayout.childCount >= 3) {
+      debugAutoLayoutLog("determining optimal layout: converting multi-child horizontal to vertical for moderate vertical", { context });
+      return "VERTICAL";
+    }
+    debugAutoLayoutLog("determining optimal layout: preserving source mode for moderate vertical", { context });
+    return sourceLayout.mode;
   }
 
   // For extreme horizontal targets (like ultra-wide banners)
-  if (targetProfile.type === "horizontal" && targetProfile.aspectRatio > 2.5) {
+  if (isExtremeHorizontal) {
     if (sourceLayout.mode === "VERTICAL" && sourceLayout.childCount >= 2) {
-      debugAutoLayoutLog("determining optimal layout: converting vertical to horizontal for extreme horizontal target", {
-        context
-      });
+      debugAutoLayoutLog("determining optimal layout: converting vertical to horizontal for extreme horizontal", { context });
       return "HORIZONTAL";
     }
-    debugAutoLayoutLog("determining optimal layout: keeping horizontal for extreme horizontal target", { context });
+    debugAutoLayoutLog("determining optimal layout: forcing horizontal for extreme horizontal target", { context });
     return "HORIZONTAL";
   }
 
-  // For moderate aspect ratios, force appropriate orientation
-  if (targetProfile.type === "vertical") {
-    debugAutoLayoutLog("determining optimal layout: forcing vertical for vertical target", { context });
-    return "VERTICAL";
+  // For moderate horizontal targets
+  if (isModerateHorizontal) {
+    if (sourceLayout.mode === "VERTICAL" && sourceLayout.childCount === 2) {
+      debugAutoLayoutLog("determining optimal layout: converting 2-child vertical to horizontal for moderate horizontal", { context });
+      return "HORIZONTAL";
+    }
+    debugAutoLayoutLog("determining optimal layout: preserving source mode for moderate horizontal", { context });
+    return sourceLayout.mode;
   }
 
-  if (targetProfile.type === "horizontal") {
-    debugAutoLayoutLog("determining optimal layout: forcing horizontal for horizontal target", { context });
-    return "HORIZONTAL";
-  }
-
-  debugAutoLayoutLog("determining optimal layout: fallback, keeping source mode for square target", { context });
+  // Square-ish targets - preserve source layout
+  debugAutoLayoutLog("determining optimal layout: preserving source mode for square-ish target", { context });
   return sourceLayout.mode;
 }
 
@@ -332,6 +361,7 @@ function determineWrapBehavior(
 
 /**
  * Calculates spacing for the adapted layout
+ * Uses content-aware distribution based on child count
  */
 function calculateSpacing(
   frame: FrameNode,
@@ -350,32 +380,57 @@ function calculateSpacing(
         : 16;
   const scaledSpacing = baseSpacingRaw === 0 ? 0 : Math.max(baseSpacingRaw * context.scale, 1);
 
+  // Content-aware distribution ratio based on child count
+  const childCount = context.sourceLayout.childCount;
+  let distributionRatio: number;
+  if (childCount <= 2) {
+    // Few children: more generous spacing
+    distributionRatio = 0.40;
+  } else if (childCount <= 5) {
+    // Moderate: standard spacing
+    distributionRatio = 0.30;
+  } else {
+    // Dense: tighter spacing to fit content
+    distributionRatio = 0.20;
+  }
+
+  // Boost distribution for extreme aspect ratios
+  const aspectRatio = context.targetProfile.aspectRatio;
+  if (aspectRatio < 0.5 || aspectRatio > 2.5) {
+    distributionRatio = Math.min(distributionRatio * 1.3, 0.5);
+  }
+
+  // Cap maximum spacing to prevent awkward layouts
+  const maxSpacing = scaledSpacing * 8;
+
   debugAutoLayoutLog("spacing input resolved", {
     targetType: context.targetProfile.type,
     targetWidth: context.targetProfile.width,
     targetHeight: context.targetProfile.height,
     newLayoutMode,
     sourceLayoutMode: context.sourceLayout.mode,
-    sourceChildCount: context.sourceLayout.childCount,
+    sourceChildCount: childCount,
     baseSpacing: baseSpacingRaw,
     scaledSpacing,
+    distributionRatio,
     scale: context.scale
   });
 
   // Adjust spacing based on target format
   if (context.targetProfile.type === "vertical" && newLayoutMode === "VERTICAL") {
-    // More spacing for vertical layouts in tall formats
     const extraSpace = context.targetProfile.height - (context.sourceLayout.height * context.scale);
-    const gaps = Math.max(context.sourceLayout.childCount - 1, 1);
-    const additionalSpacing = Math.max(0, extraSpace / gaps * 0.3); // Use 30% of extra space
+    const gaps = Math.max(childCount - 1, 1);
+    const additionalSpacing = Math.max(0, extraSpace / gaps * distributionRatio);
+    const finalSpacing = Math.min(scaledSpacing + additionalSpacing, maxSpacing);
     const result = {
-      item: scaledSpacing + additionalSpacing,
+      item: finalSpacing,
       counter: frame.layoutWrap === "WRAP" ? scaledSpacing : undefined
     };
     debugAutoLayoutLog("spacing calculated for vertical target", {
       extraSpace,
       gaps,
       additionalSpacing,
+      finalSpacing,
       itemSpacing: result.item,
       counterAxisSpacing: result.counter
     });
@@ -383,18 +438,19 @@ function calculateSpacing(
   }
 
   if (context.targetProfile.type === "horizontal" && newLayoutMode === "HORIZONTAL") {
-    // More spacing for horizontal layouts in wide formats
     const extraSpace = context.targetProfile.width - (context.sourceLayout.width * context.scale);
-    const gaps = Math.max(context.sourceLayout.childCount - 1, 1);
-    const additionalSpacing = Math.max(0, extraSpace / gaps * 0.3);
+    const gaps = Math.max(childCount - 1, 1);
+    const additionalSpacing = Math.max(0, extraSpace / gaps * distributionRatio);
+    const finalSpacing = Math.min(scaledSpacing + additionalSpacing, maxSpacing);
     const result = {
-      item: scaledSpacing + additionalSpacing,
+      item: finalSpacing,
       counter: frame.layoutWrap === "WRAP" ? scaledSpacing : undefined
     };
     debugAutoLayoutLog("spacing calculated for horizontal target", {
       extraSpace,
       gaps,
       additionalSpacing,
+      finalSpacing,
       itemSpacing: result.item,
       counterAxisSpacing: result.counter
     });
@@ -497,12 +553,10 @@ function createChildAdaptations(
       }
       // If AI specified a background, do NOT apply heuristics to others
     } else {
-      // Identify background layers and remove them from flow
-      // Only treat the bottom-most layer as a potential background to avoid
-      // removing large hero images from the content stack.
+      // Identify background layers using multi-signal detection
+      const isBottomLayer = index === frame.children.length - 1;
       if (
-        index === frame.children.length - 1 &&
-        isBackgroundLike(child as SceneNode, context.sourceLayout.width, context.sourceLayout.height)
+        isBackgroundLike(child as SceneNode, context.sourceLayout.width, context.sourceLayout.height, isBottomLayer)
       ) {
         adaptation.layoutPositioning = "ABSOLUTE";
         adaptations.set(child.id, adaptation);
@@ -699,13 +753,52 @@ function hasImageChildren(frame: FrameNode): boolean {
   return hasImageContent(frame as unknown as SceneNode);
 }
 
-function isBackgroundLike(node: SceneNode, rootWidth: number, rootHeight: number): boolean {
+/**
+ * Multi-signal background detection
+ * Combines: area coverage, layer position, fill type, text content, and name hints
+ */
+function isBackgroundLike(node: SceneNode, rootWidth: number, rootHeight: number, isBottomLayer: boolean = false): boolean {
   if (!("width" in node) || !("height" in node)) return false;
   if (typeof (node as any).width !== "number" || typeof (node as any).height !== "number") return false;
+
   const nodeArea = (node as any).width * (node as any).height;
   const rootArea = rootWidth * rootHeight;
-  // 95% threshold to identify backgrounds
-  return rootArea > 0 && nodeArea >= rootArea * 0.95;
+
+  // Signal 1: Area coverage (lowered from 95% to 90% for better detection)
+  const coversFrame = rootArea > 0 && nodeArea >= rootArea * 0.90;
+
+  if (!coversFrame) {
+    return false;
+  }
+
+  // Signal 2: Fill type (images and gradients are often backgrounds)
+  let hasBackgroundFill = false;
+  if ("fills" in node && Array.isArray(node.fills)) {
+    hasBackgroundFill = (node.fills as readonly Paint[]).some(
+      (f) => f.type === "IMAGE" || f.type === "GRADIENT_LINEAR" || f.type === "GRADIENT_RADIAL"
+    );
+  }
+
+  // Signal 3: No text content
+  const hasNoText = node.type !== "TEXT" && !containsText(node);
+
+  // Signal 4: Name hints
+  const nameLower = node.name.toLowerCase();
+  const hasBackgroundName = ["background", "bg", "backdrop", "hero-bg", "cover"].some(
+    (term) => nameLower.includes(term)
+  );
+
+  // Decision: require area coverage + at least one other signal
+  const otherSignals = [isBottomLayer, hasBackgroundFill, hasNoText, hasBackgroundName].filter(Boolean).length;
+  return otherSignals >= 1;
+}
+
+function containsText(node: SceneNode): boolean {
+  if (node.type === "TEXT") return true;
+  if ("children" in node) {
+    return node.children.some((c) => containsText(c as SceneNode));
+  }
+  return false;
 }
 
 function countFlowChildren(frame: FrameNode): number {
