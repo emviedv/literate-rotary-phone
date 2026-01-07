@@ -1,7 +1,9 @@
 import type { VariantTarget } from "../types/targets.js";
 import { analyzeContent, calculateOptimalScale } from "./content-analyzer.js";
 import { planAutoLayoutExpansion, type AxisExpansionPlan } from "./layout-expansion.js";
+import { scaleStrokeWeight, scaleCornerRadius } from "./scaling-utils.js";
 import type { AxisGaps } from "./padding-distribution.js";
+import { MIN_LEGIBLE_SIZES, RESOLUTION_THRESHOLDS } from "./layout-constants.js";
 import { planAbsoluteChildPositions } from "./absolute-layout.js";
 import {
   computeVerticalSpacing,
@@ -566,67 +568,17 @@ export async function scaleNodeRecursive(
 
   if ("strokeWeight" in node && typeof node.strokeWeight === "number") {
     if (node.strokeWeight > 0) {
-      const originalWeight = node.strokeWeight;
-      let newWeight: number;
-
-      if (scale > 1) {
-        // Scale-aware dampening power:
-        // - Small scales (1-2x): lighter dampening (0.75) for icon fidelity
-        // - Medium scales (2-5x): moderate dampening (0.6)
-        // - Large scales (5x+): heavy dampening (0.5) to prevent cartoon effect
-        let dampeningPower: number;
-        if (scale <= 2) {
-          dampeningPower = 0.75;
-        } else if (scale <= 5) {
-          dampeningPower = 0.6;
-        } else {
-          dampeningPower = 0.5;
-        }
-
-        newWeight = originalWeight * Math.pow(scale, dampeningPower);
-
-        // Cap maximum stroke weight to prevent cartoonish appearance
-        const maxWeight = Math.max(originalWeight * 4, 8);
-        newWeight = Math.min(newWeight, maxWeight);
-      } else {
-        // Downscaling: linear but preserve visibility
-        newWeight = originalWeight * scale;
-
-        // Minimum based on target resolution
-        const minStroke = target.width < 600 ? 0.5 : 1;
-        newWeight = Math.max(newWeight, minStroke);
-      }
-
-      node.strokeWeight = Math.round(newWeight * 100) / 100;
+      node.strokeWeight = scaleStrokeWeight(node.strokeWeight, scale);
     }
   }
 
-  // Helper for dampened corner radius scaling
-  const scaleCornerRadius = (value: number): number => {
-    if (value === 0) return 0;
-
-    let scaledValue: number;
-    if (scale > 2) {
-      // Dampen large upscales to prevent oversized corners
-      scaledValue = value * Math.pow(scale, 0.7);
-    } else if (scale < 1) {
-      // Preserve visibility on downscale
-      scaledValue = Math.max(value * scale, value > 0 ? 1 : 0);
-    } else {
-      scaledValue = value * scale;
-    }
-
-    // Cap at half the smaller node dimension to prevent invalid corners
-    const nodeWidth = "width" in node && typeof node.width === "number" ? node.width * scale : 100;
-    const nodeHeight = "height" in node && typeof node.height === "number" ? node.height * scale : 100;
-    const maxRadius = Math.min(nodeWidth, nodeHeight) / 2;
-    return Math.min(scaledValue, maxRadius);
-  };
+  const nodeWidth = "width" in node && typeof node.width === "number" ? node.width * scale : 100;
+  const nodeHeight = "height" in node && typeof node.height === "number" ? node.height * scale : 100;
 
   if ("cornerRadius" in node) {
     const withCornerRadius = node as SceneNode & { cornerRadius?: number | typeof figma.mixed };
     if (withCornerRadius.cornerRadius !== figma.mixed && typeof withCornerRadius.cornerRadius === "number") {
-      withCornerRadius.cornerRadius = scaleCornerRadius(withCornerRadius.cornerRadius);
+      withCornerRadius.cornerRadius = scaleCornerRadius(withCornerRadius.cornerRadius, scale, nodeWidth, nodeHeight);
     }
   }
   const rectangleCorners = node as SceneNode & {
@@ -636,16 +588,16 @@ export async function scaleNodeRecursive(
     bottomRightRadius?: number;
   };
   if (typeof rectangleCorners.topLeftRadius === "number") {
-    rectangleCorners.topLeftRadius = scaleCornerRadius(rectangleCorners.topLeftRadius);
+    rectangleCorners.topLeftRadius = scaleCornerRadius(rectangleCorners.topLeftRadius, scale, nodeWidth, nodeHeight);
   }
   if (typeof rectangleCorners.topRightRadius === "number") {
-    rectangleCorners.topRightRadius = scaleCornerRadius(rectangleCorners.topRightRadius);
+    rectangleCorners.topRightRadius = scaleCornerRadius(rectangleCorners.topRightRadius, scale, nodeWidth, nodeHeight);
   }
   if (typeof rectangleCorners.bottomLeftRadius === "number") {
-    rectangleCorners.bottomLeftRadius = scaleCornerRadius(rectangleCorners.bottomLeftRadius);
+    rectangleCorners.bottomLeftRadius = scaleCornerRadius(rectangleCorners.bottomLeftRadius, scale, nodeWidth, nodeHeight);
   }
   if (typeof rectangleCorners.bottomRightRadius === "number") {
-    rectangleCorners.bottomRightRadius = scaleCornerRadius(rectangleCorners.bottomRightRadius);
+    rectangleCorners.bottomRightRadius = scaleCornerRadius(rectangleCorners.bottomRightRadius, scale, nodeWidth, nodeHeight);
   }
 
   if ("effects" in node && Array.isArray(node.effects)) {
@@ -680,16 +632,16 @@ function adjustNodePosition(node: SceneNode, scale: number): void {
  */
 function getMinLegibleSize(target: VariantTarget): number {
   const minDimension = Math.min(target.width, target.height);
-  if (minDimension < 600) {
+  if (minDimension < RESOLUTION_THRESHOLDS.THUMBNAIL_DIMENSION) {
     // Thumbnails: smaller text is acceptable (viewed at small size)
-    return 9;
+    return MIN_LEGIBLE_SIZES.THUMBNAIL;
   }
-  if (target.width >= 2000 || target.height >= 2000) {
+  if (target.width >= RESOLUTION_THRESHOLDS.LARGE_DISPLAY_DIMENSION || target.height >= RESOLUTION_THRESHOLDS.LARGE_DISPLAY_DIMENSION) {
     // Large displays (YouTube 2560px): need larger text
-    return 14;
+    return MIN_LEGIBLE_SIZES.LARGE_DISPLAY;
   }
   // Social/standard: baseline minimum
-  return 11;
+  return MIN_LEGIBLE_SIZES.STANDARD;
 }
 
 async function scaleTextNode(node: TextNode, scale: number, fontCache: Set<string>, target: VariantTarget): Promise<void> {

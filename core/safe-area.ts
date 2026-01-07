@@ -1,4 +1,5 @@
 import type { VariantTarget } from "../types/targets.js";
+import { resolveTargetConfig } from "./target-config.js";
 
 export type SafeAreaInsets = {
   readonly left: number;
@@ -17,14 +18,10 @@ function clampToNonNegative(value: number): number {
  * symmetric ratio otherwise so layout, overlays, and warnings all agree.
  */
 export function resolveSafeAreaInsets(target: VariantTarget, safeAreaRatio: number): SafeAreaInsets {
-  if (target.id === "tiktok-vertical") {
-    // TikTok UI chrome (approx)
-    return {
-      left: 44,
-      right: 120,
-      top: 108,
-      bottom: 320
-    };
+  const config = resolveTargetConfig(target);
+
+  if (config.safeAreaInsets) {
+    return config.safeAreaInsets;
   }
 
   if (target.id === "youtube-cover") {

@@ -1,6 +1,7 @@
 import { scaleCenterToRange } from "./absolute-geometry.js";
 import { debugFixLog } from "./debug.js";
 import type { LayoutProfile } from "./layout-profile.js";
+import { ASPECT_RATIOS } from "./layout-constants.js";
 
 export interface AbsoluteChildSnapshot {
   readonly id: string;
@@ -23,21 +24,25 @@ export interface PlanAbsoluteChildPositionsInput {
   readonly children: ReadonlyArray<AbsoluteChildSnapshot>;
 }
 
-export function planAbsoluteChildPositions(input: PlanAbsoluteChildPositionsInput): AbsolutePlan[] {
-  if (input.children.length === 0) {
-    return [];
-  }
+type Bounds = { x: number; y: number; width: number; height: number };
 
-  const safeBounds = normaliseBounds(input.safeBounds);
+export function planAbsoluteChildPositions(input: {
+  readonly profile: LayoutProfile;
+  readonly safeBounds: Bounds;
+  readonly targetAspectRatio?: number;
+  readonly children: ReadonlyArray<AbsoluteChildSnapshot>;
+}): AbsolutePlan[] {
+  const { safeBounds } = input;
   const contentBounds = measureBounds(input.children);
 
+  // Check if we need to force a vertical stack (e.g. for TikTok)
   if (input.profile === "vertical" && input.children.length >= 2) {
     const safeAspectRatio = safeBounds.height > 0 ? safeBounds.width / safeBounds.height : 1;
     const targetAspectRatio =
       typeof input.targetAspectRatio === "number" && Number.isFinite(input.targetAspectRatio)
         ? Math.max(0, input.targetAspectRatio)
         : safeAspectRatio;
-    const extremeVertical = Math.min(safeAspectRatio, targetAspectRatio) < 0.57;
+    const extremeVertical = Math.min(safeAspectRatio, targetAspectRatio) < ASPECT_RATIOS.EXTREME_VERTICAL;
 
     // Only force stack for extreme vertical targets (like TikTok)
     if (extremeVertical) {
@@ -114,8 +119,6 @@ function projectChildrenToBounds(
   });
 }
 
-type Bounds = { x: number; y: number; width: number; height: number };
-
 function measureBounds(children: ReadonlyArray<AbsoluteChildSnapshot>): Bounds {
   let minX = Number.POSITIVE_INFINITY;
   let minY = Number.POSITIVE_INFINITY;
@@ -141,14 +144,7 @@ function measureBounds(children: ReadonlyArray<AbsoluteChildSnapshot>): Bounds {
   };
 }
 
-function normaliseBounds(bounds: { x: number; y: number; width: number; height: number }): Bounds {
-  return {
-    x: Number.isFinite(bounds.x) ? bounds.x : 0,
-    y: Number.isFinite(bounds.y) ? bounds.y : 0,
-    width: Math.max(0, Number.isFinite(bounds.width) ? bounds.width : 0),
-    height: Math.max(0, Number.isFinite(bounds.height) ? bounds.height : 0)
-  };
-}
+
 
 function boundsContain(outer: Bounds, inner: Bounds): boolean {
   return (

@@ -2,6 +2,7 @@ import { ROLE_KEY } from "./plugin-constants.js";
 import type { VariantTarget } from "../types/targets.js";
 import { resolveSafeAreaInsets } from "./safe-area.js";
 import { debugFixLog } from "./debug.js";
+import { resolveTargetConfig } from "./target-config.js";
 
 type OverlayNode = Pick<FrameNode, "x" | "y"> &
   Partial<Pick<FrameNode, "layoutPositioning" | "constraints" | "locked">>;
@@ -99,23 +100,9 @@ export function createQaOverlay(
   const safeWidth = effectiveWidth - insets.left - insets.right;
   const safeHeight = effectiveHeight - insets.top - insets.bottom;
 
-  const label =
-    target.id === "youtube-cover"
-      ? "Text & Logo Safe Area"
-      : target.id === "tiktok-vertical"
-        ? "Content Safe Zone"
-        : "Safe Area";
-
-  let constraints: FrameNode["constraints"] = {
-    horizontal: "SCALE",
-    vertical: "SCALE"
-  };
-
-  if (target.id === "youtube-cover") {
-    constraints = { horizontal: "CENTER", vertical: "CENTER" };
-  } else if (target.id === "tiktok-vertical") {
-    constraints = { horizontal: "STRETCH", vertical: "STRETCH" };
-  }
+  const config = resolveTargetConfig(target);
+  const label = config.overlayLabel;
+  const constraints = config.overlayConstraints;
 
   appendSafeRect(overlay, insets.left, insets.top, safeWidth, safeHeight, label, undefined, constraints);
 

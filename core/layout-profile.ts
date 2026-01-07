@@ -1,46 +1,43 @@
+import { ASPECT_RATIOS } from "./layout-constants.js";
+
 export type LayoutProfile = "horizontal" | "square" | "vertical";
 
 export type AutoLayoutSummary = {
-  readonly layoutMode: "NONE" | "HORIZONTAL" | "VERTICAL";
+  readonly layoutMode: FrameNode["layoutMode"];
   readonly flowChildCount: number;
 };
 
 type PrimaryAxisAlign = FrameNode["primaryAxisAlignItems"];
 type LayoutWrap = FrameNode["layoutWrap"];
 
-/**
- * Classifies a target's aspect ratio so layout heuristics can adapt to wide,
- * square, or tall canvases without bespoke templates.
- * Enhanced with better handling for extreme aspect ratios and edge cases.
- */
 export function resolveLayoutProfile(dimensions: { readonly width: number; readonly height: number }): LayoutProfile {
   const safeWidth = Math.max(dimensions.width, 1);
   const safeHeight = Math.max(dimensions.height, 1);
-  const aspectRatio = safeHeight / safeWidth;
+  const aspectRatio = safeWidth / safeHeight; // Width / Height
 
   // Handle extreme aspect ratios with more granular thresholds
-  // Ultra-vertical (like TikTok 9:16, stories)
-  if (aspectRatio >= 1.6) {
+  
+  // Ultra-vertical (like TikTok 9:16) - Ratio <= 0.6
+  if (aspectRatio <= ASPECT_RATIOS.VERTICAL_VIDEO) {
     return "vertical";
   }
 
-  // Standard vertical (like portraits, some social media)
-  if (aspectRatio >= 1.2) {
+  // Standard vertical (like portraits) - Ratio <= 0.8
+  if (aspectRatio <= ASPECT_RATIOS.SQUARE_MIN) {
     return "vertical";
   }
 
-  // Ultra-horizontal (like web banners, hero sections)
-  if (aspectRatio <= 0.5) {
+  // Ultra-wide - Ratio >= 2.5
+  if (aspectRatio >= ASPECT_RATIOS.EXTREME_HORIZONTAL) {
     return "horizontal";
   }
 
-  // Standard horizontal (like YouTube, landscape photos)
-  if (aspectRatio <= 0.8) {
+  // Standard horizontal - Ratio >= 1.2
+  if (aspectRatio >= ASPECT_RATIOS.SQUARE_MAX) {
     return "horizontal";
   }
 
-  // Square-ish formats (Instagram posts, profile pictures)
-  // Anything between 0.8 and 1.2 aspect ratio
+  // Anything between 0.8 and 1.2 aspect ratio (H/W)
   return "square";
 }
 

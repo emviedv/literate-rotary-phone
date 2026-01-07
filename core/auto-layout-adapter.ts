@@ -1,6 +1,7 @@
 import { debugAutoLayoutLog } from "./debug.js";
 import { resolveVerticalAlignItems } from "./layout-profile.js";
 import type { LayoutAdviceEntry } from "../types/layout-advice.js";
+import { ASPECT_RATIOS } from "./layout-constants.js";
 
 /**
  * Auto Layout Adapter - Intelligently restructures auto layouts for different target formats
@@ -190,10 +191,10 @@ function determineOptimalLayoutMode(context: LayoutContext): "HORIZONTAL" | "VER
   const sourceAspect = sourceLayout.width / Math.max(sourceLayout.height, 1);
 
   // Define transition zones (more granular than before)
-  const isExtremeVertical = aspectRatio < 0.57;      // 9:16 ratio (TikTok)
-  const isModerateVertical = aspectRatio < 0.75;     // 3:4 ratio
-  const isExtremeHorizontal = aspectRatio > 2.5;    // 5:2 ratio
-  const isModerateHorizontal = aspectRatio > 1.6;   // 16:10 ratio
+  const isExtremeVertical = aspectRatio < ASPECT_RATIOS.EXTREME_VERTICAL;      // 9:16 ratio (TikTok)
+  const isModerateVertical = aspectRatio < ASPECT_RATIOS.MODERATE_VERTICAL;     // 3:4 ratio
+  const isExtremeHorizontal = aspectRatio > ASPECT_RATIOS.EXTREME_HORIZONTAL;    // 5:2 ratio
+  const isModerateHorizontal = aspectRatio > ASPECT_RATIOS.MODERATE_HORIZONTAL;   // 16:10 ratio
 
   // Content awareness signals
   const hasSignificantText = sourceLayout.hasText && sourceLayout.childCount >= 3;
@@ -488,19 +489,6 @@ function calculatePaddingAdjustments(
     left: basePadding.left * context.scale
   };
 
-  // Add extra padding for extreme formats
-  if (context.targetProfile.type === "vertical") {
-    const verticalExtra = (context.targetProfile.height - context.sourceLayout.height * context.scale) * 0.1;
-    scaledPadding.top += verticalExtra;
-    scaledPadding.bottom += verticalExtra;
-  }
-
-  if (context.targetProfile.type === "horizontal") {
-    const horizontalExtra = (context.targetProfile.width - context.sourceLayout.width * context.scale) * 0.1;
-    scaledPadding.left += horizontalExtra;
-    scaledPadding.right += horizontalExtra;
-  }
-
   const clampPadding = (side: "top" | "right" | "bottom" | "left", value: number): number => {
     if (value >= 0) {
       return value;
@@ -571,11 +559,6 @@ function createChildAdaptations(
         // Only stretch text boxes by default; other elements should maintain their intrinsic size.
         adaptation.layoutAlign = (containsImage || child.type !== 'TEXT') ? "INHERIT" : "STRETCH";
         adaptation.layoutGrow = 0;
-
-        // Set max width for text elements to prevent over-stretching
-        if (child.type === "TEXT") {
-          adaptation.maxWidth = context.targetProfile.width * 0.8;
-        }
       }
       // When converting to horizontal, control heights
       if (newLayoutMode === "HORIZONTAL") {

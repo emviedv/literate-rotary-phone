@@ -1,0 +1,21 @@
+
+export const ASPECT_RATIOS = {
+  EXTREME_VERTICAL: 0.57, // ~9:16
+  MODERATE_VERTICAL: 0.75, // ~3:4
+  VERTICAL_VIDEO: 0.6,    // Threshold for generic vertical video treatment
+  SQUARE_MIN: 0.8,
+  SQUARE_MAX: 1.2,
+  MODERATE_HORIZONTAL: 1.6, // ~16:10
+  EXTREME_HORIZONTAL: 2.5, // ~21:9
+};
+
+export const MIN_LEGIBLE_SIZES = {
+  THUMBNAIL: 9,
+  STANDARD: 11,
+  LARGE_DISPLAY: 14,
+};
+
+export const RESOLUTION_THRESHOLDS = {
+  THUMBNAIL_DIMENSION: 600,
+  LARGE_DISPLAY_DIMENSION: 2000,
+};
