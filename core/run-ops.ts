@@ -67,7 +67,7 @@ export function createRunContainer(page: PageNode, runId: string, sourceName: st
   return container;
 }
 
-export async function lockOverlays(overlays: readonly FrameNode[]): Promise<void> {
+export async function finalizeOverlays(overlays: readonly FrameNode[]): Promise<void> {
   if (overlays.length === 0) {
     return;
   }
@@ -76,10 +76,10 @@ export async function lockOverlays(overlays: readonly FrameNode[]): Promise<void
   if (typeof flushAsync === "function") {
     try {
       await flushAsync.call(figma);
-      debugFixLog("flush completed before locking overlays", { overlayCount: overlays.length });
+      debugFixLog("flush completed before finalizing overlays", { overlayCount: overlays.length });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      debugFixLog("flush failed before locking overlays", {
+      debugFixLog("flush failed before finalizing overlays", {
         overlayCount: overlays.length,
         errorMessage: message
       });
@@ -87,8 +87,7 @@ export async function lockOverlays(overlays: readonly FrameNode[]): Promise<void
   }
 
   for (const overlay of overlays) {
-    overlay.locked = true;
-    debugFixLog("qa overlay locked", {
+    debugFixLog("qa overlay finalized", {
       overlayId: overlay.id
     });
   }

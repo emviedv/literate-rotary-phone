@@ -13,7 +13,7 @@ import { trackEvent } from "./telemetry.js";
 import { debugFixLog, setLogHandler, isDebugFixEnabled } from "./debug.js";
 import { ensureAiKeyLoaded, getAiState, getCachedAiApiKey, persistApiKey, resetAiStatus, setAiStatus } from "./ai-state.js";
 import { createSelectionState, getSelectionFrame } from "./selection.js";
-import { ensureStagingPage, createRunContainer, exposeRun, layoutVariants, lockOverlays, promoteVariantsToPage } from "./run-ops.js";
+import { ensureStagingPage, createRunContainer, exposeRun, layoutVariants, finalizeOverlays, promoteVariantsToPage } from "./run-ops.js";
 import { readLastRun, writeLastRun } from "./run-store.js";
 import {
   AI_SIGNALS_KEY,
@@ -221,9 +221,20 @@ async function handleGenerateRequest(
             
                   // Then apply any additional auto layout settings that weren't covered
       restoreAutoLayoutSettings(variantNode, autoLayoutSnapshots, safeAreaMetrics);
-            const overlay = createQaOverlay(target, safeAreaRatio);
+            // Use target dimensions for the overlay to ensure it matches the viewport,
+            // even if the variant content has expanded (e.g. scrolling vertical).
+            const overlay = createQaOverlay(target, safeAreaRatio, target.width, target.height);
             variantNode.appendChild(overlay);
-            const overlayConfig = configureQaOverlay(overlay, { parentLayoutMode: variantNode.layoutMode });
+            
+            const overlayConstraints: FrameNode["constraints"] | undefined = 
+              target.id === "tiktok-vertical" 
+                ? { horizontal: "STRETCH", vertical: "MIN" }
+                : undefined;
+
+            const overlayConfig = configureQaOverlay(overlay, { 
+              parentLayoutMode: variantNode.layoutMode,
+              constraints: overlayConstraints
+            });
             overlaysToLock.push(overlay);
             debugFixLog("qa overlay configured", {
               overlayId: overlay.id,
@@ -232,7 +243,7 @@ async function handleGenerateRequest(
               layoutPositioning: "layoutPositioning" in overlay ? overlay.layoutPositioning : undefined,
               constraints: "constraints" in overlay ? overlay.constraints : undefined,
               locked: overlay.locked,
-              willLockAfterFlush: true
+              willLockAfterFlush: false
             });
       
             const patternSelection = autoSelectLayoutPattern(layoutAdvice, target.id, MIN_PATTERN_CONFIDENCE);
@@ -318,7 +329,7 @@ async function handleGenerateRequest(
       });
     }
 
-    await lockOverlays(overlaysToLock);
+    await finalizeOverlays(overlaysToLock);
     layoutVariants(runContainer, variantNodes);
     promoteVariantsToPage(stagingPage, runContainer, variantNodes);
     exposeRun(stagingPage, variantNodes);

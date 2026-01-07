@@ -1,6 +1,7 @@
 import { ROLE_KEY } from "./plugin-constants.js";
 import type { VariantTarget } from "../types/targets.js";
 import { resolveSafeAreaInsets } from "./safe-area.js";
+import { debugFixLog } from "./debug.js";
 
 type OverlayNode = Pick<FrameNode, "x" | "y"> &
   Partial<Pick<FrameNode, "layoutPositioning" | "constraints" | "locked">>;
@@ -13,6 +14,7 @@ declare const figma: PluginAPI;
  */
 export interface QaOverlayOptions {
   readonly parentLayoutMode?: FrameNode["layoutMode"];
+  readonly constraints?: FrameNode["constraints"];
 }
 
 export function configureQaOverlay(
@@ -24,9 +26,6 @@ export function configureQaOverlay(
   if (wasLocked) {
     overlay.locked = false;
   }
-
-  overlay.x = 0;
-  overlay.y = 0;
 
   let positioningUpdated = false;
 
@@ -47,8 +46,8 @@ export function configureQaOverlay(
     }
   }
 
-  if (parentSupportsAbsolute && typeof overlay.constraints !== "undefined") {
-    const nextConstraints: FrameNode["constraints"] = {
+  if (typeof overlay.constraints !== "undefined") {
+    const nextConstraints: FrameNode["constraints"] = options?.constraints ?? {
       horizontal: "STRETCH",
       vertical: "STRETCH"
     };
@@ -61,6 +60,13 @@ export function configureQaOverlay(
     }
   }
 
+  // Set coordinates AFTER ensuring absolute positioning.
+  // In Figma, setting x/y on an AUTO (in-flow) node is often ignored or overridden.
+  // By moving it here, we ensure it snaps to 0,0 relative to the parent frame
+  // once it is definitely absolute.
+  overlay.x = 0;
+  overlay.y = 0;
+
   if (hadLocked && typeof wasLocked === "boolean") {
     overlay.locked = wasLocked;
   }
@@ -68,20 +74,30 @@ export function configureQaOverlay(
   return { positioningUpdated };
 }
 
-export function createQaOverlay(target: VariantTarget, safeAreaRatio: number): FrameNode {
+export function createQaOverlay(
+  target: VariantTarget,
+  safeAreaRatio: number,
+  overrideWidth?: number,
+  overrideHeight?: number
+): FrameNode {
   const overlay = figma.createFrame();
   overlay.name = "QA Overlay";
   overlay.layoutMode = "NONE";
   overlay.opacity = 1;
   overlay.fills = [];
   overlay.strokes = [];
-  overlay.resizeWithoutConstraints(target.width, target.height);
+
+  const effectiveWidth = overrideWidth ?? target.width;
+  const effectiveHeight = overrideHeight ?? target.height;
+  const effectiveTarget = { ...target, width: effectiveWidth, height: effectiveHeight };
+
+  overlay.resizeWithoutConstraints(effectiveWidth, effectiveHeight);
   overlay.clipsContent = false;
   overlay.setPluginData(ROLE_KEY, "overlay");
 
-  const insets = resolveSafeAreaInsets(target, safeAreaRatio);
-  const safeWidth = target.width - insets.left - insets.right;
-  const safeHeight = target.height - insets.top - insets.bottom;
+  const insets = resolveSafeAreaInsets(effectiveTarget, safeAreaRatio);
+  const safeWidth = effectiveWidth - insets.left - insets.right;
+  const safeHeight = effectiveHeight - insets.top - insets.bottom;
 
   const label =
     target.id === "youtube-cover"
@@ -90,24 +106,34 @@ export function createQaOverlay(target: VariantTarget, safeAreaRatio: number): F
         ? "Content Safe Zone"
         : "Safe Area";
 
-  appendSafeRect(overlay, insets.left, insets.top, safeWidth, safeHeight, label);
+  let constraints: FrameNode["constraints"] = {
+    horizontal: "SCALE",
+    vertical: "SCALE"
+  };
+
+  if (target.id === "youtube-cover") {
+    constraints = { horizontal: "CENTER", vertical: "CENTER" };
+  } else if (target.id === "tiktok-vertical") {
+    constraints = { horizontal: "STRETCH", vertical: "STRETCH" };
+  }
+
+  appendSafeRect(overlay, insets.left, insets.top, safeWidth, safeHeight, label, undefined, constraints);
 
   return overlay;
 }
 
 function appendSafeRect(
-  parent: FrameNode, 
-  x: number, 
-  y: number, 
-  width: number, 
-  height: number, 
+  parent: FrameNode,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
   name: string,
-  color: RGB = { r: 0.92, g: 0.4, b: 0.36 }
+  color: RGB = { r: 0.92, g: 0.4, b: 0.36 },
+  constraints: FrameNode["constraints"] = { horizontal: "SCALE", vertical: "SCALE" }
 ): void {
   const safeRect = figma.createRectangle();
   safeRect.name = name;
-  safeRect.x = x;
-  safeRect.y = y;
   safeRect.resizeWithoutConstraints(width, height);
   safeRect.fills = [];
   safeRect.strokes = [
@@ -118,7 +144,22 @@ function appendSafeRect(
   ];
   safeRect.dashPattern = [8, 12];
   safeRect.strokeWeight = 3;
-  safeRect.locked = true;
   safeRect.setPluginData(ROLE_KEY, "overlay");
+  safeRect.constraints = constraints;
+
+  // Append first to establish parent context, then set parent-relative coordinates
   parent.appendChild(safeRect);
+  safeRect.x = x;
+  safeRect.y = y;
+
+  debugFixLog("safe rect positioned in overlay", {
+    parentId: parent.id,
+    expectedX: x,
+    expectedY: y,
+    actualX: safeRect.x,
+    actualY: safeRect.y,
+    width,
+    height,
+    name
+  });
 }
