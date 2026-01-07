@@ -1,7 +1,7 @@
 import { debugAutoLayoutLog } from "./debug.js";
 import { resolveVerticalAlignItems } from "./layout-profile.js";
 import type { LayoutAdviceEntry } from "../types/layout-advice.js";
-import { ASPECT_RATIOS } from "./layout-constants.js";
+import { ASPECT_RATIOS, SPACING_CONSTANTS } from "./layout-constants.js";
 
 /**
  * Auto Layout Adapter - Intelligently restructures auto layouts for different target formats
@@ -280,7 +280,7 @@ function determineSizingModes(
   }
 
   // For extreme aspect ratios, always use FIXED to fill space
-  if (context.targetProfile.aspectRatio < 0.5 || context.targetProfile.aspectRatio > 2) {
+  if (context.targetProfile.aspectRatio < ASPECT_RATIOS.STRETCH_VERTICAL || context.targetProfile.aspectRatio > ASPECT_RATIOS.STRETCH_HORIZONTAL) {
     return { primary: "FIXED", counter: "FIXED" };
   }
 
@@ -386,18 +386,18 @@ function calculateSpacing(
   let distributionRatio: number;
   if (childCount <= 2) {
     // Few children: more generous spacing
-    distributionRatio = 0.40;
+    distributionRatio = SPACING_CONSTANTS.DISTRIBUTION_SPARSE;
   } else if (childCount <= 5) {
     // Moderate: standard spacing
-    distributionRatio = 0.30;
+    distributionRatio = SPACING_CONSTANTS.DISTRIBUTION_MODERATE;
   } else {
     // Dense: tighter spacing to fit content
-    distributionRatio = 0.20;
+    distributionRatio = SPACING_CONSTANTS.DISTRIBUTION_DENSE;
   }
 
   // Boost distribution for extreme aspect ratios
   const aspectRatio = context.targetProfile.aspectRatio;
-  if (aspectRatio < 0.5 || aspectRatio > 2.5) {
+  if (aspectRatio < ASPECT_RATIOS.STRETCH_VERTICAL || aspectRatio > ASPECT_RATIOS.STRETCH_HORIZONTAL_EXTREME) {
     distributionRatio = Math.min(distributionRatio * 1.3, 0.5);
   }
 

@@ -1,4 +1,5 @@
 import { LEGACY_ROLE_KEY, ROLE_KEY } from "./plugin-constants.js";
+import { ASPECT_RATIOS } from "./layout-constants.js";
 
 /**
  * Content analyzer to understand source frame structure and determine
@@ -230,7 +231,7 @@ function determineScalingStrategy(params: {
 
   // For text-heavy content, prefer reflow for extreme aspect changes
   if (hasText && !hasImages) {
-    if (aspectRatio > 2 || aspectRatio < 0.5) {
+    if (aspectRatio > ASPECT_RATIOS.STRETCH_HORIZONTAL || aspectRatio < ASPECT_RATIOS.STRETCH_VERTICAL) {
       return "reflow";
     }
     return "adaptive";

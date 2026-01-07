@@ -1,4 +1,4 @@
-import { ASPECT_RATIOS } from "./layout-constants.js";
+import { ASPECT_RATIOS, SPACING_CONSTANTS } from "./layout-constants.js";
 
 export type LayoutProfile = "horizontal" | "square" | "vertical";
 
@@ -83,8 +83,8 @@ export function computeVerticalSpacing(input: {
   const interiorPerGap = Math.max(input.interior, 0) / gaps;
 
   // Allow vertical stacks to consume more of the interior when tall targets add slack.
-  const softCap = input.baseSpacing * 3;
-  const extendedCap = input.baseSpacing * 12;
+  const softCap = input.baseSpacing * SPACING_CONSTANTS.VERTICAL_GAP_SOFT_CAP;
+  const extendedCap = input.baseSpacing * SPACING_CONSTANTS.VERTICAL_GAP_HARD_CAP;
   const clampedAddition =
     interiorPerGap > softCap * 1.5
       ? Math.min(interiorPerGap * 0.75, extendedCap)
