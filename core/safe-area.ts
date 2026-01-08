@@ -24,18 +24,8 @@ export function resolveSafeAreaInsets(target: VariantTarget, safeAreaRatio: numb
     return config.safeAreaInsets;
   }
 
-  if (target.id === "youtube-cover") {
-    // 1546x423 centered safe region on 2560x1440
-    const leftRight = (target.width - 1546) / 2;
-    const topBottom = (target.height - 423) / 2;
-    return {
-      left: leftRight,
-      right: leftRight,
-      top: topBottom,
-      bottom: topBottom
-    };
-  }
-
+  // Use ratio-based calculation for all targets without explicit insets
+  // (Previously YouTube had hardcoded 1546x423 which was too restrictive)
   const insetX = clampToNonNegative(target.width * safeAreaRatio);
   const insetY = clampToNonNegative(target.height * safeAreaRatio);
   return {

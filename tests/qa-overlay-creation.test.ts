@@ -77,8 +77,11 @@ testCase("createQaOverlay generates YouTube safe area", () => {
   assert(overlay.children.length === 1, "Should have 1 child (safe area)");
   const safeArea = overlay.children[0];
   assert(safeArea.name === "Text & Logo Safe Area", "Should be named 'Text & Logo Safe Area'");
-  assert(safeArea.width === 1546, "Width should be 1546");
-  assert(safeArea.height === 423, "Height should be 423");
+  // 2560x1440 with 10% ratio: width = 2560 - (256*2) = 2048, height = 1440 - (144*2) = 1152
+  const expectedWidth = 2560 - (2560 * 0.1 * 2);
+  const expectedHeight = 1440 - (1440 * 0.1 * 2);
+  assert(Math.abs((safeArea.width || 0) - expectedWidth) < 0.1, `Width should be ${expectedWidth}, got ${safeArea.width}`);
+  assert(Math.abs((safeArea.height || 0) - expectedHeight) < 0.1, `Height should be ${expectedHeight}, got ${safeArea.height}`);
 });
 
 testCase("createQaOverlay generates TikTok safe area", () => {
@@ -122,9 +125,9 @@ testCase("createQaOverlay positions YouTube safe area correctly", () => {
   assert(overlay.children.length === 1, "Should have 1 child");
   const safeArea = overlay.children[0];
 
-  // YouTube: 2560x1440, safe area 1546x423 centered
-  const expectedX = (2560 - 1546) / 2; // 507
-  const expectedY = (1440 - 423) / 2;  // 508.5
+  // YouTube: 2560x1440 with 10% ratio-based safe area
+  const expectedX = 2560 * 0.1; // 256
+  const expectedY = 1440 * 0.1; // 144
 
   assert(Math.abs(safeArea.x - expectedX) < 0.1,
     `Safe area X should be ${expectedX}, got ${safeArea.x}`);

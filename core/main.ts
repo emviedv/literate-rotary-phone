@@ -4,7 +4,6 @@ import type { LayoutAdvice } from "../types/layout-advice.js";
 import type { AiSignals } from "../types/ai-signals.js";
 import { UI_TEMPLATE } from "../ui/template.js";
 import { configureQaOverlay, createQaOverlay } from "./qa-overlay.js";
-import { resolveTargetConfig } from "./target-config.js";
 import { resolveLayoutProfile } from "./layout-profile.js";
 import { createLayoutAdaptationPlan, applyLayoutAdaptation, adaptNestedFrames } from "./auto-layout-adapter.js";
 import { readAiSignals, resolvePrimaryFocalPoint } from "./ai-signals.js";
@@ -227,11 +226,14 @@ async function handleGenerateRequest(
             const overlay = createQaOverlay(target, safeAreaRatio, target.width, target.height);
             variantNode.appendChild(overlay);
             
-            // Use target-specific constraints for the overlay frame
-            const targetConfig = resolveTargetConfig(target);
-            const overlayConstraints = targetConfig.overlayConstraints;
+            // TikTok vertical uses special constraints (pins to top for scrolling content)
+            // All other targets use default STRETCH/STRETCH
+            const overlayConstraints: FrameNode["constraints"] | undefined =
+              target.id === "tiktok-vertical"
+                ? { horizontal: "STRETCH", vertical: "MIN" }
+                : undefined;
 
-            const overlayConfig = configureQaOverlay(overlay, { 
+            const overlayConfig = configureQaOverlay(overlay, {
               parentLayoutMode: variantNode.layoutMode,
               constraints: overlayConstraints
             });
