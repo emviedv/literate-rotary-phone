@@ -52,6 +52,8 @@ type LayoutContext = {
     width: number;
     height: number;
     aspectRatio: number;
+    safeWidth: number;
+    safeHeight: number;
   };
   scale: number;
   adoptVerticalVariant: boolean;
@@ -74,11 +76,17 @@ export function createLayoutAdaptationPlan(
     readonly adoptVerticalVariant?: boolean;
     readonly sourceItemSpacing?: number | null;
     readonly layoutAdvice?: LayoutAdviceEntry;
+    readonly safeAreaRatio?: number;
   }
 ): LayoutAdaptationPlan {
   const sourceLayoutMode: LayoutContext["sourceLayout"]["mode"] =
     options?.sourceLayoutMode ??
     (frame.layoutMode === "GRID" ? "NONE" : frame.layoutMode);
+
+  // Calculate safe area dimensions for spacing calculations
+  const safeAreaRatio = options?.safeAreaRatio ?? 0;
+  const safeWidth = target.width - (target.width * safeAreaRatio * 2);
+  const safeHeight = target.height - (target.height * safeAreaRatio * 2);
 
   const context: LayoutContext = {
     sourceLayout: {
@@ -95,7 +103,9 @@ export function createLayoutAdaptationPlan(
       type: profile,
       width: target.width,
       height: target.height,
-      aspectRatio: target.width / target.height
+      aspectRatio: target.width / target.height,
+      safeWidth,
+      safeHeight
     },
     scale,
     adoptVerticalVariant: options?.adoptVerticalVariant ?? false,
@@ -409,8 +419,9 @@ function calculateSpacing(
   });
 
   // Adjust spacing based on target format
+  // Use safe area dimensions to prevent content from extending outside safe area
   if (context.targetProfile.type === "vertical" && newLayoutMode === "VERTICAL") {
-    const extraSpace = context.targetProfile.height - (context.sourceLayout.height * context.scale);
+    const extraSpace = context.targetProfile.safeHeight - (context.sourceLayout.height * context.scale);
     const gaps = Math.max(childCount - 1, 1);
     const additionalSpacing = Math.max(0, extraSpace / gaps * distributionRatio);
     const finalSpacing = Math.min(scaledSpacing + additionalSpacing, maxSpacing);
@@ -430,7 +441,7 @@ function calculateSpacing(
   }
 
   if (context.targetProfile.type === "horizontal" && newLayoutMode === "HORIZONTAL") {
-    const extraSpace = context.targetProfile.width - (context.sourceLayout.width * context.scale);
+    const extraSpace = context.targetProfile.safeWidth - (context.sourceLayout.width * context.scale);
     const gaps = Math.max(childCount - 1, 1);
     const additionalSpacing = Math.max(0, extraSpace / gaps * distributionRatio);
     const finalSpacing = Math.min(scaledSpacing + additionalSpacing, maxSpacing);

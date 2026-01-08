@@ -340,5 +340,10 @@ export function calculateOptimalScale(
   // For images, cap at 12x to prevent extreme pixelation while ensuring layout fill
   const MAX_SCALE = analysis.hasImages ? 12 : 60;
 
-  return Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale));
+  // CRITICAL: Enforce safe area as hard constraint
+  // The scale must not exceed what fits within safe area bounds
+  const maxSafeScale = Math.min(widthScale, heightScale);
+  const constrainedScale = Math.min(scale, maxSafeScale);
+
+  return Math.max(MIN_SCALE, Math.min(MAX_SCALE, constrainedScale));
 }

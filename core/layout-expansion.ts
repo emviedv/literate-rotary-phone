@@ -17,11 +17,12 @@ export interface AxisExpansionPlan extends DistributedPadding {
 
 export function planAutoLayoutExpansion(context: LayoutExpansionContext): AxisExpansionPlan {
   const totalExtra = Math.max(0, context.totalExtra);
-  if (totalExtra === 0) {
-    return { start: 0, end: 0, interior: 0 };
-  }
-
   const requestedInset = normaliseSafeInset(context.safeInset);
+
+  // Even with no extra space, honor safe area insets as hard minimums
+  if (totalExtra <= 0) {
+    return { start: requestedInset.start, end: requestedInset.end, interior: 0 };
+  }
   const appliedSafe = applySafeInsetBudget(requestedInset, totalExtra);
   const gaps = normaliseGaps(context.gaps);
   const flowChildCount = Math.max(0, context.flowChildCount);
@@ -52,9 +53,10 @@ export function planAutoLayoutExpansion(context: LayoutExpansionContext): AxisEx
     focus: context.focalRatio
   });
 
+  // Ensure final start/end are at least the safe area insets (hard minimum)
   return {
-    start: round(distributed.start),
-    end: round(distributed.end),
+    start: Math.max(round(distributed.start), requestedInset.start),
+    end: Math.max(round(distributed.end), requestedInset.end),
     interior: round(interiorExtra)
   };
 }
@@ -98,17 +100,11 @@ function normaliseSafeInset(value: number | { readonly start: number; readonly e
   };
 }
 
-function applySafeInsetBudget(requested: DistributedPadding, totalExtra: number): DistributedPadding {
-  const totalRequested = requested.start + requested.end;
-  if (totalRequested === 0 || totalExtra === 0) {
-    return { start: 0, end: 0 };
-  }
-  if (totalExtra >= totalRequested) {
-    return requested;
-  }
-  const scale = totalExtra / totalRequested;
+function applySafeInsetBudget(requested: DistributedPadding, _totalExtra: number): DistributedPadding {
+  // Safe area insets are hard minimums - never scale them down
+  // If there's not enough totalExtra, interior expansion will be 0 (via leftover calculation)
   return {
-    start: requested.start * scale,
-    end: requested.end * scale
+    start: Math.max(0, requested.start),
+    end: Math.max(0, requested.end)
   };
 }

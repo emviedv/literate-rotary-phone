@@ -202,7 +202,8 @@ async function handleGenerateRequest(
                 sourceFlowChildCount: rootSnapshot?.flowChildCount ?? undefined,
                 sourceItemSpacing: rootSnapshot?.itemSpacing ?? null,
                 adoptVerticalVariant: safeAreaMetrics.adoptVerticalVariant,
-                layoutAdvice: adviceEntry
+                layoutAdvice: adviceEntry,
+                safeAreaRatio
               }
             );
       

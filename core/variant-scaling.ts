@@ -316,20 +316,19 @@ export async function restoreAutoLayoutSettings(
     return;
   }
 
-  const basePaddingLeft = scaleAutoLayoutMetric(snapshot.paddingLeft, metrics.scale);
-  const basePaddingRight = scaleAutoLayoutMetric(snapshot.paddingRight, metrics.scale);
-  const basePaddingTop = scaleAutoLayoutMetric(snapshot.paddingTop, metrics.scale);
-  const basePaddingBottom = scaleAutoLayoutMetric(snapshot.paddingBottom, metrics.scale);
   const baseItemSpacing = scaleAutoLayoutMetric(snapshot.itemSpacing, metrics.scale);
   const horizontalPlan = metrics.horizontal;
   const verticalPlan = metrics.vertical;
 
   const round = (value: number): number => Math.round(value * 100) / 100;
 
-  frame.paddingLeft = round(basePaddingLeft + horizontalPlan.start);
-  frame.paddingRight = round(basePaddingRight + horizontalPlan.end);
-  frame.paddingTop = round(basePaddingTop + verticalPlan.start);
-  frame.paddingBottom = round(basePaddingBottom + verticalPlan.end);
+  // The expansion plan's start/end values represent the TOTAL padding needed,
+  // not additional padding. extraWidth = target - scaledContent already accounts
+  // for all available space. Adding basePadding would double-count.
+  frame.paddingLeft = round(horizontalPlan.start);
+  frame.paddingRight = round(horizontalPlan.end);
+  frame.paddingTop = round(verticalPlan.start);
+  frame.paddingBottom = round(verticalPlan.end);
 
   let nextItemSpacing = baseItemSpacing;
   if (frame.layoutMode === "HORIZONTAL" && snapshot.flowChildCount >= 2) {

@@ -39,6 +39,33 @@ export function collectWarnings(frame: FrameNode, target: VariantTarget, safeAre
   const contentBounds = combineChildBounds(frame);
 
   if (contentBounds && !isWithinSafeArea(contentBounds, safeArea)) {
+    // Debug: log the actual bounds comparison
+    console.log("[BiblioScale][warnings] OUTSIDE_SAFE_AREA detected", {
+      frameId: frame.id,
+      frameName: frame.name,
+      contentBounds: {
+        left: contentBounds.x - bounds.x,
+        top: contentBounds.y - bounds.y,
+        right: (contentBounds.x + contentBounds.width) - bounds.x,
+        bottom: (contentBounds.y + contentBounds.height) - bounds.y,
+        width: contentBounds.width,
+        height: contentBounds.height
+      },
+      safeArea: {
+        left: insets.left,
+        top: insets.top,
+        right: target.width - insets.right,
+        bottom: target.height - insets.bottom,
+        width: safeWidth,
+        height: safeHeight
+      },
+      overflow: {
+        left: insets.left - (contentBounds.x - bounds.x),
+        top: insets.top - (contentBounds.y - bounds.y),
+        right: (contentBounds.x + contentBounds.width - bounds.x) - (target.width - insets.right),
+        bottom: (contentBounds.y + contentBounds.height - bounds.y) - (target.height - insets.bottom)
+      }
+    });
     warnings.push({
       code: "OUTSIDE_SAFE_AREA",
       severity: "warn",
