@@ -184,12 +184,12 @@ testCase("createQaOverlay applies CENTER constraints to YouTube", () => {
   assert(safeArea.constraints?.vertical === "CENTER", "Vertical constraint should be CENTER");
 });
 
-testCase("createQaOverlay applies STRETCH constraints to TikTok", () => {
+testCase("createQaOverlay applies STRETCH/MIN constraints to TikTok", () => {
   const target = VARIANT_TARGETS.find(t => t.id === "tiktok-vertical");
   if (!target) throw new Error("Target not found");
   const overlay = createQaOverlay(target, 0.1) as unknown as MockNode;
   const safeArea = overlay.children[0];
 
   assert(safeArea.constraints?.horizontal === "STRETCH", "Horizontal constraint should be STRETCH");
-  assert(safeArea.constraints?.vertical === "STRETCH", "Vertical constraint should be STRETCH");
+  assert(safeArea.constraints?.vertical === "MIN", "Vertical constraint should be MIN (pins to top for scrolling)");
 });

@@ -284,18 +284,9 @@ function determineSizingModes(
     return { primary: "FIXED", counter: "FIXED" };
   }
 
-  // For moderate layouts, allow some flexibility
-  if (layoutMode === "VERTICAL") {
-    return {
-      primary: context.targetProfile.type === "vertical" ? "FIXED" : "AUTO",
-      counter: "FIXED"
-    };
-  } else {
-    return {
-      primary: context.targetProfile.type === "horizontal" ? "FIXED" : "AUTO",
-      counter: "FIXED"
-    };
-  }
+  // Always use FIXED sizing for variant frames - they have been explicitly
+  // resized to target dimensions and should never hug content
+  return { primary: "FIXED", counter: "FIXED" };
 }
 
 /**

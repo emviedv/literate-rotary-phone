@@ -11,7 +11,7 @@ const SPECIFIC_CONFIGS: Record<string, Partial<TargetConfig>> = {
   "tiktok-vertical": {
      safeAreaInsets: { top: 108, bottom: 320, left: 44, right: 120 },
      overlayLabel: "Content Safe Zone",
-     overlayConstraints: { horizontal: "STRETCH", vertical: "STRETCH" }
+     overlayConstraints: { horizontal: "STRETCH", vertical: "MIN" }
   },
   "youtube-cover": {
       overlayLabel: "Text & Logo Safe Area",
