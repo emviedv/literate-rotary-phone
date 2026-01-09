@@ -34,9 +34,13 @@ export function planAutoLayoutExpansion(context: LayoutExpansionContext): AxisEx
   let baseInteriorWeight = 0;
   if (canReflow) {
     const gapCount = Math.max(flowChildCount - 1, 1);
-    baseInteriorWeight = Math.min(0.58 + gapCount * 0.12, 0.82);
+    // Increased base weight for more generous gap distribution
+    // Was: 0.58 + gapCount * 0.12, cap 0.82
+    // Now: 0.65 + gapCount * 0.10, cap 0.88
+    baseInteriorWeight = Math.min(0.65 + gapCount * 0.10, 0.88);
     if (baseItemSpacing < 16) {
-      baseInteriorWeight *= 0.92;
+      // Smaller penalty for tight spacing (was 0.92, now 0.95)
+      baseInteriorWeight *= 0.95;
     }
   }
 

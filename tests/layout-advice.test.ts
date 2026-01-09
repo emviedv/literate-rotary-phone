@@ -58,7 +58,7 @@ testCase("autoSelectLayoutPattern picks the highest-confidence option above thre
     ]
   };
 
-  const selection = autoSelectLayoutPattern(advice, "figma-cover", 0.7);
+  const selection = autoSelectLayoutPattern(advice, "figma-cover", { minConfidence: 0.7 });
   if (!selection || selection.patternId !== "hero-left") {
     throw new Error("Expected hero-left to be auto-selected as highest-confidence option");
   }
@@ -83,7 +83,7 @@ testCase("autoSelectLayoutPattern marks fallback when no option clears the bar",
     ]
   };
 
-  const selection = autoSelectLayoutPattern(advice, "tiktok-vertical", 0.6);
+  const selection = autoSelectLayoutPattern(advice, "tiktok-vertical", { minConfidence: 0.6 });
   if (!selection?.fallback) {
     throw new Error("Expected fallback when confidence thresholds are not met");
   }
@@ -109,7 +109,7 @@ testCase("normalizeLayoutAdvice maps confidence fields into scores for auto sele
     throw new Error("Expected advice to normalize");
   }
 
-  const selection = autoSelectLayoutPattern(advice, "figma-cover", 0.7);
+  const selection = autoSelectLayoutPattern(advice, "figma-cover", { minConfidence: 0.7 });
   if (!selection || selection.patternId !== "hero-left") {
     throw new Error("Expected hero-left to be selected after normalizing confidence");
   }

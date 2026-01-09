@@ -14,3 +14,25 @@ export function hasOverlayRole(node: { getPluginData?: (key: string) => string }
     return false;
   }
 }
+
+/**
+ * Returns true when a node is tagged as a hero_bleed element.
+ * Hero bleed elements intentionally extend beyond frame bounds
+ * (e.g., device mockups, cropped portraits, bleeding photos).
+ */
+export function hasHeroBleedRole(node: { getPluginData?: (key: string) => string }): boolean {
+  if (!("getPluginData" in node) || typeof node.getPluginData !== "function") {
+    return false;
+  }
+  try {
+    return node.getPluginData(ROLE_KEY) === "hero_bleed" || node.getPluginData(LEGACY_ROLE_KEY) === "hero_bleed";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Roles that should be excluded from safe area constraint checks.
+ * These elements are allowed to extend beyond frame bounds.
+ */
+export const SAFE_AREA_EXEMPT_ROLES = ["overlay", "hero_bleed", "background"] as const;

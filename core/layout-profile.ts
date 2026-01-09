@@ -85,40 +85,39 @@ export function computeVerticalSpacing(input: {
   // Allow vertical stacks to consume more of the interior when tall targets add slack.
   const softCap = input.baseSpacing * SPACING_CONSTANTS.VERTICAL_GAP_SOFT_CAP;
   const extendedCap = input.baseSpacing * SPACING_CONSTANTS.VERTICAL_GAP_HARD_CAP;
+
+  // Less aggressive dampening - use 85% instead of 75% for large gaps
   const clampedAddition =
     interiorPerGap > softCap * 1.5
-      ? Math.min(interiorPerGap * 0.75, extendedCap)
+      ? Math.min(interiorPerGap * 0.85, extendedCap)
       : Math.min(interiorPerGap, softCap);
 
-  // For layouts with very few children and lots of space,
-  // distribute more conservatively to avoid awkward spacing
-  if (input.flowChildCount <= 3 && interiorPerGap > input.baseSpacing * 2) {
-    // Use a softened portion of interior space for sparse layouts
-    return roundSpacing(input.baseSpacing + clampedAddition * 0.8);
-  }
-
+  // Removed the 20% penalty for sparse layouts - let elements breathe
+  // Previously this was causing cramped layouts with only 2-3 children
   return roundSpacing(input.baseSpacing + clampedAddition);
 }
 
 /**
- * When rotating a horizontal auto layout into a vertical stack we default to
- * anchoring content to the top safe area unless the designer explicitly asked
- * for space-between distribution. Centered stacks otherwise leave large
- * gutters in tall canvases.
+ * Determines vertical alignment for content in tall targets.
+ * Prioritizes visual centering for better balance, unless explicitly
+ * requested otherwise (MIN or SPACE_BETWEEN).
  */
 export function resolveVerticalAlignItems(
   current: PrimaryAxisAlign,
   options: { readonly interior: number }
 ): PrimaryAxisAlign {
+  // Respect explicit MIN alignment request
   if (current === "MIN") {
     return current;
   }
-  const interior = Math.max(0, options.interior);
-  if (interior > 0) {
-    return "MIN";
-  }
+  // Respect explicit SPACE_BETWEEN request
   if (current === "SPACE_BETWEEN") {
     return "SPACE_BETWEEN";
+  }
+  // When there's extra interior space, CENTER content for better visual balance
+  // This produces properly centered layouts in vertical targets like TikTok
+  if (options.interior > 0) {
+    return "CENTER";
   }
   return "MIN";
 }

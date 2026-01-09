@@ -169,7 +169,7 @@ testCase("image children do not grow to fill width in ultra-wide targets", () =>
   );
 });
 
-testCase("adopts vertical flow using source snapshot hints and top-aligns stack", () => {
+testCase("adopts vertical flow using source snapshot hints and centers stack", () => {
   const frame = createFrame({
     layoutMode: "NONE",
     width: 1200,
@@ -185,7 +185,7 @@ testCase("adopts vertical flow using source snapshot hints and top-aligns stack"
   );
 
   assert(plan.layoutMode === "VERTICAL", "layout mode should switch to VERTICAL for tall targets");
-  assert(plan.primaryAxisAlignItems === "MIN", "vertical stacks should top-align to hug the safe area");
+  assert(plan.primaryAxisAlignItems === "CENTER", "vertical stacks should center for better visual balance");
 });
 
 testCase("converts horizontal moderate vertical targets when adoptVerticalVariant is true", () => {

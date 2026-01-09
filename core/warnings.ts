@@ -2,10 +2,10 @@ import type { AiSignals } from "../types/ai-signals.js";
 import type { VariantWarning } from "../types/messages.js";
 import type { VariantTarget } from "../types/targets.js";
 import { deriveWarningsFromAiSignals, readAiSignals } from "./ai-signals.js";
-import { hasOverlayRole } from "./node-roles.js";
+import { hasOverlayRole, hasHeroBleedRole } from "./node-roles.js";
 import { resolveSafeAreaInsets } from "./safe-area.js";
 
-const IGNORED_ROLES = new Set(["hero_image", "secondary_image", "decorative"]);
+const IGNORED_ROLES = new Set(["hero_image", "secondary_image", "decorative", "hero_bleed"]);
 
 type ContentMargins = {
   left: number;
@@ -175,6 +175,11 @@ export function combineChildBounds(
 
 function isBackgroundOrIgnored(node: SceneNode, rootFrame: FrameNode, aiSignals?: AiSignals): boolean {
   if (hasOverlayRole(node)) {
+    return true;
+  }
+
+  // Check for hero_bleed role via plugin data
+  if (hasHeroBleedRole(node)) {
     return true;
   }
 

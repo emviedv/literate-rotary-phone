@@ -249,7 +249,7 @@ async function handleGenerateRequest(
               willLockAfterFlush: false
             });
       
-            const patternSelection = autoSelectLayoutPattern(layoutAdvice, target.id, MIN_PATTERN_CONFIDENCE);
+            const patternSelection = autoSelectLayoutPattern(layoutAdvice, target.id, { minConfidence: MIN_PATTERN_CONFIDENCE });
             const userSelection = layoutPatterns[target.id];
             
             const chosenPatternId =

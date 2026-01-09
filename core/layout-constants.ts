@@ -27,10 +27,12 @@ export const RESOLUTION_THRESHOLDS = {
 };
 
 export const SPACING_CONSTANTS = {
-  DISTRIBUTION_SPARSE: 0.40,
-  DISTRIBUTION_MODERATE: 0.30,
-  DISTRIBUTION_DENSE: 0.20,
-  
-  VERTICAL_GAP_SOFT_CAP: 3, // Multiplier of base spacing
-  VERTICAL_GAP_HARD_CAP: 12,
+  // Interior gap distribution ratios (how much extra space goes to gaps vs edges)
+  DISTRIBUTION_SPARSE: 0.55,    // 1-2 children: 55% to gaps (was 40%)
+  DISTRIBUTION_MODERATE: 0.45,  // 3-5 children: 45% to gaps (was 30%)
+  DISTRIBUTION_DENSE: 0.35,     // 6+ children: 35% to gaps (was 20%)
+
+  // Vertical gap caps (multiplier of base spacing)
+  VERTICAL_GAP_SOFT_CAP: 5,     // Allow up to 5x base spacing (was 3)
+  VERTICAL_GAP_HARD_CAP: 15,    // Allow up to 15x for extreme cases (was 12)
 };

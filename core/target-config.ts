@@ -1,4 +1,5 @@
 import type { VariantTarget } from "../types/targets.js";
+import type { TargetQaThresholds } from "../types/ai-signals.js";
 import { ASPECT_RATIOS } from "./layout-constants.js";
 
 export interface TargetConfig {
@@ -16,6 +17,83 @@ const SPECIFIC_CONFIGS: Record<string, Partial<TargetConfig>> = {
   "youtube-cover": {
       overlayLabel: "Text & Logo Safe Area",
       overlayConstraints: { horizontal: "CENTER", vertical: "CENTER" }
+  }
+};
+
+/**
+ * Target-specific QA thresholds for validating content fit.
+ * Used by AI to generate target-aware warnings.
+ */
+export const TARGET_QA_THRESHOLDS: Record<string, TargetQaThresholds> = {
+  "figma-cover": {
+    targetId: "figma-cover",
+    minFontSize: 14,
+    maxTextLength: 200,
+    minCtaSize: { width: 120, height: 40 },
+    safeAreaCritical: false
+  },
+  "figma-gallery": {
+    targetId: "figma-gallery",
+    minFontSize: 14,
+    maxTextLength: 180,
+    minCtaSize: { width: 100, height: 36 },
+    safeAreaCritical: false
+  },
+  "figma-thumbnail": {
+    targetId: "figma-thumbnail",
+    minFontSize: 9,
+    maxTextLength: 80,
+    minCtaSize: { width: 40, height: 20 },
+    safeAreaCritical: false
+  },
+  "web-hero": {
+    targetId: "web-hero",
+    minFontSize: 16,
+    maxTextLength: 150,
+    minCtaSize: { width: 140, height: 44 },
+    safeAreaCritical: false
+  },
+  "social-carousel": {
+    targetId: "social-carousel",
+    minFontSize: 14,
+    maxTextLength: 120,
+    minCtaSize: { width: 100, height: 40 },
+    safeAreaCritical: false
+  },
+  "youtube-cover": {
+    targetId: "youtube-cover",
+    minFontSize: 18,
+    maxTextLength: 150,
+    minCtaSize: { width: 100, height: 36 },
+    safeAreaCritical: true,
+    overlayZones: [
+      { x: 0, y: 1200, width: 2560, height: 240, description: "Bottom subscribe area" }
+    ]
+  },
+  "tiktok-vertical": {
+    targetId: "tiktok-vertical",
+    minFontSize: 24,
+    maxTextLength: 120,
+    minCtaSize: { width: 200, height: 48 },
+    safeAreaCritical: true,
+    overlayZones: [
+      { x: 0, y: 0, width: 1080, height: 108, description: "Top status bar" },
+      { x: 0, y: 1600, width: 1080, height: 320, description: "Bottom action bar" }
+    ]
+  },
+  "gumroad-cover": {
+    targetId: "gumroad-cover",
+    minFontSize: 14,
+    maxTextLength: 180,
+    minCtaSize: { width: 120, height: 40 },
+    safeAreaCritical: false
+  },
+  "gumroad-thumbnail": {
+    targetId: "gumroad-thumbnail",
+    minFontSize: 12,
+    maxTextLength: 60,
+    minCtaSize: { width: 60, height: 28 },
+    safeAreaCritical: false
   }
 };
 

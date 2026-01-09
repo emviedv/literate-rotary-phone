@@ -17,9 +17,9 @@ import {
 import { resolveSafeAreaInsets } from "./safe-area.js";
 import { debugFixLog } from "./debug.js";
 import { measureContentMargins } from "./warnings.js";
-import { resolvePrimaryFocalPoint } from "./ai-signals.js";
+import { resolvePrimaryFocalPoint, readAiSignals, isHeroBleedNode } from "./ai-signals.js";
 import { SAFE_AREA_KEY, FOCAL_POINT_KEY } from "./plugin-constants.js";
-import { hasOverlayRole } from "./node-roles.js";
+import { hasOverlayRole, hasHeroBleedRole } from "./node-roles.js";
 
 type Mutable<T> = T extends ReadonlyArray<infer U>
   ? Mutable<U>[]
@@ -398,7 +398,24 @@ function expandAbsoluteChildren(
     return;
   }
 
-  const childSnapshots = absoluteChildren
+  // Read AI signals for hero_bleed detection
+  const aiSignals = readAiSignals(frame);
+
+  // Separate hero_bleed children from regular children
+  const heroBleedChildren: SceneNode[] = [];
+  const regularChildren: SceneNode[] = [];
+
+  for (const child of absoluteChildren) {
+    const isHeroBleed = hasHeroBleedRole(child) || isHeroBleedNode(aiSignals, child.id);
+    if (isHeroBleed) {
+      heroBleedChildren.push(child);
+    } else {
+      regularChildren.push(child);
+    }
+  }
+
+  // Handle regular children with standard safe area positioning
+  const regularSnapshots = regularChildren
     .filter((child): child is SceneNode & { x: number; y: number; width: number; height: number } => {
       return (
         typeof (child as SceneNode & { x: unknown }).x === "number" &&
@@ -415,39 +432,105 @@ function expandAbsoluteChildren(
       height: child.height
     }));
 
-  if (childSnapshots.length === 0) {
-    return;
+  if (regularSnapshots.length > 0) {
+    const planned = planAbsoluteChildPositions({
+      profile,
+      safeBounds,
+      targetAspectRatio: frame.height > 0 ? frame.width / frame.height : safeBounds.width / Math.max(safeBounds.height, 1),
+      children: regularSnapshots
+    });
+
+    const lookup = new Map(planned.map((plan) => [plan.id, plan] as const));
+
+    for (const child of regularChildren) {
+      const plan = lookup.get(child.id);
+      if (!plan) {
+        continue;
+      }
+      if (Number.isFinite(plan.x)) {
+        child.x = plan.x;
+      }
+      if (Number.isFinite(plan.y)) {
+        child.y = plan.y;
+      }
+    }
   }
 
-  const planned = planAbsoluteChildPositions({
-    profile,
-    safeBounds,
-    targetAspectRatio: frame.height > 0 ? frame.width / frame.height : safeBounds.width / Math.max(safeBounds.height, 1),
-    children: childSnapshots
-  });
-
-  const lookup = new Map(planned.map((plan) => [plan.id, plan] as const));
-
-  for (const child of absoluteChildren) {
-    const plan = lookup.get(child.id);
-    if (!plan) {
+  // Handle hero_bleed children with edge-relative positioning
+  // Preserve their proportional distance from the nearest edge
+  for (const child of heroBleedChildren) {
+    if (!("x" in child) || !("y" in child) || !("width" in child) || !("height" in child)) {
       continue;
     }
-    if (Number.isFinite(plan.x)) {
-      child.x = plan.x;
+    const nodeWithDims = child as SceneNode & { x: number; y: number; width: number; height: number };
+    const edgePosition = positionHeroBleedChild(nodeWithDims, frame.width, frame.height);
+    if (Number.isFinite(edgePosition.x)) {
+      nodeWithDims.x = edgePosition.x;
     }
-    if (Number.isFinite(plan.y)) {
-      child.y = plan.y;
+    if (Number.isFinite(edgePosition.y)) {
+      nodeWithDims.y = edgePosition.y;
     }
   }
 
   debugFixLog("absolute children expanded", {
     nodeId: frame.id,
     safeBounds,
-    childCount: absoluteChildren.length,
-    profile,
-    appliedPlans: planned
+    regularCount: regularChildren.length,
+    heroBleedCount: heroBleedChildren.length,
+    profile
   });
+}
+
+/**
+ * Position a hero_bleed element by preserving its proportional edge relationship.
+ * Hero bleed elements intentionally extend beyond frame bounds, so we maintain
+ * their position relative to the nearest edge instead of constraining to safe area.
+ */
+function positionHeroBleedChild(
+  child: { x: number; y: number; width: number; height: number },
+  frameWidth: number,
+  frameHeight: number
+): { x: number; y: number } {
+  const centerX = child.x + child.width / 2;
+  const centerY = child.y + child.height / 2;
+
+  // Determine which edge the element is closest to (for each axis)
+  const distToLeft = centerX;
+  const distToRight = frameWidth - centerX;
+  const distToTop = centerY;
+  const distToBottom = frameHeight - centerY;
+
+  let newX = child.x;
+  let newY = child.y;
+
+  // For X axis: maintain proportional distance from nearest edge
+  if (distToLeft <= distToRight) {
+    // Element is closer to left edge - preserve proportional left distance
+    const leftRatio = child.x / Math.max(frameWidth, 1);
+    newX = frameWidth * leftRatio;
+  } else {
+    // Element is closer to right edge - preserve proportional right distance
+    const rightEdgeOfChild = child.x + child.width;
+    const rightRatio = (frameWidth - rightEdgeOfChild) / Math.max(frameWidth, 1);
+    newX = frameWidth - (frameWidth * rightRatio) - child.width;
+  }
+
+  // For Y axis: maintain proportional distance from nearest edge
+  if (distToTop <= distToBottom) {
+    // Element is closer to top edge - preserve proportional top distance
+    const topRatio = child.y / Math.max(frameHeight, 1);
+    newY = frameHeight * topRatio;
+  } else {
+    // Element is closer to bottom edge - preserve proportional bottom distance
+    const bottomEdgeOfChild = child.y + child.height;
+    const bottomRatio = (frameHeight - bottomEdgeOfChild) / Math.max(frameHeight, 1);
+    newY = frameHeight - (frameHeight * bottomRatio) - child.height;
+  }
+
+  return {
+    x: Math.round(newX * 100) / 100,
+    y: Math.round(newY * 100) / 100
+  };
 }
 
 function isBackgroundLike(node: SceneNode, rootWidth: number, rootHeight: number): boolean {
@@ -646,13 +729,30 @@ function getMinLegibleSize(target: VariantTarget): number {
 async function scaleTextNode(node: TextNode, scale: number, fontCache: Set<string>, target: VariantTarget): Promise<void> {
   const minLegibleSize = getMinLegibleSize(target);
   const characters = node.characters;
+
+  // STEP 1: Store original auto-resize mode to preserve text box width
+  const originalAutoResize = node.textAutoResize;
+
+  // STEP 2: Set to NONE to prevent auto-shrinking during scaling
+  // This prevents Figma from immediately resizing the box after font changes
+  node.textAutoResize = "NONE";
+
+  // STEP 3: Scale text box dimensions FIRST (before font scaling)
+  // This ensures the text box is large enough to accommodate scaled text
+  const scaledWidth = node.width * scale;
+  const scaledHeight = node.height * scale;
+  node.resize(scaledWidth, scaledHeight);
+
   if (characters.length === 0) {
     if (node.fontSize !== figma.mixed && typeof node.fontSize === "number") {
       node.fontSize = Math.max(node.fontSize * scale, minLegibleSize);
     }
+    // Restore auto-resize for empty text nodes
+    restoreTextAutoResize(node, originalAutoResize);
     return;
   }
 
+  // STEP 4: Load fonts and scale text properties
   const fontNames = await node.getRangeAllFontNames(0, characters.length);
   for (const font of fontNames) {
     const cacheKey = `${font.family}__${font.style}`;
@@ -686,6 +786,25 @@ async function scaleTextNode(node: TextNode, scale: number, fontCache: Set<strin
         value: letterSpacing.value * scale
       });
     }
+  }
+
+  // STEP 5: Restore auto-resize mode with appropriate adjustments
+  restoreTextAutoResize(node, originalAutoResize);
+}
+
+/**
+ * Restores text auto-resize mode after scaling, with adjustments to prevent awkward line breaks.
+ * - WIDTH_AND_HEIGHT boxes are converted to HEIGHT to preserve the scaled width
+ * - This prevents text from shrinking back and causing mid-word line breaks
+ */
+function restoreTextAutoResize(node: TextNode, originalAutoResize: TextNode["textAutoResize"]): void {
+  if (originalAutoResize === "WIDTH_AND_HEIGHT") {
+    // For fully auto text, lock width but allow height to grow
+    // This prevents the text box from shrinking back to minimal width
+    node.textAutoResize = "HEIGHT";
+  } else {
+    // Restore original mode (NONE or HEIGHT)
+    node.textAutoResize = originalAutoResize;
   }
 }
 

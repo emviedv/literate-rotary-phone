@@ -73,14 +73,14 @@ testCase("computeVerticalSpacing distributes interior space across gaps", () => 
   assertEqual(spacing, 84, "Interior space should add evenly across three gaps.");
 });
 
-testCase("resolveVerticalAlignItems anchors stacks to the top when previously centered", () => {
+testCase("resolveVerticalAlignItems centers stacks when interior space exists", () => {
   const align = resolveVerticalAlignItems("CENTER", { interior: 120 });
-  assertEqual(align, "MIN", "Centered horizontal stacks should top-align when switching to vertical.");
+  assertEqual(align, "CENTER", "Centered horizontal stacks should stay centered for better visual balance.");
 });
 
-testCase("resolveVerticalAlignItems collapses space-between when extra interior remains", () => {
+testCase("resolveVerticalAlignItems preserves space-between when explicitly set", () => {
   const align = resolveVerticalAlignItems("SPACE_BETWEEN", { interior: 180 });
-  assertEqual(align, "MIN", "Space-between should collapse to top alignment for tall variants.");
+  assertEqual(align, "SPACE_BETWEEN", "Space-between should be respected when explicitly requested.");
 });
 
 testCase("resolveVerticalAlignItems keeps space-between when no extra interior exists", () => {

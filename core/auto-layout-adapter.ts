@@ -1,6 +1,8 @@
 import { debugAutoLayoutLog } from "./debug.js";
 import { resolveVerticalAlignItems } from "./layout-profile.js";
 import type { LayoutAdviceEntry } from "../types/layout-advice.js";
+import type { LayoutPatternId } from "../types/layout-patterns.js";
+import { LAYOUT_PATTERNS } from "../types/layout-patterns.js";
 import { ASPECT_RATIOS, SPACING_CONSTANTS } from "./layout-constants.js";
 
 /**
@@ -183,13 +185,27 @@ export function createLayoutAdaptationPlan(
 function determineOptimalLayoutMode(context: LayoutContext): "HORIZONTAL" | "VERTICAL" | "NONE" {
   const { sourceLayout, targetProfile, layoutAdvice } = context;
 
-  // AI Override - highest priority
+  // AI Override - highest priority: check explicit suggestedLayoutMode first
   if (layoutAdvice?.suggestedLayoutMode) {
-    debugAutoLayoutLog("determining optimal layout: using AI suggestion", {
+    debugAutoLayoutLog("determining optimal layout: using AI suggestedLayoutMode", {
       suggestedMode: layoutAdvice.suggestedLayoutMode,
       context
     });
     return layoutAdvice.suggestedLayoutMode;
+  }
+
+  // AI Override - second priority: derive layout mode from selected pattern
+  if (layoutAdvice?.selectedId) {
+    const patternId = layoutAdvice.selectedId as LayoutPatternId;
+    const pattern = LAYOUT_PATTERNS[patternId];
+    if (pattern) {
+      debugAutoLayoutLog("determining optimal layout: deriving from AI pattern selection", {
+        patternId,
+        patternLayoutMode: pattern.layoutMode,
+        context
+      });
+      return pattern.layoutMode;
+    }
   }
 
   if (context.adoptVerticalVariant && targetProfile.type === "vertical") {
@@ -301,20 +317,71 @@ function determineSizingModes(
 
 /**
  * Determines alignment strategies for the adapted layout
+ * Uses pattern-specific alignments when available from AI advice
  */
 function determineAlignments(
   layoutMode: "HORIZONTAL" | "VERTICAL" | "NONE",
   context: LayoutContext
 ): { primary: FrameNode["primaryAxisAlignItems"]; counter: FrameNode["counterAxisAlignItems"] } {
+  const { layoutAdvice } = context;
+
   if (layoutMode === "NONE") {
     return { primary: "MIN", counter: "MIN" };
+  }
+
+  // Try to use pattern-specific alignments from AI advice
+  if (layoutAdvice?.selectedId) {
+    const patternId = layoutAdvice.selectedId as LayoutPatternId;
+    const pattern = LAYOUT_PATTERNS[patternId];
+    if (pattern && pattern.layoutMode === layoutMode) {
+      debugAutoLayoutLog("using pattern-specific alignment", {
+        patternId,
+        primaryAlignment: pattern.primaryAlignment,
+        counterAlignment: pattern.counterAlignment
+      });
+
+      // Map pattern alignment to Figma alignment types
+      const mapPrimaryAlignment = (
+        align: "MIN" | "CENTER" | "MAX" | "SPACE_BETWEEN"
+      ): FrameNode["primaryAxisAlignItems"] => {
+        return align;
+      };
+
+      const mapCounterAlignment = (
+        align: "MIN" | "CENTER" | "STRETCH"
+      ): FrameNode["counterAxisAlignItems"] => {
+        // Figma counterAxisAlignItems doesn't support STRETCH directly;
+        // STRETCH is achieved via child layoutAlign property. Map to CENTER.
+        if (align === "STRETCH") {
+          return "CENTER";
+        }
+        return align;
+      };
+
+      return {
+        primary: mapPrimaryAlignment(pattern.primaryAlignment),
+        counter: mapCounterAlignment(pattern.counterAlignment)
+      };
+    }
   }
 
   // For vertical layouts in tall targets
   if (layoutMode === "VERTICAL" && context.targetProfile.type === "vertical") {
     const interiorEstimate = Math.max(context.targetProfile.height - context.sourceLayout.height * context.scale, 0);
+
+    // Use AI-selected pattern's alignment when available
+    // Patterns like "centered-stack" use CENTER, "hero-first" uses MIN
+    let primaryAlign: FrameNode["primaryAxisAlignItems"] = "CENTER";
+    if (layoutAdvice?.selectedId) {
+      const patternId = layoutAdvice.selectedId as LayoutPatternId;
+      const pattern = LAYOUT_PATTERNS[patternId];
+      if (pattern?.layoutMode === "VERTICAL") {
+        primaryAlign = pattern.primaryAlignment;
+      }
+    }
+
     return {
-      primary: resolveVerticalAlignItems("CENTER", { interior: interiorEstimate }),
+      primary: resolveVerticalAlignItems(primaryAlign, { interior: interiorEstimate }),
       counter: "CENTER"
     };
   }
@@ -651,6 +718,9 @@ export function applyLayoutAdaptation(frame: FrameNode, plan: LayoutAdaptationPl
  * Recursively adapts nested frames that act as structural containers.
  * This ensures that nested layouts (e.g. content rows) also reflow
  * when targeting extreme aspect ratios (like Horizontal -> Vertical).
+ *
+ * IMPORTANT: Skips component-like frames (logos, buttons, icons) to
+ * preserve their internal auto-layout structure.
  */
 export function adaptNestedFrames(
   root: FrameNode,
@@ -660,6 +730,16 @@ export function adaptNestedFrames(
 ): void {
   for (const child of root.children) {
     if (child.type === "FRAME") {
+      // Skip component-like frames to preserve their internal structure
+      if (isComponentLikeFrame(child)) {
+        debugAutoLayoutLog("skipping component-like frame in nested adaptation", {
+          nodeId: child.id,
+          nodeName: child.name,
+          width: child.width,
+          height: child.height
+        });
+        continue;
+      }
       adaptNodeRecursive(child, target, profile, scale);
     }
   }
@@ -671,10 +751,15 @@ function adaptNodeRecursive(
   profile: "horizontal" | "vertical" | "square",
   scale: number
 ): void {
+  // Skip component-like frames entirely - don't adapt them or their children
+  if (isComponentLikeFrame(node)) {
+    return;
+  }
+
   // 1. Adapt current node if it looks like a structural container
   if (isStructuralContainer(node, target.width)) {
     const plan = createLayoutAdaptationPlan(node, target, profile, scale);
-    
+
     // Only apply if the mode actually changes (avoid churning)
     if (plan.layoutMode !== node.layoutMode) {
       debugAutoLayoutLog("adapting nested structural frame", {
@@ -720,7 +805,7 @@ function hasTextChildren(frame: FrameNode): boolean {
 }
 
 function hasImageContent(node: SceneNode): boolean {
-  if ("fills" in node) {
+  if ("fills" in node && Array.isArray(node.fills)) {
     const fills = node.fills as readonly Paint[];
     if (fills.some(fill => fill.type === "IMAGE" || fill.type === "VIDEO")) {
       return true;
@@ -795,4 +880,39 @@ function countFlowChildren(frame: FrameNode): number {
     count++;
   }
   return count;
+}
+
+/**
+ * Heuristic to detect composed component frames (logos, buttons, icons) that
+ * should NOT have their internal auto-layout modified.
+ *
+ * This prevents breaking small, self-contained UI elements when adapting
+ * layouts for different target sizes.
+ */
+function isComponentLikeFrame(node: FrameNode): boolean {
+  // Small frames are likely components (logos, icons, buttons)
+  if (node.width < 200 && node.height < 200) {
+    return true;
+  }
+
+  // Check for common component name patterns
+  const nameLower = node.name.toLowerCase();
+  const componentPatterns = /logo|icon|button|badge|chip|avatar|cta|tag|pill|indicator/i;
+  if (componentPatterns.test(nameLower)) {
+    return true;
+  }
+
+  // Frames with auto-layout and few children are likely atomic components
+  // (e.g., a logo with icon + text, or a button with icon + label)
+  if (node.layoutMode !== "NONE" && node.children.length <= 3) {
+    // Additional check: if children are mostly text/vectors, it's a component
+    const hasOnlySimpleChildren = node.children.every(
+      (child) => child.type === "TEXT" || child.type === "VECTOR" || child.type === "RECTANGLE" || child.type === "ELLIPSE"
+    );
+    if (hasOnlySimpleChildren) {
+      return true;
+    }
+  }
+
+  return false;
 }

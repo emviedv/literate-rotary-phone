@@ -107,6 +107,58 @@ function mapQaToWarning(qa: AiQaSignal): VariantWarning | null {
   }
 }
 
+/**
+ * Finds the role assigned to a specific node by AI analysis.
+ * Returns the role with highest confidence if found, otherwise null.
+ */
+export function findNodeRole(
+  signals: AiSignals | null | undefined,
+  nodeId: string
+): { readonly role: string; readonly confidence: number } | null {
+  if (!signals?.roles?.length) {
+    return null;
+  }
+
+  const matches = signals.roles.filter((r) => r.nodeId === nodeId);
+  if (matches.length === 0) {
+    return null;
+  }
+
+  // Return the highest confidence role for this node
+  const sorted = [...matches].sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0));
+  const best = sorted[0];
+
+  if (!best || (best.confidence ?? 0) < MIN_CONFIDENCE) {
+    return null;
+  }
+
+  return { role: best.role, confidence: best.confidence ?? 0 };
+}
+
+/**
+ * Checks if a node has the hero_bleed role (intentionally bleeds beyond frame bounds).
+ */
+export function isHeroBleedNode(signals: AiSignals | null | undefined, nodeId: string): boolean {
+  const roleInfo = findNodeRole(signals, nodeId);
+  return roleInfo?.role === "hero_bleed";
+}
+
+/**
+ * Gets all nodes with a specific role from AI signals.
+ */
+export function getNodesByRole(
+  signals: AiSignals | null | undefined,
+  role: string
+): readonly { readonly nodeId: string; readonly confidence: number }[] {
+  if (!signals?.roles?.length) {
+    return [];
+  }
+
+  return signals.roles
+    .filter((r) => r.role === role && (r.confidence ?? 0) >= MIN_CONFIDENCE)
+    .map((r) => ({ nodeId: r.nodeId, confidence: r.confidence ?? 0 }));
+}
+
 export function resolvePrimaryFocalPoint(
   signals: AiSignals | null | undefined
 ): { readonly x: number; readonly y: number; readonly confidence: number } | null {
