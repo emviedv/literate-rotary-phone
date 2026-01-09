@@ -1,4 +1,4 @@
-# Debug Mode for BiblioScale
+# Debug Mode for ScaleResizer
 
 ## Enable Debug Mode
 
@@ -30,7 +30,7 @@ When enabled, you'll see detailed logs including:
 ## Example Debug Output
 
 ```
-[BiblioScale] Content analysis complete {
+[ScaleResizer] Content analysis complete {
   frameId: "123:456",
   frameName: "My Design",
   effectiveDimensions: "400×600",
@@ -41,7 +41,7 @@ When enabled, you'll see detailed logs including:
   actualBounds: { x: 20, y: 30, width: 360, height: 540 }
 }
 
-[BiblioScale] Optimal scale calculated {
+[ScaleResizer] Optimal scale calculated {
   scale: 1.78,
   sourceEffective: "360×540",
   target: "1080×1920",

@@ -1,10 +1,10 @@
-# BiblioScale — Product Requirements Document
+# ScaleResizer — Product Requirements Document
 
 **Status:** Proposed (NOT IN CURRENT STACK)  
 **Last updated:** November 03, 2025
 
 ## Context
-Marketing and product teams frequently repurpose bespoke campaign frames across multiple Figma-native placements. Manual resizing duplicates effort, introduces layout mistakes, and slows launches. BiblioScale automates multi-target adaptation while preserving original creative intent, enabling fast, on-brand asset expansion.
+Marketing and product teams frequently repurpose bespoke campaign frames across multiple Figma-native placements. Manual resizing duplicates effort, introduces layout mistakes, and slows launches. ScaleResizer automates multi-target adaptation while preserving original creative intent, enabling fast, on-brand asset expansion.
 
 ## Problem Statement
 - Re-creating variants (covers, gallery tiles, banners) requires manual artboard setup, asset scaling, and alignment tweaks in Figma.
@@ -43,7 +43,7 @@ Marketing and product teams frequently repurpose bespoke campaign frames across 
 1. User selects a source frame and opens the plugin.
 2. Plugin classifies layers (images, text, logos, decorative elements) and suggests compatible target formats.
 3. User toggles desired targets and runs “Generate Variants.”
-4. Plugin clones the frame into a dedicated `BiblioScale` page, applies responsive layout rules per target, and repositions assets.
+4. Plugin clones the frame into a dedicated `ScaleResizer` page, applies responsive layout rules per target, and repositions assets.
 5. QA overlay surfaces automated checks (alignment, safe areas, contrast). OpenAI insights flag composition risks.
 6. User exports or moves generated frames into project flow; history preserves last five operations for undo/redo.
 
@@ -91,7 +91,7 @@ Marketing and product teams frequently repurpose bespoke campaign frames across 
 
 ### Phase 1 — Core Variant Engine (Complete)
 - **Scope:** Single-frame selection, generate Figma Community cover, gallery, thumbnail, and web hero banner using original assets. Include QA overlay with non-AI checks (safe area, alignment). Local history (last operation).
-- **Acceptance (Figma Testing):** In a sandbox file, selecting a marketing frame and running Phase 1 flows produces four variant frames on a `BiblioScale` page with correct dimensions and passes QA overlay without manual fixes.
+- **Acceptance (Figma Testing):** In a sandbox file, selecting a marketing frame and running Phase 1 flows produces four variant frames on a `ScaleResizer` page with correct dimensions and passes QA overlay without manual fixes.
 
 ### Phase 2 — Extended Formats & AI QA (Complete)
 - **Scope:** Add social carousel, YouTube cover, and TikTok vertical templates. Integrate OpenAI composition analyzer and asset salience detection for QA insights. Introduce configurable safe area presets.

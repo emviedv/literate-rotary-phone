@@ -24,6 +24,7 @@ import {
   TARGET_ID_KEY
 } from "./plugin-constants.js";
 import { collectWarnings } from "./warnings.js";
+import { propagateRolesToNodes } from "./node-roles.js";
 import {
   prepareCloneForLayout,
   restoreAutoLayoutSettings,
@@ -371,6 +372,8 @@ async function handleSetAiSignals(signals: AiSignals): Promise<void> {
   try {
     const serialized = JSON.stringify(signals);
     frame.setPluginData(AI_SIGNALS_KEY, serialized);
+    // Propagate roles to individual nodes so they survive cloning
+    propagateRolesToNodes(signals);
     debugFixLog("ai signals stored on selection", {
       roleCount: signals.roles?.length ?? 0,
       qaCount: signals.qa?.length ?? 0
@@ -512,6 +515,8 @@ async function maybeRequestAiForFrame(frame: FrameNode, options?: { readonly for
 
     if (result.signals) {
       targetFrame.setPluginData(AI_SIGNALS_KEY, JSON.stringify(result.signals));
+      // Propagate roles to individual nodes so they survive cloning
+      propagateRolesToNodes(result.signals);
     } else {
       targetFrame.setPluginData(AI_SIGNALS_KEY, "");
     }

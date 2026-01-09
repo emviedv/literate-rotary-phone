@@ -1,5 +1,5 @@
-export const PLUGIN_NAME = "BiblioScale: Social Media Resizer & Ad Generator";
-export const STAGING_PAGE_NAME = "BiblioScale Variants";
+export const PLUGIN_NAME = "ScaleResizer: Social Media Resizer & Ad Generator";
+export const STAGING_PAGE_NAME = "ScaleResizer Variants";
 export const PLUGIN_DATA_PREFIX = "biblioscale";
 
 export const DEBUG_KEY = `${PLUGIN_DATA_PREFIX}:debug`;

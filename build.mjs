@@ -7,11 +7,13 @@ const buildTimestamp = new Date().toISOString();
 const outdir = "dist";
 const watchMode = process.argv.includes("--watch");
 const defaultAiKey =
+  process.env.SCALERESIZER_DEFAULT_OPENAI_KEY ??
   process.env.BIBLIOSCALE_DEFAULT_OPENAI_KEY ??
   process.env.BIBLIO_DEFAULT_OPENAI_KEY ??
   "";
 
 const envDebugRaw =
+  process.env.SCALERESIZER_DEBUG_FIX ??
   process.env.BIBLIOSCALE_DEBUG_FIX ??
   process.env.DEBUG_FIX ??
   process.env.debug_fix;
@@ -26,7 +28,8 @@ if (typeof globalThis !== "undefined" && typeof globalThis.DEBUG_FIX === "undefi
 `;
 
 const defines = {
-  __BIBLIOSCALE_DEFAULT_AI_KEY__: JSON.stringify(defaultAiKey),
+  __SCALERESIZER_DEFAULT_AI_KEY__: JSON.stringify(defaultAiKey),
+  __BIBLIOSCALE_DEFAULT_AI_KEY__: JSON.stringify(defaultAiKey), // Backwards compatibility
   __BUILD_TIMESTAMP__: JSON.stringify(buildTimestamp),
   __DEBUG_FIX__: '"' + debugFixDefault + '"'
 };

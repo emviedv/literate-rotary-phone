@@ -39,7 +39,7 @@ testCase("trackEvent logs to console when DEBUG_FIX is enabled", () => {
     process.env.DEBUG_FIX = "1";
     trackEvent("TARGET_SELECTED", { targetId: "test-target" });
 
-    assert(loggedMessage === "[BiblioScale][Telemetry] TARGET_SELECTED", "Message should match event name");
+    assert(loggedMessage === "[ScaleResizer][Telemetry] TARGET_SELECTED", "Message should match event name");
     assert(loggedData.targetId === "test-target", "Properties should be passed through");
     assert(typeof loggedData.timestamp === "string", "Timestamp should be added");
 

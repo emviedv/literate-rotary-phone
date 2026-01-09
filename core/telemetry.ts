@@ -24,7 +24,7 @@ export function trackEvent(eventName: TelemetryEvent, properties?: TelemetryProp
   }
 
   const timestamp = new Date().toISOString();
-  console.log(`[BiblioScale][Telemetry] ${eventName}`, {
+  console.log(`[ScaleResizer][Telemetry] ${eventName}`, {
     timestamp,
     ...properties
   });

@@ -40,7 +40,7 @@ export function collectWarnings(frame: FrameNode, target: VariantTarget, safeAre
 
   if (contentBounds && !isWithinSafeArea(contentBounds, safeArea)) {
     // Debug: log the actual bounds comparison
-    console.log("[BiblioScale][warnings] OUTSIDE_SAFE_AREA detected", {
+    console.log("[ScaleResizer][warnings] OUTSIDE_SAFE_AREA detected", {
       frameId: frame.id,
       frameName: frame.name,
       contentBounds: {

@@ -1,4 +1,4 @@
-# BiblioScale — MVP Phased Plan
+# ScaleResizer — MVP Phased Plan
 
 **Status:** Proposed (NOT IN CURRENT STACK)  
 **Last updated:** November 03, 2025

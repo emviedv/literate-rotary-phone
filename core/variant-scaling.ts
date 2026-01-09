@@ -429,7 +429,14 @@ function expandAbsoluteChildren(
       x: child.x,
       y: child.y,
       width: child.width,
-      height: child.height
+      height: child.height,
+      nodeType: child.type,
+      bounds: {
+        x: child.x,
+        y: child.y,
+        width: child.width,
+        height: child.height
+      }
     }));
 
   if (regularSnapshots.length > 0) {

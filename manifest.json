@@ -1,6 +1,6 @@
 {
-  "name": "BiblioScale: Social Media Resizer & Ad Generator",
-  "id": "biblioscale",
+  "name": "ScaleResizer: Social Media Resizer & Ad Generator",
+  "id": "scaleresizer",
   "api": "1.0.0",
   "main": "dist/main.js",
   "editorType": ["figma"],

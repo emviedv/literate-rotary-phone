@@ -36,14 +36,14 @@ function traceDebugFlag(reason: string, context: DebugContext): void {
   if (!isDebugTraceEnabled()) {
     return;
   }
-  console.info("[BiblioScale][debug-flag]", { reason, ...context });
+  console.info("[ScaleResizer][debug-flag]", { reason, ...context });
 }
 
 function traceDebugLog(reason: string, context: DebugContext): void {
   if (!isDebugTraceEnabled()) {
     return;
   }
-  console.info("[BiblioScale][debug-log]", { reason, ...context });
+  console.info("[ScaleResizer][debug-log]", { reason, ...context });
 }
 
 function computeDebugFlag(): boolean {
@@ -132,9 +132,9 @@ function log(prefix: string, message: string, context?: DebugContext): void {
 }
 
 export function debugFixLog(message: string, context?: DebugContext): void {
-  log("[BiblioScale][frame-detach]", message, context);
+  log("[ScaleResizer][frame-detach]", message, context);
 }
 
 export function debugAutoLayoutLog(message: string, context?: DebugContext): void {
-  log("[BiblioScale][auto-layout]", message, context);
+  log("[ScaleResizer][auto-layout]", message, context);
 }

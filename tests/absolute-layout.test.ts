@@ -6,6 +6,13 @@ type Child = {
   y: number;
   width: number;
   height: number;
+  nodeType: string;
+  bounds: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
 };
 
 function assert(condition: unknown, message: string): void {
@@ -24,10 +31,22 @@ function testCase(name: string, fn: () => void): void {
   }
 }
 
+function createTestChild(id: string, x: number, y: number, width: number, height: number, nodeType: string = "TEXT"): Child {
+  return {
+    id,
+    x,
+    y,
+    width,
+    height,
+    nodeType,
+    bounds: { x, y, width, height }
+  };
+}
+
 testCase("stacks horizontally arranged absolute children for vertical targets", () => {
   const children: Child[] = [
-    { id: "text", x: 40, y: 220, width: 420, height: 420 },
-    { id: "hero", x: 520, y: 260, width: 420, height: 420 }
+    createTestChild("text", 40, 220, 420, 420),
+    createTestChild("hero", 520, 260, 420, 420, "INSTANCE")
   ];
 
   const plan = planAbsoluteChildPositions({
@@ -56,8 +75,8 @@ testCase("stacks horizontally arranged absolute children for vertical targets", 
 
 testCase("stacks horizontal siblings for TikTok safe bounds even after cropping", () => {
   const children: Child[] = [
-    { id: "logo", x: 120, y: 180, width: 360, height: 360 },
-    { id: "title", x: 540, y: 180, width: 360, height: 360 }
+    createTestChild("logo", 120, 180, 360, 360, "INSTANCE"),
+    createTestChild("title", 540, 180, 360, 360, "TEXT")
   ];
 
   const plan = planAbsoluteChildPositions({
@@ -79,8 +98,8 @@ testCase("stacks horizontal siblings for TikTok safe bounds even after cropping"
 
 testCase("preserves layout when target profile is horizontal", () => {
   const children: Child[] = [
-    { id: "left", x: 120, y: 100, width: 400, height: 360 },
-    { id: "right", x: 560, y: 120, width: 400, height: 360 }
+    createTestChild("left", 120, 100, 400, 360, "TEXT"),
+    createTestChild("right", 560, 120, 400, 360, "TEXT")
   ];
 
   const plan = planAbsoluteChildPositions({
@@ -95,8 +114,8 @@ testCase("preserves layout when target profile is horizontal", () => {
 
 testCase("always stacks for extreme vertical targets even if not wide", () => {
   const children: Child[] = [
-    { id: "item1", x: 0, y: 0, width: 100, height: 300 },
-    { id: "item2", x: 200, y: 0, width: 100, height: 300 }
+    createTestChild("item1", 0, 0, 100, 300, "FRAME"),
+    createTestChild("item2", 200, 0, 100, 300, "FRAME")
   ];
 
   const plan = planAbsoluteChildPositions({

@@ -1,6 +1,6 @@
-# BiblioScale — Variant Engine
+# ScaleResizer — Variant Engine
 
-BiblioScale automates the transformation of marketing frames into multiple Figma-native targets, preserving original assets and branding while adapting layout and sizing.
+ScaleResizer automates the transformation of marketing frames into multiple Figma-native targets, preserving original assets and branding while adapting layout and sizing.
 
 ## Supported Targets
 - **Figma Community Cover** (1920 × 960)
@@ -19,7 +19,7 @@ BiblioScale automates the transformation of marketing frames into multiple Figma
   - **QA Signals:** Detects low contrast, small logos, and text overlaps using OpenAI's `gpt-4o-mini`.
   - **Layout Advice:** Suggests optimal layout patterns per target with confidence scores.
 - **Deterministic Scaling:** Preserves original asset fidelity while resizing to each target.
-- **Run Staging:** Generates variants in a dedicated `BiblioScale Variants` page with per-run containers and history.
+- **Run Staging:** Generates variants in a dedicated `ScaleResizer Variants` page with per-run containers and history.
 
 ## Building
 ```bash
@@ -31,7 +31,7 @@ npm run dev          # rebuilds on changes for local development
 > **Note:** Network access is required for `npm install`. If the sandbox blocks it, request approval or install dependencies locally before running the build script.
 
 ## Configuring AI analysis
-1. Set the `BIBLIOSCALE_DEFAULT_OPENAI_KEY` environment variable (or legacy `BIBLIO_DEFAULT_OPENAI_KEY`) before running `npm run build` so the compiled plugin ships with a workspace AI key. Builds without a key will surface an “AI key missing” status and skip AI analysis.
+1. Set the `SCALERESIZER_DEFAULT_OPENAI_KEY` environment variable (or legacy `BIBLIOSCALE_DEFAULT_OPENAI_KEY`) before running `npm run build` so the compiled plugin ships with a workspace AI key. Builds without a key will surface an "AI key missing" status and skip AI analysis.
 2. Launch the plugin, select a single marketing frame, and click **Run AI analysis** to request signals/layout advice. The plugin summarizes the frame, calls OpenAI’s Chat Completions API, and stores normalized results on the frame’s plugin data.
 3. The AI status badge will reflect whether a key is present, an analysis is in-flight, or if an error occurred. When successful, the Layout Patterns + AI Signals sections will populate and auto-select high-confidence layouts.
 
