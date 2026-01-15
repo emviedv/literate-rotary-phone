@@ -145,7 +145,7 @@ export const UI_SCRIPT_PART3 = /* js */ `
           case "debug-log": {
             if (debugSection && debugLogOutput) {
               debugSection.hidden = false;
-              debugLogOutput.textContent = message.payload.message;
+              debugLogOutput.textContent += message.payload.message + "\\n";
               debugLogOutput.scrollTop = debugLogOutput.scrollHeight;
             }
             break;

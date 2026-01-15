@@ -1,9 +1,20 @@
 import { debugAutoLayoutLog } from "./debug.js";
-import { resolveVerticalAlignItems } from "./layout-profile.js";
 import type { LayoutAdviceEntry } from "../types/layout-advice.js";
-import type { LayoutPatternId } from "../types/layout-patterns.js";
-import { LAYOUT_PATTERNS } from "../types/layout-patterns.js";
-import { ASPECT_RATIOS, SPACING_CONSTANTS } from "./layout-constants.js";
+import {
+  hasTextChildren,
+  hasImageChildren,
+  countFlowChildren,
+  isComponentLikeFrame
+} from "./layout-detection-helpers.js";
+import {
+  type LayoutContext,
+  determineOptimalLayoutMode,
+  determineSizingModes,
+  determineWrapBehavior
+} from "./layout-mode-resolver.js";
+import { determineAlignments } from "./layout-alignment.js";
+import { calculateSpacing, calculatePaddingAdjustments } from "./layout-spacing.js";
+import { type ChildAdaptation, createChildAdaptations } from "./child-adaptations.js";
 
 /**
  * Auto Layout Adapter - Intelligently restructures auto layouts for different target formats
@@ -29,39 +40,9 @@ export interface LayoutAdaptationPlan {
   childAdaptations: Map<string, ChildAdaptation>;
 }
 
-export interface ChildAdaptation {
-  layoutGrow?: number;
-  layoutAlign?: "INHERIT" | "STRETCH";
-  layoutPositioning?: "AUTO" | "ABSOLUTE";
-  minWidth?: number;
-  maxWidth?: number;
-  minHeight?: number;
-  maxHeight?: number;
-}
+// Re-export ChildAdaptation for consumers
+export type { ChildAdaptation } from "./child-adaptations.js";
 
-type LayoutContext = {
-  sourceLayout: {
-    mode: "HORIZONTAL" | "VERTICAL" | "NONE";
-    width: number;
-    height: number;
-    childCount: number;
-    hasText: boolean;
-    hasImages: boolean;
-    itemSpacing: number | null;
-  };
-  targetProfile: {
-    type: "horizontal" | "vertical" | "square";
-    width: number;
-    height: number;
-    aspectRatio: number;
-    safeWidth: number;
-    safeHeight: number;
-  };
-  scale: number;
-  adoptVerticalVariant: boolean;
-  sourceItemSpacing?: number | null;
-  layoutAdvice?: LayoutAdviceEntry;
-};
 
 /**
  * Creates an adaptation plan for auto layout based on source and target
@@ -179,502 +160,21 @@ export function createLayoutAdaptationPlan(
 }
 
 /**
- * Determines the optimal layout mode based on source and target
- * Uses transition zones for smoother aspect ratio handling
- */
-function determineOptimalLayoutMode(context: LayoutContext): "HORIZONTAL" | "VERTICAL" | "NONE" {
-  const { sourceLayout, targetProfile, layoutAdvice } = context;
-
-  // AI Override - highest priority: check explicit suggestedLayoutMode first
-  if (layoutAdvice?.suggestedLayoutMode) {
-    debugAutoLayoutLog("determining optimal layout: using AI suggestedLayoutMode", {
-      suggestedMode: layoutAdvice.suggestedLayoutMode,
-      context
-    });
-    return layoutAdvice.suggestedLayoutMode;
-  }
-
-  // AI Override - second priority: derive layout mode from selected pattern
-  if (layoutAdvice?.selectedId) {
-    const patternId = layoutAdvice.selectedId as LayoutPatternId;
-    const pattern = LAYOUT_PATTERNS[patternId];
-    if (pattern) {
-      debugAutoLayoutLog("determining optimal layout: deriving from AI pattern selection", {
-        patternId,
-        patternLayoutMode: pattern.layoutMode,
-        context
-      });
-      return pattern.layoutMode;
-    }
-  }
-
-  if (context.adoptVerticalVariant && targetProfile.type === "vertical") {
-    debugAutoLayoutLog("determining optimal layout: adopting vertical variant", { context });
-    return "VERTICAL";
-  }
-
-  const aspectRatio = targetProfile.aspectRatio;
-  const sourceAspect = sourceLayout.width / Math.max(sourceLayout.height, 1);
-
-  // Define transition zones (more granular than before)
-  const isExtremeVertical = aspectRatio < ASPECT_RATIOS.EXTREME_VERTICAL;      // 9:16 ratio (TikTok)
-  const isModerateVertical = aspectRatio < ASPECT_RATIOS.MODERATE_VERTICAL;     // 3:4 ratio
-  const isExtremeHorizontal = aspectRatio > ASPECT_RATIOS.EXTREME_HORIZONTAL;    // 5:2 ratio
-  const isModerateHorizontal = aspectRatio > ASPECT_RATIOS.MODERATE_HORIZONTAL;   // 16:10 ratio
-
-  // Content awareness signals
-  const hasSignificantText = sourceLayout.hasText && sourceLayout.childCount >= 3;
-  const isImageDominant = sourceLayout.hasImages && !sourceLayout.hasText;
-
-  // If source has no auto layout, determine best mode for target
-  if (sourceLayout.mode === "NONE") {
-    // Consider source-target aspect delta for major reorientation
-    const aspectDelta = Math.abs(sourceAspect - aspectRatio);
-
-    if (isExtremeVertical && aspectDelta > 1.0) {
-      debugAutoLayoutLog("determining optimal layout: source is NONE, major reorientation to vertical", { context, aspectDelta });
-      return "VERTICAL";
-    }
-    if (isExtremeHorizontal && aspectDelta > 1.0) {
-      debugAutoLayoutLog("determining optimal layout: source is NONE, major reorientation to horizontal", { context, aspectDelta });
-      return "HORIZONTAL";
-    }
-    // Preserve original positioning for moderate changes
-    debugAutoLayoutLog("determining optimal layout: source is NONE, preserving for moderate change", { context, aspectDelta });
-    return "NONE";
-  }
-
-  // For extreme vertical targets (like TikTok)
-  if (isExtremeVertical) {
-    if (sourceLayout.mode === "HORIZONTAL" && hasSignificantText) {
-      debugAutoLayoutLog("determining optimal layout: converting text-heavy horizontal to vertical for extreme vertical", { context });
-      return "VERTICAL";
-    }
-    if (isImageDominant && sourceLayout.childCount < 3) {
-      // Image-dominant with few elements might look better with original orientation
-      debugAutoLayoutLog("determining optimal layout: preserving image-dominant layout for extreme vertical", { context });
-      return sourceLayout.mode;
-    }
-    debugAutoLayoutLog("determining optimal layout: forcing vertical for extreme vertical target", { context });
-    return "VERTICAL";
-  }
-
-  // For moderate vertical targets
-  if (isModerateVertical) {
-    if (sourceLayout.mode === "HORIZONTAL" && sourceLayout.childCount >= 3) {
-      debugAutoLayoutLog("determining optimal layout: converting multi-child horizontal to vertical for moderate vertical", { context });
-      return "VERTICAL";
-    }
-    debugAutoLayoutLog("determining optimal layout: preserving source mode for moderate vertical", { context });
-    return sourceLayout.mode;
-  }
-
-  // For extreme horizontal targets (like ultra-wide banners)
-  if (isExtremeHorizontal) {
-    if (sourceLayout.mode === "VERTICAL" && sourceLayout.childCount >= 2) {
-      debugAutoLayoutLog("determining optimal layout: converting vertical to horizontal for extreme horizontal", { context });
-      return "HORIZONTAL";
-    }
-    debugAutoLayoutLog("determining optimal layout: forcing horizontal for extreme horizontal target", { context });
-    return "HORIZONTAL";
-  }
-
-  // For moderate horizontal targets
-  if (isModerateHorizontal) {
-    if (sourceLayout.mode === "VERTICAL" && sourceLayout.childCount === 2) {
-      debugAutoLayoutLog("determining optimal layout: converting 2-child vertical to horizontal for moderate horizontal", { context });
-      return "HORIZONTAL";
-    }
-    debugAutoLayoutLog("determining optimal layout: preserving source mode for moderate horizontal", { context });
-    return sourceLayout.mode;
-  }
-
-  // Square-ish targets - preserve source layout
-  debugAutoLayoutLog("determining optimal layout: preserving source mode for square-ish target", { context });
-  return sourceLayout.mode;
-}
-
-/**
- * Determines sizing modes for the adapted layout
- */
-function determineSizingModes(
-  layoutMode: "HORIZONTAL" | "VERTICAL" | "NONE",
-  context: LayoutContext
-): { primary: FrameNode["primaryAxisSizingMode"]; counter: FrameNode["counterAxisSizingMode"] } {
-  if (layoutMode === "NONE") {
-    return { primary: "FIXED", counter: "FIXED" };
-  }
-
-  // For extreme aspect ratios, always use FIXED to fill space
-  if (context.targetProfile.aspectRatio < ASPECT_RATIOS.STRETCH_VERTICAL || context.targetProfile.aspectRatio > ASPECT_RATIOS.STRETCH_HORIZONTAL) {
-    return { primary: "FIXED", counter: "FIXED" };
-  }
-
-  // Always use FIXED sizing for variant frames - they have been explicitly
-  // resized to target dimensions and should never hug content
-  return { primary: "FIXED", counter: "FIXED" };
-}
-
-/**
- * Determines alignment strategies for the adapted layout
- * Uses pattern-specific alignments when available from AI advice
- */
-function determineAlignments(
-  layoutMode: "HORIZONTAL" | "VERTICAL" | "NONE",
-  context: LayoutContext
-): { primary: FrameNode["primaryAxisAlignItems"]; counter: FrameNode["counterAxisAlignItems"] } {
-  const { layoutAdvice } = context;
-
-  if (layoutMode === "NONE") {
-    return { primary: "MIN", counter: "MIN" };
-  }
-
-  // Try to use pattern-specific alignments from AI advice
-  if (layoutAdvice?.selectedId) {
-    const patternId = layoutAdvice.selectedId as LayoutPatternId;
-    const pattern = LAYOUT_PATTERNS[patternId];
-    if (pattern && pattern.layoutMode === layoutMode) {
-      debugAutoLayoutLog("using pattern-specific alignment", {
-        patternId,
-        primaryAlignment: pattern.primaryAlignment,
-        counterAlignment: pattern.counterAlignment
-      });
-
-      // Map pattern alignment to Figma alignment types
-      const mapPrimaryAlignment = (
-        align: "MIN" | "CENTER" | "MAX" | "SPACE_BETWEEN"
-      ): FrameNode["primaryAxisAlignItems"] => {
-        return align;
-      };
-
-      const mapCounterAlignment = (
-        align: "MIN" | "CENTER" | "STRETCH"
-      ): FrameNode["counterAxisAlignItems"] => {
-        // Figma counterAxisAlignItems doesn't support STRETCH directly;
-        // STRETCH is achieved via child layoutAlign property. Map to CENTER.
-        if (align === "STRETCH") {
-          return "CENTER";
-        }
-        return align;
-      };
-
-      return {
-        primary: mapPrimaryAlignment(pattern.primaryAlignment),
-        counter: mapCounterAlignment(pattern.counterAlignment)
-      };
-    }
-  }
-
-  // For vertical layouts in tall targets
-  if (layoutMode === "VERTICAL" && context.targetProfile.type === "vertical") {
-    const interiorEstimate = Math.max(context.targetProfile.height - context.sourceLayout.height * context.scale, 0);
-
-    // Use AI-selected pattern's alignment when available
-    // Patterns like "centered-stack" use CENTER, "hero-first" uses MIN
-    let primaryAlign: FrameNode["primaryAxisAlignItems"] = "CENTER";
-    if (layoutAdvice?.selectedId) {
-      const patternId = layoutAdvice.selectedId as LayoutPatternId;
-      const pattern = LAYOUT_PATTERNS[patternId];
-      if (pattern?.layoutMode === "VERTICAL") {
-        primaryAlign = pattern.primaryAlignment;
-      }
-    }
-
-    return {
-      primary: resolveVerticalAlignItems(primaryAlign, { interior: interiorEstimate }),
-      counter: "CENTER"
-    };
-  }
-
-  // For horizontal layouts in wide targets
-  if (layoutMode === "HORIZONTAL" && context.targetProfile.type === "horizontal") {
-    return {
-      primary: context.sourceLayout.childCount <= 3 ? "SPACE_BETWEEN" : "MIN",
-      counter: "CENTER"
-    };
-  }
-
-  // Default centered approach for mixed scenarios
-  return {
-    primary: "CENTER",
-    counter: "CENTER"
-  };
-}
-
-/**
- * Determines wrap behavior for the adapted layout
- */
-function determineWrapBehavior(
-  layoutMode: "HORIZONTAL" | "VERTICAL" | "NONE",
-  context: LayoutContext
-): "WRAP" | "NO_WRAP" {
-  if (layoutMode === "NONE") {
-    return "NO_WRAP";
-  }
-
-  // Never wrap in vertical layouts for vertical targets
-  if (layoutMode === "VERTICAL" && context.targetProfile.type === "vertical") {
-    return "NO_WRAP";
-  }
-
-  // Consider wrapping for horizontal layouts with many children
-  if (layoutMode === "HORIZONTAL" && context.sourceLayout.childCount > 4) {
-    // Only wrap if target is wide enough
-    if (context.targetProfile.width > 1200) {
-      return "WRAP";
-    }
-  }
-
-  return "NO_WRAP";
-}
-
-/**
- * Calculates spacing for the adapted layout
- * Uses content-aware distribution based on child count
- */
-function calculateSpacing(
-  frame: FrameNode,
-  newLayoutMode: "HORIZONTAL" | "VERTICAL" | "NONE",
-  context: LayoutContext
-): { item: number; counter?: number } {
-  if (newLayoutMode === "NONE") {
-    return { item: 0 };
-  }
-
-  const baseSpacingRaw =
-    context.sourceLayout.itemSpacing != null
-      ? context.sourceLayout.itemSpacing
-      : frame.layoutMode !== "NONE"
-        ? frame.itemSpacing
-        : 16;
-  const scaledSpacing = baseSpacingRaw === 0 ? 0 : Math.max(baseSpacingRaw * context.scale, 1);
-
-  // Content-aware distribution ratio based on child count
-  const childCount = context.sourceLayout.childCount;
-  let distributionRatio: number;
-  if (childCount <= 2) {
-    // Few children: more generous spacing
-    distributionRatio = SPACING_CONSTANTS.DISTRIBUTION_SPARSE;
-  } else if (childCount <= 5) {
-    // Moderate: standard spacing
-    distributionRatio = SPACING_CONSTANTS.DISTRIBUTION_MODERATE;
-  } else {
-    // Dense: tighter spacing to fit content
-    distributionRatio = SPACING_CONSTANTS.DISTRIBUTION_DENSE;
-  }
-
-  // Boost distribution for extreme aspect ratios
-  const aspectRatio = context.targetProfile.aspectRatio;
-  if (aspectRatio < ASPECT_RATIOS.STRETCH_VERTICAL || aspectRatio > ASPECT_RATIOS.STRETCH_HORIZONTAL_EXTREME) {
-    distributionRatio = Math.min(distributionRatio * 1.3, 0.5);
-  }
-
-  // Cap maximum spacing to prevent awkward layouts
-  const maxSpacing = scaledSpacing * 8;
-
-  debugAutoLayoutLog("spacing input resolved", {
-    targetType: context.targetProfile.type,
-    targetWidth: context.targetProfile.width,
-    targetHeight: context.targetProfile.height,
-    newLayoutMode,
-    sourceLayoutMode: context.sourceLayout.mode,
-    sourceChildCount: childCount,
-    baseSpacing: baseSpacingRaw,
-    scaledSpacing,
-    distributionRatio,
-    scale: context.scale
-  });
-
-  // Adjust spacing based on target format
-  // Use safe area dimensions to prevent content from extending outside safe area
-  if (context.targetProfile.type === "vertical" && newLayoutMode === "VERTICAL") {
-    const extraSpace = context.targetProfile.safeHeight - (context.sourceLayout.height * context.scale);
-    const gaps = Math.max(childCount - 1, 1);
-    const additionalSpacing = Math.max(0, extraSpace / gaps * distributionRatio);
-    const finalSpacing = Math.min(scaledSpacing + additionalSpacing, maxSpacing);
-    const result = {
-      item: finalSpacing,
-      counter: frame.layoutWrap === "WRAP" ? scaledSpacing : undefined
-    };
-    debugAutoLayoutLog("spacing calculated for vertical target", {
-      extraSpace,
-      gaps,
-      additionalSpacing,
-      finalSpacing,
-      itemSpacing: result.item,
-      counterAxisSpacing: result.counter
-    });
-    return result;
-  }
-
-  if (context.targetProfile.type === "horizontal" && newLayoutMode === "HORIZONTAL") {
-    const extraSpace = context.targetProfile.safeWidth - (context.sourceLayout.width * context.scale);
-    const gaps = Math.max(childCount - 1, 1);
-    const additionalSpacing = Math.max(0, extraSpace / gaps * distributionRatio);
-    const finalSpacing = Math.min(scaledSpacing + additionalSpacing, maxSpacing);
-    const result = {
-      item: finalSpacing,
-      counter: frame.layoutWrap === "WRAP" ? scaledSpacing : undefined
-    };
-    debugAutoLayoutLog("spacing calculated for horizontal target", {
-      extraSpace,
-      gaps,
-      additionalSpacing,
-      finalSpacing,
-      itemSpacing: result.item,
-      counterAxisSpacing: result.counter
-    });
-    return result;
-  }
-
-  const result: { item: number; counter?: number } = { item: scaledSpacing };
-  debugAutoLayoutLog("spacing calculated for mixed target", {
-    itemSpacing: result.item,
-    counterAxisSpacing: result.counter
-  });
-  return result;
-}
-
-/**
- * Calculates padding adjustments for the adapted layout
- */
-function calculatePaddingAdjustments(
-  frame: FrameNode,
-  newLayoutMode: "HORIZONTAL" | "VERTICAL" | "NONE",
-  context: LayoutContext
-): { top: number; right: number; bottom: number; left: number } {
-  const basePadding = {
-    top: frame.paddingTop || 0,
-    right: frame.paddingRight || 0,
-    bottom: frame.paddingBottom || 0,
-    left: frame.paddingLeft || 0
-  };
-
-  // Scale base padding
-  const scaledPadding = {
-    top: basePadding.top * context.scale,
-    right: basePadding.right * context.scale,
-    bottom: basePadding.bottom * context.scale,
-    left: basePadding.left * context.scale
-  };
-
-  const clampPadding = (side: "top" | "right" | "bottom" | "left", value: number): number => {
-    if (value >= 0) {
-      return value;
-    }
-
-    debugAutoLayoutLog("padding clamped to zero", {
-      side,
-      requested: value,
-      targetType: context.targetProfile.type,
-      targetWidth: context.targetProfile.width,
-      targetHeight: context.targetProfile.height,
-      sourceWidth: context.sourceLayout.width,
-      sourceHeight: context.sourceLayout.height,
-      scale: context.scale
-    });
-
-    return 0;
-  };
-
-  return {
-    top: clampPadding("top", scaledPadding.top),
-    right: clampPadding("right", scaledPadding.right),
-    bottom: clampPadding("bottom", scaledPadding.bottom),
-    left: clampPadding("left", scaledPadding.left)
-  };
-}
-
-/**
- * Creates child-specific adaptations
- */
-function createChildAdaptations(
-  frame: FrameNode,
-  newLayoutMode: "HORIZONTAL" | "VERTICAL" | "NONE",
-  context: LayoutContext
-): Map<string, ChildAdaptation> {
-  const adaptations = new Map<string, ChildAdaptation>();
-
-  frame.children.forEach((child, index) => {
-    if (!child.visible) return;
-
-    const adaptation: ChildAdaptation = {};
-    const containsImage = hasImageContent(child as SceneNode);
-
-    // AI Background Override
-    if (context.layoutAdvice?.backgroundNodeId) {
-      if (child.id === context.layoutAdvice.backgroundNodeId) {
-        adaptation.layoutPositioning = "ABSOLUTE";
-        adaptations.set(child.id, adaptation);
-        return;
-      }
-      // If AI specified a background, do NOT apply heuristics to others
-    } else {
-      // Identify background layers using multi-signal detection
-      const isBottomLayer = index === frame.children.length - 1;
-      if (
-        isBackgroundLike(child as SceneNode, context.sourceLayout.width, context.sourceLayout.height, isBottomLayer)
-      ) {
-        adaptation.layoutPositioning = "ABSOLUTE";
-        adaptations.set(child.id, adaptation);
-        return;
-      }
-    }
-
-    // For converted layouts, adjust child properties
-    if (frame.layoutMode !== newLayoutMode && newLayoutMode !== "NONE") {
-      // When converting to vertical, make children stretch horizontally
-      if (newLayoutMode === "VERTICAL") {
-        // Only stretch text boxes by default; other elements should maintain their intrinsic size.
-        adaptation.layoutAlign = (containsImage || child.type !== 'TEXT') ? "INHERIT" : "STRETCH";
-        adaptation.layoutGrow = 0;
-      }
-      // When converting to horizontal, control heights
-      if (newLayoutMode === "HORIZONTAL") {
-        adaptation.layoutAlign = "INHERIT";
-        adaptation.layoutGrow = containsImage ? 0 : 1; // Distribute space evenly
-        adaptation.maxHeight = context.targetProfile.height * 0.8; // Prevent vertical overflow
-
-        const previousAlign = (child as { layoutAlign?: string }).layoutAlign ?? "unknown";
-        debugAutoLayoutLog("child layout align normalized", {
-          childId: child.id,
-          childType: child.type,
-          previousAlign,
-          assignedAlign: adaptation.layoutAlign,
-          sourceLayoutMode: frame.layoutMode,
-          targetLayoutMode: newLayoutMode
-        });
-
-        if (containsImage && adaptation.layoutGrow === 0) {
-          debugAutoLayoutLog("preventing media stretch in horizontal flow", {
-            childId: child.id,
-            childType: child.type,
-            targetWidth: context.targetProfile.width,
-            targetHeight: context.targetProfile.height
-          });
-        }
-      }
-    }
-
-    // Special handling for first/last children in extreme formats
-    if (context.targetProfile.aspectRatio < 0.5 || context.targetProfile.aspectRatio > 2) {
-      if (index === 0 || index === frame.children.length - 1) {
-        adaptation.layoutGrow = 0; // Don't expand edge elements too much
-      }
-    }
-
-    if (Object.keys(adaptation).length > 0) {
-      adaptations.set(child.id, adaptation);
-    }
-  });
-
-  return adaptations;
-}
-
-/**
  * Applies the adaptation plan to a frame
+ * @param frame The frame to adapt
+ * @param plan The layout adaptation plan
+ * @param layoutAdvice Optional AI layout advice containing restructure instructions
  */
-export function applyLayoutAdaptation(frame: FrameNode, plan: LayoutAdaptationPlan): void {
+export function applyLayoutAdaptation(
+  frame: FrameNode,
+  plan: LayoutAdaptationPlan,
+  layoutAdvice?: LayoutAdviceEntry
+): void {
+  // FIRST: Hide elements that AI recommends dropping (before applying layout)
+  if (layoutAdvice?.restructure?.drop?.length) {
+    hideDroppedElements(frame, layoutAdvice.restructure.drop);
+  }
+
   // Apply main layout properties
   frame.layoutMode = plan.layoutMode;
 
@@ -696,8 +196,13 @@ export function applyLayoutAdaptation(frame: FrameNode, plan: LayoutAdaptationPl
     frame.paddingBottom = plan.paddingAdjustments.bottom;
     frame.paddingLeft = plan.paddingAdjustments.left;
 
-    // Apply child adaptations
+    // Apply child adaptations (skip hidden children)
     frame.children.forEach(child => {
+      // Skip hidden children
+      if ("visible" in child && !child.visible) {
+        return;
+      }
+
       const adaptation = plan.childAdaptations.get(child.id);
       if (adaptation) {
         if ("layoutPositioning" in child && adaptation.layoutPositioning) {
@@ -711,6 +216,44 @@ export function applyLayoutAdaptation(frame: FrameNode, plan: LayoutAdaptationPl
         }
       }
     });
+  }
+}
+
+/**
+ * Hides elements that AI determined won't fit in target dimensions.
+ * Uses visible:false to preserve the node for potential restoration.
+ * Matches by node ID or by lowercased node name.
+ */
+function hideDroppedElements(frame: FrameNode, dropNodeIds: readonly string[]): void {
+  // Create a set for fast lookup, including lowercased versions
+  const dropSet = new Set<string>();
+  for (const id of dropNodeIds) {
+    dropSet.add(id);
+    dropSet.add(id.toLowerCase());
+  }
+
+  for (const child of frame.children) {
+    // Match by node ID or by name (AI might use either)
+    const matchesId = dropSet.has(child.id);
+    const matchesName = dropSet.has(child.name.toLowerCase());
+
+    if (matchesId || matchesName) {
+      if ("visible" in child) {
+        debugAutoLayoutLog("Hiding element per AI restructure recommendation", {
+          nodeId: child.id,
+          nodeName: child.name,
+          matchedBy: matchesId ? "id" : "name",
+          reason: "Won't fit in target dimensions"
+        });
+        child.visible = false;
+
+        // Store original visibility for potential undo/restoration
+        if ("setPluginData" in child) {
+          (child as SceneNode & { setPluginData: (key: string, value: string) => void })
+            .setPluginData("biblioscale:hidden-by-restructure", "true");
+        }
+      }
+    }
   }
 }
 
@@ -796,123 +339,3 @@ function isStructuralContainer(node: FrameNode, targetWidth: number): boolean {
   return false;
 }
 
-// Helper functions
-function hasTextChildren(frame: FrameNode): boolean {
-  return frame.children.some(child =>
-    child.type === "TEXT" ||
-    ("children" in child && hasTextChildren(child as unknown as FrameNode))
-  );
-}
-
-function hasImageContent(node: SceneNode): boolean {
-  if ("fills" in node && Array.isArray(node.fills)) {
-    const fills = node.fills as readonly Paint[];
-    if (fills.some(fill => fill.type === "IMAGE" || fill.type === "VIDEO")) {
-      return true;
-    }
-  }
-
-  if ("children" in node) {
-    return node.children.some(child => hasImageContent(child as SceneNode));
-  }
-
-  return false;
-}
-
-function hasImageChildren(frame: FrameNode): boolean {
-  return hasImageContent(frame as unknown as SceneNode);
-}
-
-/**
- * Multi-signal background detection
- * Combines: area coverage, layer position, fill type, text content, and name hints
- */
-function isBackgroundLike(node: SceneNode, rootWidth: number, rootHeight: number, isBottomLayer: boolean = false): boolean {
-  if (!("width" in node) || !("height" in node)) return false;
-  if (typeof (node as any).width !== "number" || typeof (node as any).height !== "number") return false;
-
-  const nodeArea = (node as any).width * (node as any).height;
-  const rootArea = rootWidth * rootHeight;
-
-  // Signal 1: Area coverage (lowered from 95% to 90% for better detection)
-  const coversFrame = rootArea > 0 && nodeArea >= rootArea * 0.90;
-
-  if (!coversFrame) {
-    return false;
-  }
-
-  // Signal 2: Fill type (images and gradients are often backgrounds)
-  let hasBackgroundFill = false;
-  if ("fills" in node && Array.isArray(node.fills)) {
-    hasBackgroundFill = (node.fills as readonly Paint[]).some(
-      (f) => f.type === "IMAGE" || f.type === "GRADIENT_LINEAR" || f.type === "GRADIENT_RADIAL"
-    );
-  }
-
-  // Signal 3: No text content
-  const hasNoText = node.type !== "TEXT" && !containsText(node);
-
-  // Signal 4: Name hints
-  const nameLower = node.name.toLowerCase();
-  const hasBackgroundName = ["background", "bg", "backdrop", "hero-bg", "cover"].some(
-    (term) => nameLower.includes(term)
-  );
-
-  // Decision: require area coverage + at least one other signal
-  const otherSignals = [isBottomLayer, hasBackgroundFill, hasNoText, hasBackgroundName].filter(Boolean).length;
-  return otherSignals >= 1;
-}
-
-function containsText(node: SceneNode): boolean {
-  if (node.type === "TEXT") return true;
-  if ("children" in node) {
-    return node.children.some((c) => containsText(c as SceneNode));
-  }
-  return false;
-}
-
-function countFlowChildren(frame: FrameNode): number {
-  let count = 0;
-  for (const child of frame.children) {
-    if (isBackgroundLike(child, frame.width, frame.height)) continue;
-    if ("visible" in child && !child.visible) continue;
-    if ("layoutPositioning" in child && child.layoutPositioning === "ABSOLUTE") continue;
-    count++;
-  }
-  return count;
-}
-
-/**
- * Heuristic to detect composed component frames (logos, buttons, icons) that
- * should NOT have their internal auto-layout modified.
- *
- * This prevents breaking small, self-contained UI elements when adapting
- * layouts for different target sizes.
- */
-function isComponentLikeFrame(node: FrameNode): boolean {
-  // Small frames are likely components (logos, icons, buttons)
-  if (node.width < 200 && node.height < 200) {
-    return true;
-  }
-
-  // Check for common component name patterns
-  const nameLower = node.name.toLowerCase();
-  const componentPatterns = /logo|icon|button|badge|chip|avatar|cta|tag|pill|indicator/i;
-  if (componentPatterns.test(nameLower)) {
-    return true;
-  }
-
-  // Frames with auto-layout and few children are likely atomic components
-  // (e.g., a logo with icon + text, or a button with icon + label)
-  if (node.layoutMode !== "NONE" && node.children.length <= 3) {
-    // Additional check: if children are mostly text/vectors, it's a component
-    const hasOnlySimpleChildren = node.children.every(
-      (child) => child.type === "TEXT" || child.type === "VECTOR" || child.type === "RECTANGLE" || child.type === "ELLIPSE"
-    );
-    if (hasOnlySimpleChildren) {
-      return true;
-    }
-  }
-
-  return false;
-}

@@ -1,6 +1,7 @@
-import { VARIANT_TARGETS, getTargetById, type VariantTarget } from "../types/targets.js";
+import { VARIANT_TARGETS, getTargetById, type VariantTarget, type TargetId } from "../types/targets.js";
 import type { ToCoreMessage, ToUIMessage, VariantResult } from "../types/messages.js";
 import type { LayoutAdvice } from "../types/layout-advice.js";
+import type { LayoutPatternId } from "../types/layout-patterns.js";
 import type { AiSignals } from "../types/ai-signals.js";
 import { UI_TEMPLATE } from "../ui/template.js";
 import { configureQaOverlay, createQaOverlay } from "./qa-overlay.js";
@@ -8,10 +9,11 @@ import { resolveLayoutProfile } from "./layout-profile.js";
 import { createLayoutAdaptationPlan, applyLayoutAdaptation, adaptNestedFrames } from "./auto-layout-adapter.js";
 import { readAiSignals, resolvePrimaryFocalPoint } from "./ai-signals.js";
 import { autoSelectLayoutPattern, normalizeLayoutAdvice, readLayoutAdvice, resolvePatternLabel } from "./layout-advice.js";
-import { requestAiInsights } from "./ai-service.js";
+import { requestAiInsightsWithRecovery } from "./ai-service.js";
 import { trackEvent } from "./telemetry.js";
+import { recordPatternSelection, getCalibrationStatus } from "./ai-confidence-calibration.js";
 import { debugFixLog, setLogHandler, isDebugFixEnabled } from "./debug.js";
-import { ensureAiKeyLoaded, getAiState, getCachedAiApiKey, persistApiKey, resetAiStatus, setAiStatus } from "./ai-state.js";
+import { ensureAiKeyLoaded, getCachedAiApiKey, persistApiKey, resetAiStatus, setAiStatus } from "./ai-state.js";
 import { createSelectionState, getSelectionFrame } from "./selection.js";
 import { ensureStagingPage, createRunContainer, exposeRun, layoutVariants, finalizeOverlays, promoteVariantsToPage } from "./run-ops.js";
 import { readLastRun, writeLastRun } from "./run-store.js";
@@ -19,6 +21,8 @@ import {
   AI_SIGNALS_KEY,
   LAYOUT_ADVICE_KEY,
   LAYOUT_PATTERN_KEY,
+  LEGACY_AI_SIGNALS_KEY,
+  LEGACY_LAYOUT_ADVICE_KEY,
   PLUGIN_NAME,
   RUN_ID_KEY,
   TARGET_ID_KEY
@@ -32,6 +36,7 @@ import {
   type AutoLayoutSnapshot
 } from "./variant-scaling.js";
 import { captureLayoutSnapshot } from "./layout-snapshot.js";
+import { convertFrameToAutoLayoutIfBeneficial } from "./auto-layout-converter.js";
 
 export { collectWarnings, combineChildBounds } from "./warnings.js";
 
@@ -73,6 +78,9 @@ figma.ui.onmessage = async (rawMessage: ToCoreMessage) => {
       break;
     case "refresh-ai":
       await handleRefreshAiRequest();
+      break;
+    case "get-calibration-status":
+      await handleGetCalibrationStatus();
       break;
     default:
       console.warn("Unhandled message", rawMessage);
@@ -156,6 +164,16 @@ async function handleGenerateRequest(
     const layoutAdvice = readLayoutAdvice(selectionFrame);
     const aiSignals = readAiSignals(selectionFrame);
     const primaryFocal = resolvePrimaryFocalPoint(aiSignals);
+    const faceRegions = aiSignals?.faceRegions;
+
+    debugFixLog("face detection status", {
+      hasFaceRegions: Boolean(faceRegions?.length),
+      faceCount: faceRegions?.length ?? 0,
+      faces: faceRegions?.map(f => ({ x: f.x.toFixed(2), y: f.y.toFixed(2), confidence: f.confidence.toFixed(2) })),
+      hasFocalPoint: Boolean(primaryFocal),
+      focalPoint: primaryFocal ? { x: primaryFocal.x.toFixed(2), y: primaryFocal.y.toFixed(2) } : null
+    });
+
     for (const target of targets) {
       const layoutProfile = resolveLayoutProfile({ width: target.width, height: target.height });
       debugFixLog("prepping variant target", {
@@ -173,6 +191,13 @@ async function handleGenerateRequest(
       variantNode.setPluginData(RUN_ID_KEY, runId);
 
       runContainer.appendChild(variantNode);
+
+      // Apply auto-layout to non-auto-layout frames before scaling
+      // This gives the scaling algorithm properly structured content to work with
+      if (variantNode.layoutMode === "NONE") {
+        convertFrameToAutoLayoutIfBeneficial(variantNode);
+      }
+
       const autoLayoutSnapshots = new Map<string, AutoLayoutSnapshot>();
       await prepareCloneForLayout(variantNode, autoLayoutSnapshots);
       const rootSnapshot = autoLayoutSnapshots.get(variantNode.id) ?? null;
@@ -183,7 +208,8 @@ async function handleGenerateRequest(
         fontCache,
         rootSnapshot,
         layoutProfile,
-        primaryFocal
+        primaryFocal,
+        faceRegions
       );
 
             // Create and apply intelligent layout adaptation instead of just restoring
@@ -214,10 +240,29 @@ async function handleGenerateRequest(
               newMode: layoutAdaptationPlan.layoutMode,
               profile: layoutProfile
             });
-      
+
                   // Apply the adaptation plan for intelligent layout restructuring
-                  applyLayoutAdaptation(variantNode, layoutAdaptationPlan);
-                  
+                  // Pass adviceEntry to enable AI-driven element hiding for extreme transformations
+                  applyLayoutAdaptation(variantNode, layoutAdaptationPlan, adviceEntry);
+
+                  // Log feasibility and restructure info if present
+                  if (adviceEntry?.feasibility) {
+                    debugFixLog("AI feasibility analysis", {
+                      targetId: target.id,
+                      achievable: adviceEntry.feasibility.achievable,
+                      predictedFill: adviceEntry.feasibility.predictedFill,
+                      requiresRestructure: adviceEntry.feasibility.requiresRestructure,
+                      uniformScaleResult: adviceEntry.feasibility.uniformScaleResult
+                    });
+                  }
+                  if (adviceEntry?.restructure?.drop?.length) {
+                    debugFixLog("Elements hidden per AI recommendation", {
+                      targetId: target.id,
+                      dropped: adviceEntry.restructure.drop,
+                      kept: adviceEntry.restructure.keepRequired
+                    });
+                  }
+
                   // Recursively adapt nested structural containers
                   adaptNestedFrames(variantNode, target, layoutProfile, safeAreaMetrics.scale);
             
@@ -250,7 +295,7 @@ async function handleGenerateRequest(
               willLockAfterFlush: false
             });
       
-            const patternSelection = autoSelectLayoutPattern(layoutAdvice, target.id, { minConfidence: MIN_PATTERN_CONFIDENCE });
+            const patternSelection = await autoSelectLayoutPattern(layoutAdvice, target.id, { minConfidence: MIN_PATTERN_CONFIDENCE });
             const userSelection = layoutPatterns[target.id];
             
             const chosenPatternId =
@@ -263,6 +308,30 @@ async function handleGenerateRequest(
           ? patternSelection.confidence
           : undefined;
       const layoutSnapshot = captureLayoutSnapshot(variantNode);
+
+      // Record pattern selection feedback for adaptive confidence system
+      if (patternSelection?.patternId && chosenPatternId) {
+        try {
+          await recordPatternSelection(
+            target.id as TargetId,
+            patternSelection.patternId as LayoutPatternId,
+            chosenPatternId as LayoutPatternId,
+            patternSelection.confidence ?? 0
+          );
+
+          debugFixLog("Pattern feedback recorded", {
+            targetId: target.id,
+            aiRecommended: patternSelection.patternId,
+            userSelected: chosenPatternId,
+            wasCorrect: patternSelection.patternId === chosenPatternId,
+            confidence: patternSelection.confidence
+          });
+        } catch (error) {
+          debugFixLog("Failed to record pattern feedback", {
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
 
       if (chosenPatternId) {
         variantNode.setPluginData(LAYOUT_PATTERN_KEY, chosenPatternId);
@@ -448,6 +517,23 @@ async function handleRefreshAiRequest(): Promise<void> {
     postToUI({ type: "selection-update", payload: createSelectionState(frame) });
     return;
   }
+
+  // Clear old AI data before making new request
+  debugFixLog("Clearing old AI data before refresh", { frameId: frame.id, frameName: frame.name });
+  try {
+    frame.setPluginData(AI_SIGNALS_KEY, "");
+    frame.setPluginData(LAYOUT_ADVICE_KEY, "");
+    // Also clear legacy keys
+    frame.setPluginData(LEGACY_AI_SIGNALS_KEY, "");
+    frame.setPluginData(LEGACY_LAYOUT_ADVICE_KEY, "");
+    // Clear any cached analysis from error recovery system
+    frame.setPluginData("ai-analysis-default", "");
+  } catch (error) {
+    debugFixLog("Failed to clear old AI data", {
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+
   await maybeRequestAiForFrame(frame, { force: true });
 }
 
@@ -497,14 +583,34 @@ async function maybeRequestAiForFrame(frame: FrameNode, options?: { readonly for
   let encounteredError = false;
 
   try {
-    debugFixLog("requesting ai insights", { frameId: frame.id, nodeName: frame.name });
+    debugFixLog("requesting ai insights with recovery", { frameId: frame.id, nodeName: frame.name });
     trackEvent("AI_ANALYSIS_REQUESTED", { frameId: frame.id, requestId });
-    const result = await requestAiInsights(frame, cachedKey);
-    if (!result) {
+    const result = await requestAiInsightsWithRecovery(frame, cachedKey);
+
+    if (!result.success) {
       encounteredError = true;
-      setAiStatus("error", "AI response missing structured layout data.");
-      trackEvent("AI_ANALYSIS_FAILED", { frameId: frame.id, reason: getAiState().aiStatusDetail });
+      const errorDetail = `AI analysis failed (${result.recoveryMethod}): ${result.error || "Unknown error"}`;
+      setAiStatus("error", errorDetail);
+      trackEvent("AI_ANALYSIS_FAILED", {
+        frameId: frame.id,
+        reason: errorDetail,
+        recoveryMethod: result.recoveryMethod,
+        confidence: result.confidence
+      });
       return;
+    }
+
+    // Log recovery method for telemetry
+    if (result.recoveryMethod && result.recoveryMethod !== "full-analysis") {
+      debugFixLog("AI analysis used recovery method", {
+        method: result.recoveryMethod,
+        confidence: result.confidence
+      });
+      trackEvent("AI_ANALYSIS_RECOVERED", {
+        frameId: frame.id,
+        recoveryMethod: result.recoveryMethod,
+        confidence: result.confidence
+      });
     }
 
     const targetFrame = resolveLiveFrame(frame.id);
@@ -548,9 +654,7 @@ async function maybeRequestAiForFrame(frame: FrameNode, options?: { readonly for
     }
     if (requestId === aiRequestToken) {
       const current = getSelectionFrame();
-      if (current && current.id === frame.id) {
-        postToUI({ type: "selection-update", payload: createSelectionState(current) });
-      }
+      postToUI({ type: "selection-update", payload: createSelectionState(current) });
     }
   }
 }
@@ -579,5 +683,36 @@ async function handleSetLayoutAdvice(advice: LayoutAdvice): Promise<void> {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to apply layout advice.";
     postToUI({ type: "error", payload: { message } });
+  }
+}
+
+async function handleGetCalibrationStatus(): Promise<void> {
+  try {
+    const status = await getCalibrationStatus();
+
+    debugFixLog("Calibration status requested", {
+      learningPhase: status.learningPhase,
+      totalRecommendations: status.totalRecommendations,
+      userOverrideRate: status.userOverrideRate.toFixed(2),
+      topPatterns: status.topPatterns.length,
+      topWeights: status.topTargetWeights.length
+    });
+
+    // Send back to UI for display (could be used for debugging/analytics panel)
+    postToUI({
+      type: "calibration-status",
+      payload: {
+        learningPhase: status.learningPhase as "initial" | "adapting" | "stable",
+        totalRecommendations: status.totalRecommendations,
+        userAcceptanceRate: Math.round((1 - status.userOverrideRate) * 100),
+        topPatterns: status.topPatterns,
+        topWeights: status.topTargetWeights,
+        message: `Adaptive AI: ${status.learningPhase} phase, ${status.totalRecommendations} recommendations, ${Math.round((1 - status.userOverrideRate) * 100)}% acceptance rate`
+      }
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to get calibration status.";
+    postToUI({ type: "error", payload: { message } });
+    debugFixLog("Failed to get calibration status", { error: message });
   }
 }

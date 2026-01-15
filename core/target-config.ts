@@ -10,8 +10,18 @@ export interface TargetConfig {
 
 const SPECIFIC_CONFIGS: Record<string, Partial<TargetConfig>> = {
   "tiktok-vertical": {
-     safeAreaInsets: { top: 108, bottom: 320, left: 44, right: 120 },
+     safeAreaInsets: { top: 150, bottom: 400, left: 90, right: 120 },
      overlayLabel: "Content Safe Zone",
+     overlayConstraints: { horizontal: "STRETCH", vertical: "MIN" }
+  },
+  "youtube-shorts": {
+     safeAreaInsets: { top: 200, bottom: 280, left: 60, right: 120 },
+     overlayLabel: "Shorts Safe Zone",
+     overlayConstraints: { horizontal: "STRETCH", vertical: "MIN" }
+  },
+  "instagram-reels": {
+     safeAreaInsets: { top: 108, bottom: 340, left: 60, right: 120 },
+     overlayLabel: "Reels Safe Zone",
      overlayConstraints: { horizontal: "STRETCH", vertical: "MIN" }
   },
   "youtube-cover": {
@@ -77,8 +87,30 @@ export const TARGET_QA_THRESHOLDS: Record<string, TargetQaThresholds> = {
     minCtaSize: { width: 200, height: 48 },
     safeAreaCritical: true,
     overlayZones: [
-      { x: 0, y: 0, width: 1080, height: 108, description: "Top status bar" },
-      { x: 0, y: 1600, width: 1080, height: 320, description: "Bottom action bar" }
+      { x: 0, y: 0, width: 1080, height: 150, description: "Username & sound" },
+      { x: 0, y: 1520, width: 1080, height: 400, description: "Caption & actions" }
+    ]
+  },
+  "youtube-shorts": {
+    targetId: "youtube-shorts",
+    minFontSize: 24,
+    maxTextLength: 100,
+    minCtaSize: { width: 180, height: 44 },
+    safeAreaCritical: true,
+    overlayZones: [
+      { x: 0, y: 0, width: 1080, height: 200, description: "Channel & comments" },
+      { x: 0, y: 1640, width: 1080, height: 280, description: "Subscribe & UI" }
+    ]
+  },
+  "instagram-reels": {
+    targetId: "instagram-reels",
+    minFontSize: 22,
+    maxTextLength: 110,
+    minCtaSize: { width: 180, height: 44 },
+    safeAreaCritical: true,
+    overlayZones: [
+      { x: 0, y: 0, width: 1080, height: 108, description: "Username area" },
+      { x: 0, y: 1580, width: 1080, height: 340, description: "Caption & actions" }
     ]
   },
   "gumroad-cover": {

@@ -3,6 +3,8 @@ import { debugFixLog } from "./debug.js";
 import type { LayoutProfile } from "./layout-profile.js";
 import { ASPECT_RATIOS } from "./layout-constants.js";
 import { detectElementGroups, optimizeGroupSizes, type ElementGroup } from "./element-groups.js";
+import type { PlacementScoring } from "../types/ai-signals.js";
+import { getRegionCenter } from "./placement-scoring.js";
 
 export interface AbsoluteChildSnapshot {
   readonly id: string;
@@ -30,6 +32,7 @@ export interface PlanAbsoluteChildPositionsInput {
   readonly safeBounds: { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
   readonly targetAspectRatio?: number;
   readonly children: ReadonlyArray<AbsoluteChildSnapshot>;
+  readonly placementScoring?: PlacementScoring;
 }
 
 type Bounds = { x: number; y: number; width: number; height: number };
@@ -39,12 +42,13 @@ export function planAbsoluteChildPositions(input: {
   readonly safeBounds: Bounds;
   readonly targetAspectRatio?: number;
   readonly children: ReadonlyArray<AbsoluteChildSnapshot>;
+  readonly placementScoring?: PlacementScoring;
 }): AbsolutePlan[] {
-  const { safeBounds } = input;
+  const { safeBounds, placementScoring } = input;
 
   // First, try group-aware positioning if we have multiple elements
   if (input.children.length >= 2) {
-    return planGroupAwarePositions(input);
+    return planGroupAwarePositions(input, placementScoring);
   }
 
   // Fallback to existing logic for single elements
@@ -63,7 +67,8 @@ export function planAbsoluteChildPositions(input: {
     contentBounds,
     safeBounds,
     input.profile,
-    aspectRatioChange
+    aspectRatioChange,
+    placementScoring
   );
 }
 
@@ -76,7 +81,7 @@ function planGroupAwarePositions(input: {
   readonly safeBounds: Bounds;
   readonly targetAspectRatio?: number;
   readonly children: ReadonlyArray<AbsoluteChildSnapshot>;
-}): AbsolutePlan[] {
+}, placementScoring?: PlacementScoring): AbsolutePlan[] {
   const { safeBounds, profile } = input;
 
   // For horizontal profiles, preserve existing layout if it fits within safe bounds
@@ -115,7 +120,7 @@ function planGroupAwarePositions(input: {
   }
 
   // Use group-aware positioning for other layouts
-  return planGroupPositioning(elementGroups, safeBounds, profile, input.targetAspectRatio);
+  return planGroupPositioning(elementGroups, safeBounds, profile, input.targetAspectRatio, placementScoring);
 }
 
 /**
@@ -174,18 +179,46 @@ function planGroupPositioning(
   groups: ReadonlyArray<ElementGroup>,
   safeBounds: Bounds,
   profile: LayoutProfile,
-  targetAspectRatio?: number
+  targetAspectRatio?: number,
+  placementScoring?: PlacementScoring
 ): AbsolutePlan[] {
   const plans: AbsolutePlan[] = [];
 
   if (groups.length === 1) {
-    // Single group - center it in the safe area
+    // Single group - position based on placement scoring or center
     const group = groups[0];
-    const centerX = safeBounds.x + (safeBounds.width - group.bounds.width) / 2;
-    const centerY = safeBounds.y + (safeBounds.height - group.bounds.height) / 2;
 
-    const offsetX = centerX - group.bounds.x;
-    const offsetY = centerY - group.bounds.y;
+    // Default to center
+    let targetX = safeBounds.x + (safeBounds.width - group.bounds.width) / 2;
+    let targetY = safeBounds.y + (safeBounds.height - group.bounds.height) / 2;
+
+    // Apply placement scoring bias for square/vertical profiles
+    if (placementScoring && (profile === "square" || profile === "vertical")) {
+      const regionCenter = getRegionCenter(placementScoring.recommendedRegion, safeBounds);
+      const biasStrength = 0.4; // 40% bias toward recommended region
+
+      // Calculate biased position (constrained to keep group in safe bounds)
+      const biasedY = regionCenter.y - group.bounds.height / 2;
+      const constrainedY = Math.max(
+        safeBounds.y,
+        Math.min(biasedY, safeBounds.y + safeBounds.height - group.bounds.height)
+      );
+
+      // Blend center with biased position
+      targetY = targetY * (1 - biasStrength) + constrainedY * biasStrength;
+
+      debugFixLog("group positioning with placement bias", {
+        profile,
+        recommendedRegion: placementScoring.recommendedRegion,
+        regionCenterY: regionCenter.y,
+        centeredY: safeBounds.y + (safeBounds.height - group.bounds.height) / 2,
+        biasedY: constrainedY,
+        finalY: targetY
+      });
+    }
+
+    const offsetX = targetX - group.bounds.x;
+    const offsetY = targetY - group.bounds.y;
 
     for (const element of group.elements) {
       plans.push({
@@ -202,6 +235,11 @@ function planGroupPositioning(
   if (profile === "horizontal" && groups.length === 2) {
     // Split layout: position groups side by side
     return planTwoGroupSplit(groups, safeBounds);
+  }
+
+  // For square/vertical profiles, stack groups vertically with bottom bias
+  if ((profile === "square" || profile === "vertical") && placementScoring) {
+    return planGroupsWithVerticalBias(groups, safeBounds, placementScoring);
   }
 
   // Fallback to grid layout for complex scenarios
@@ -246,6 +284,80 @@ function planTwoGroupSplit(groups: ReadonlyArray<ElementGroup>, safeBounds: Boun
       x: round(element.bounds.x + rightOffsetX),
       y: round(element.bounds.y + rightOffsetY)
     });
+  }
+
+  return plans;
+}
+
+/**
+ * Positions groups vertically with bias toward the recommended region.
+ * Used for square/vertical profiles to push content toward bottom.
+ */
+function planGroupsWithVerticalBias(
+  groups: ReadonlyArray<ElementGroup>,
+  safeBounds: Bounds,
+  placementScoring: PlacementScoring
+): AbsolutePlan[] {
+  // Calculate total height of all groups with gaps
+  const gapSize = 20; // Standard gap between groups
+  const totalGroupHeight = groups.reduce((sum, g) => sum + g.bounds.height, 0);
+  const totalGapHeight = Math.max(0, groups.length - 1) * gapSize;
+  const totalContentHeight = totalGroupHeight + totalGapHeight;
+
+  // Safety check: only apply bias if content fits comfortably (with 15% margin)
+  // If content is too tall, bias would push first group outside bounds
+  const hasRoomForBias = totalContentHeight < safeBounds.height * 0.85;
+  if (!hasRoomForBias) {
+    debugFixLog("skipping vertical bias - content too tall", {
+      totalContentHeight,
+      safeHeight: safeBounds.height,
+      ratio: (totalContentHeight / safeBounds.height).toFixed(2)
+    });
+    return planGroupGrid(groups, safeBounds);
+  }
+
+  const plans: AbsolutePlan[] = [];
+
+  // Get recommended region center for bias
+  const regionCenter = getRegionCenter(placementScoring.recommendedRegion, safeBounds);
+
+  // Calculate biased starting Y position
+  // Blend between centered position and biased position toward recommended region
+  const centeredStartY = safeBounds.y + (safeBounds.height - totalContentHeight) / 2;
+  const biasedStartY = regionCenter.y - totalContentHeight / 2;
+  const constrainedBiasY = Math.max(
+    safeBounds.y,
+    Math.min(biasedStartY, safeBounds.y + safeBounds.height - totalContentHeight)
+  );
+
+  const biasStrength = 0.5; // 50% bias toward recommended region
+  let cursorY = centeredStartY * (1 - biasStrength) + constrainedBiasY * biasStrength;
+
+  debugFixLog("multi-group vertical bias positioning", {
+    groupCount: groups.length,
+    recommendedRegion: placementScoring.recommendedRegion,
+    centeredStartY,
+    biasedStartY: constrainedBiasY,
+    finalStartY: cursorY
+  });
+
+  for (const group of groups) {
+    // Center group horizontally, use biased Y position
+    const targetX = safeBounds.x + (safeBounds.width - group.bounds.width) / 2;
+    const targetY = cursorY;
+
+    const offsetX = targetX - group.bounds.x;
+    const offsetY = targetY - group.bounds.y;
+
+    for (const element of group.elements) {
+      plans.push({
+        id: element.id,
+        x: round(element.bounds.x + offsetX),
+        y: round(element.bounds.y + offsetY)
+      });
+    }
+
+    cursorY += group.bounds.height + gapSize;
   }
 
   return plans;
@@ -304,11 +416,12 @@ function projectChildrenToBounds(
   source: Bounds,
   target: Bounds,
   profile?: LayoutProfile,
-  aspectRatioChange?: number
+  aspectRatioChange?: number,
+  placementScoring?: PlacementScoring
 ): AbsolutePlan[] {
   // For extreme aspect ratio changes, use smart positioning instead of naive center mapping
   if (profile && aspectRatioChange && shouldUseSmartPositioning(aspectRatioChange, profile)) {
-    return projectChildrenWithSmartPositioning(children, source, target, profile, aspectRatioChange);
+    return projectChildrenWithSmartPositioning(children, source, target, profile, aspectRatioChange, placementScoring);
   }
 
   // Fallback to existing center-point mapping logic
@@ -361,14 +474,16 @@ function projectChildrenWithSmartPositioning(
   source: Bounds,
   target: Bounds,
   profile: LayoutProfile,
-  aspectRatioChange: number
+  aspectRatioChange: number,
+  placementScoring?: PlacementScoring
 ): AbsolutePlan[] {
   debugFixLog("using smart positioning", {
     childCount: children.length,
     profile,
     aspectRatioChange: aspectRatioChange.toFixed(3),
     sourceBounds: source,
-    targetBounds: target
+    targetBounds: target,
+    hasPlacementScoring: Boolean(placementScoring)
   });
 
   // For vertical targets: prioritize Y-axis positioning accuracy and stack elements
@@ -382,7 +497,7 @@ function projectChildrenWithSmartPositioning(
   }
 
   // For square targets: balanced approach with slight bias toward centering
-  return projectChildrenForSquareTarget(children, source, target);
+  return projectChildrenForSquareTarget(children, source, target, placementScoring);
 }
 
 /**
@@ -470,18 +585,31 @@ function projectChildrenForHorizontalTarget(
 }
 
 /**
- * Project children for square targets with balanced approach
+ * Project children for square targets with balanced approach.
+ * When placementScoring is provided, biases text elements toward the recommended region
+ * to avoid face overlap.
  */
 function projectChildrenForSquareTarget(
   children: ReadonlyArray<AbsoluteChildSnapshot>,
   source: Bounds,
-  target: Bounds
+  target: Bounds,
+  placementScoring?: PlacementScoring
 ): AbsolutePlan[] {
   // Use a hybrid approach: maintain relative positions but with bias toward centering
   const sourceRangeX = { start: source.x, size: source.width };
   const sourceRangeY = { start: source.y, size: source.height };
   const targetRangeX = { start: target.x, size: target.width };
   const targetRangeY = { start: target.y, size: target.height };
+
+  // If we have placement scoring, get the recommended region center for biasing
+  let regionCenter: { x: number; y: number } | null = null;
+  if (placementScoring) {
+    regionCenter = getRegionCenter(placementScoring.recommendedRegion, target);
+    debugFixLog("square target face-aware positioning", {
+      recommendedRegion: placementScoring.recommendedRegion,
+      regionCenter
+    });
+  }
 
   return children.map((child) => {
     const centerX = child.x + child.width / 2;
@@ -494,8 +622,17 @@ function projectChildrenForSquareTarget(
     const centeredX = target.x + target.width / 2;
     const centeredY = target.y + target.height / 2;
 
-    const blendedCenterX = scaledCenterX * 0.8 + centeredX * 0.2;
-    const blendedCenterY = scaledCenterY * 0.8 + centeredY * 0.2;
+    let blendedCenterX = scaledCenterX * 0.8 + centeredX * 0.2;
+    let blendedCenterY = scaledCenterY * 0.8 + centeredY * 0.2;
+
+    // Apply face-aware bias for text-like elements when scoring is available
+    const isTextLike = child.nodeType === "TEXT" || child.nodeType === "FRAME";
+    if (regionCenter && isTextLike) {
+      // Blend toward recommended region with 30% bias strength
+      const biasStrength = 0.3;
+      blendedCenterX = blendedCenterX * (1 - biasStrength) + regionCenter.x * biasStrength;
+      blendedCenterY = blendedCenterY * (1 - biasStrength) + regionCenter.y * biasStrength;
+    }
 
     const nextX = clamp(blendedCenterX - child.width / 2, target.x, target.x + target.width - child.width);
     const nextY = clamp(blendedCenterY - child.height / 2, target.y, target.y + target.height - child.height);
@@ -549,5 +686,5 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 function round(value: number): number {
-  return Math.round(value * 100) / 100;
+  return Math.round(value);
 }

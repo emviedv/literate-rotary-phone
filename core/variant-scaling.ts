@@ -3,7 +3,7 @@ import { analyzeContent, calculateOptimalScale } from "./content-analyzer.js";
 import { planAutoLayoutExpansion, type AxisExpansionPlan } from "./layout-expansion.js";
 import { scaleStrokeWeight, scaleCornerRadius } from "./scaling-utils.js";
 import type { AxisGaps } from "./padding-distribution.js";
-import { MIN_LEGIBLE_SIZES, RESOLUTION_THRESHOLDS } from "./layout-constants.js";
+import { MIN_ELEMENT_SIZES } from "./layout-constants.js";
 import { planAbsoluteChildPositions } from "./absolute-layout.js";
 import {
   computeVerticalSpacing,
@@ -19,13 +19,29 @@ import { debugFixLog } from "./debug.js";
 import { measureContentMargins } from "./warnings.js";
 import { resolvePrimaryFocalPoint, readAiSignals, isHeroBleedNode } from "./ai-signals.js";
 import { SAFE_AREA_KEY, FOCAL_POINT_KEY } from "./plugin-constants.js";
-import { hasOverlayRole, hasHeroBleedRole } from "./node-roles.js";
-
-type Mutable<T> = T extends ReadonlyArray<infer U>
-  ? Mutable<U>[]
-  : T extends object
-    ? { -readonly [K in keyof T]: Mutable<T[K]> }
-    : T;
+import { hasHeroBleedRole } from "./node-roles.js";
+import type { AiFaceRegion } from "../types/ai-signals.js";
+import { calculatePlacementScores } from "./placement-scoring.js";
+import { scaleEffect, scalePaint } from "./effect-scaling.js";
+import {
+  getElementRole,
+  isBackgroundLike,
+  isDecorativePointer,
+  ensureFillModeForImages
+} from "./element-classification.js";
+import { scaleTextNode } from "./text-scaling.js";
+import {
+  adjustNodePosition,
+  positionHeroBleedChild,
+  repositionChildren,
+  validateChildrenBounds,
+  countAbsoluteChildren
+} from "./child-positioning.js";
+import {
+  collectAndScaleConstraints,
+  validateConstraints,
+  applyConstraints
+} from "./constraint-scaling.js";
 
 export type AutoLayoutSnapshot = {
   layoutMode: FrameNode["layoutMode"];
@@ -133,7 +149,8 @@ export async function scaleNodeTree(
   fontCache: Set<string>,
   rootSnapshot: AutoLayoutSnapshot | null,
   profile: LayoutProfile,
-  primaryFocal: ReturnType<typeof resolvePrimaryFocalPoint> = null
+  primaryFocal: ReturnType<typeof resolvePrimaryFocalPoint> = null,
+  faceRegions?: readonly AiFaceRegion[]
 ): Promise<SafeAreaMetrics> {
   const contentAnalysis = analyzeContent(frame);
 
@@ -242,14 +259,19 @@ export async function scaleNodeTree(
     focalRatio: primaryFocal?.y ?? null
   });
 
-  const offsetX = horizontalPlan.start;
-  const offsetY = verticalPlan.start;
+  // Clamp offsets to non-negative values to prevent content from starting outside frame
+  // Negative offsets occur when scaled content exceeds target dimensions
+  const offsetX = Math.max(0, horizontalPlan.start);
+  const offsetY = Math.max(0, verticalPlan.start);
 
   frame.resizeWithoutConstraints(target.width, target.height);
   repositionChildren(frame, offsetX, offsetY, rootSnapshot);
 
+  // Final validation: ensure all children are within bounds (belt-and-suspenders approach)
+  validateChildrenBounds(frame);
+
   if (shouldExpandAbsoluteChildren(rootSnapshot?.layoutMode, adoptVerticalVariant, profile)) {
-    expandAbsoluteChildren(frame, horizontalPlan, verticalPlan, profile);
+    expandAbsoluteChildren(frame, horizontalPlan, verticalPlan, profile, primaryFocal, faceRegions);
   }
 
   frame.setPluginData(
@@ -320,7 +342,7 @@ export async function restoreAutoLayoutSettings(
   const horizontalPlan = metrics.horizontal;
   const verticalPlan = metrics.vertical;
 
-  const round = (value: number): number => Math.round(value * 100) / 100;
+  const round = (value: number): number => Math.round(value);
 
   // The expansion plan's start/end values represent the TOTAL padding needed,
   // not additional padding. extraWidth = target - scaledContent already accounts
@@ -365,14 +387,16 @@ export async function restoreAutoLayoutSettings(
 function scaleAutoLayoutMetric(value: number, scale: number, min: number = 0): number {
   if (value === 0) return 0;
   const scaled = value * scale;
-  return Math.max(Math.round(scaled * 100) / 100, min);
+  return Math.max(Math.round(scaled), min);
 }
 
 function expandAbsoluteChildren(
   frame: FrameNode,
   horizontal: AxisExpansionPlan,
   vertical: AxisExpansionPlan,
-  profile: LayoutProfile
+  profile: LayoutProfile,
+  primaryFocal?: ReturnType<typeof resolvePrimaryFocalPoint> | null,
+  faceRegions?: readonly AiFaceRegion[]
 ): void {
   const safeWidth = frame.width - horizontal.start - horizontal.end;
   const safeHeight = frame.height - vertical.start - vertical.end;
@@ -386,6 +410,19 @@ function expandAbsoluteChildren(
     width: safeWidth,
     height: safeHeight
   };
+
+  // Calculate placement scoring only when faces are detected or there's a focal point
+  // This prevents aggressive repositioning for designs without portraits
+  const shouldCalculateScoring = (faceRegions?.length ?? 0) > 0 || primaryFocal;
+  const placementScoring = shouldCalculateScoring
+    ? calculatePlacementScores({
+        profile,
+        safeBounds,
+        frameBounds: { width: frame.width, height: frame.height },
+        faceRegions,
+        focalPoint: primaryFocal ?? undefined
+      })
+    : undefined;
 
   const absoluteChildren = frame.children.filter((child) => {
     if ("layoutPositioning" in child && child.layoutPositioning !== "ABSOLUTE" && frame.layoutMode !== "NONE") {
@@ -444,7 +481,8 @@ function expandAbsoluteChildren(
       profile,
       safeBounds,
       targetAspectRatio: frame.height > 0 ? frame.width / frame.height : safeBounds.width / Math.max(safeBounds.height, 1),
-      children: regularSnapshots
+      children: regularSnapshots,
+      placementScoring
     });
 
     const lookup = new Map(planned.map((plan) => [plan.id, plan] as const));
@@ -484,70 +522,15 @@ function expandAbsoluteChildren(
     safeBounds,
     regularCount: regularChildren.length,
     heroBleedCount: heroBleedChildren.length,
-    profile
+    profile,
+    faceRegionCount: faceRegions?.length ?? 0,
+    hasPlacementScoring: Boolean(placementScoring),
+    recommendedRegion: placementScoring?.recommendedRegion
   });
 }
 
-/**
- * Position a hero_bleed element by preserving its proportional edge relationship.
- * Hero bleed elements intentionally extend beyond frame bounds, so we maintain
- * their position relative to the nearest edge instead of constraining to safe area.
- */
-function positionHeroBleedChild(
-  child: { x: number; y: number; width: number; height: number },
-  frameWidth: number,
-  frameHeight: number
-): { x: number; y: number } {
-  const centerX = child.x + child.width / 2;
-  const centerY = child.y + child.height / 2;
-
-  // Determine which edge the element is closest to (for each axis)
-  const distToLeft = centerX;
-  const distToRight = frameWidth - centerX;
-  const distToTop = centerY;
-  const distToBottom = frameHeight - centerY;
-
-  let newX = child.x;
-  let newY = child.y;
-
-  // For X axis: maintain proportional distance from nearest edge
-  if (distToLeft <= distToRight) {
-    // Element is closer to left edge - preserve proportional left distance
-    const leftRatio = child.x / Math.max(frameWidth, 1);
-    newX = frameWidth * leftRatio;
-  } else {
-    // Element is closer to right edge - preserve proportional right distance
-    const rightEdgeOfChild = child.x + child.width;
-    const rightRatio = (frameWidth - rightEdgeOfChild) / Math.max(frameWidth, 1);
-    newX = frameWidth - (frameWidth * rightRatio) - child.width;
-  }
-
-  // For Y axis: maintain proportional distance from nearest edge
-  if (distToTop <= distToBottom) {
-    // Element is closer to top edge - preserve proportional top distance
-    const topRatio = child.y / Math.max(frameHeight, 1);
-    newY = frameHeight * topRatio;
-  } else {
-    // Element is closer to bottom edge - preserve proportional bottom distance
-    const bottomEdgeOfChild = child.y + child.height;
-    const bottomRatio = (frameHeight - bottomEdgeOfChild) / Math.max(frameHeight, 1);
-    newY = frameHeight - (frameHeight * bottomRatio) - child.height;
-  }
-
-  return {
-    x: Math.round(newX * 100) / 100,
-    y: Math.round(newY * 100) / 100
-  };
-}
-
-function isBackgroundLike(node: SceneNode, rootWidth: number, rootHeight: number): boolean {
-  if (!("width" in node) || !("height" in node)) return false;
-  if (typeof node.width !== "number" || typeof node.height !== "number") return false;
-  const nodeArea = node.width * node.height;
-  const rootArea = rootWidth * rootHeight;
-  // 95% threshold, same as warning logic
-  return rootArea > 0 && nodeArea >= rootArea * 0.95;
-}
+// positionHeroBleedChild moved to child-positioning.ts
+// isBackgroundLike, getElementRole, isDecorativePointer moved to element-classification.ts
 
 export async function scaleNodeRecursive(
   node: SceneNode,
@@ -577,81 +560,79 @@ export async function scaleNodeRecursive(
     let newWidth = node.width * scale;
     let newHeight = node.height * scale;
 
-    // Safe constraint scaling with validation
-    const scaledConstraints = {
-      minWidth: null as number | null,
-      maxWidth: null as number | null,
-      minHeight: null as number | null,
-      maxHeight: null as number | null
-    };
-
-    // Collect and scale all constraints
-    if ("minWidth" in node && typeof (node as any).minWidth === "number") {
-      scaledConstraints.minWidth = (node as any).minWidth * scale;
-    }
-    if ("maxWidth" in node && typeof (node as any).maxWidth === "number") {
-      scaledConstraints.maxWidth = (node as any).maxWidth * scale;
-    }
-    if ("minHeight" in node && typeof (node as any).minHeight === "number") {
-      scaledConstraints.minHeight = (node as any).minHeight * scale;
-    }
-    if ("maxHeight" in node && typeof (node as any).maxHeight === "number") {
-      scaledConstraints.maxHeight = (node as any).maxHeight * scale;
-    }
-
-    // Validate and resolve conflicts: min > max
-    if (scaledConstraints.minWidth !== null && scaledConstraints.maxWidth !== null) {
-      if (scaledConstraints.minWidth > scaledConstraints.maxWidth) {
-        const avgWidth = (scaledConstraints.minWidth + scaledConstraints.maxWidth) / 2;
-        scaledConstraints.minWidth = Math.min(avgWidth, newWidth);
-        scaledConstraints.maxWidth = Math.max(avgWidth, newWidth);
-      }
-    }
-    if (scaledConstraints.minHeight !== null && scaledConstraints.maxHeight !== null) {
-      if (scaledConstraints.minHeight > scaledConstraints.maxHeight) {
-        const avgHeight = (scaledConstraints.minHeight + scaledConstraints.maxHeight) / 2;
-        scaledConstraints.minHeight = Math.min(avgHeight, newHeight);
-        scaledConstraints.maxHeight = Math.max(avgHeight, newHeight);
-      }
-    }
-
-    // Ensure constraints don't prevent intended sizing
-    if (scaledConstraints.minWidth !== null && scaledConstraints.minWidth > newWidth) {
-      scaledConstraints.minWidth = newWidth;
-    }
-    if (scaledConstraints.maxWidth !== null && scaledConstraints.maxWidth < newWidth) {
-      scaledConstraints.maxWidth = newWidth;
-    }
-    if (scaledConstraints.minHeight !== null && scaledConstraints.minHeight > newHeight) {
-      scaledConstraints.minHeight = newHeight;
-    }
-    if (scaledConstraints.maxHeight !== null && scaledConstraints.maxHeight < newHeight) {
-      scaledConstraints.maxHeight = newHeight;
-    }
-
-    // Apply constraints in safe order (depends on scale direction)
-    if (scale < 1) {
-      if (scaledConstraints.minWidth !== null) (node as any).minWidth = scaledConstraints.minWidth;
-      if (scaledConstraints.minHeight !== null) (node as any).minHeight = scaledConstraints.minHeight;
-      if (scaledConstraints.maxWidth !== null) (node as any).maxWidth = scaledConstraints.maxWidth;
-      if (scaledConstraints.maxHeight !== null) (node as any).maxHeight = scaledConstraints.maxHeight;
-    } else {
-      if (scaledConstraints.maxWidth !== null) (node as any).maxWidth = scaledConstraints.maxWidth;
-      if (scaledConstraints.maxHeight !== null) (node as any).maxHeight = scaledConstraints.maxHeight;
-      if (scaledConstraints.minWidth !== null) (node as any).minWidth = scaledConstraints.minWidth;
-      if (scaledConstraints.minHeight !== null) (node as any).minHeight = scaledConstraints.minHeight;
-    }
+    // Collect and scale constraints using dedicated module
+    const scaledConstraints = collectAndScaleConstraints(node, scale);
 
     if (isBackground) {
       // Backgrounds should fill the target frame completely
       newWidth = target.width;
       newHeight = target.height;
+      // Ensure image fills use FILL mode to maintain aspect ratio (crop, don't stretch)
+      ensureFillModeForImages(node, true);
     }
 
+    // Enforce minimum sizes for logos, icons, badges, and buttons
+    // This prevents small UI elements from becoming microscopic on extreme aspect ratio targets
+    if (!isBackground) {
+      const elementRole = getElementRole(node);
+      if (elementRole && MIN_ELEMENT_SIZES[elementRole]) {
+        const minSize = MIN_ELEMENT_SIZES[elementRole];
+
+        if (newWidth < minSize.width || newHeight < minSize.height) {
+          // Calculate the scale needed to meet minimum size while preserving aspect ratio
+          const minScaleW = minSize.width / node.width;
+          const minScaleH = minSize.height / node.height;
+          const preserveScale = Math.max(minScaleW, minScaleH, scale);
+
+          newWidth = Math.max(newWidth, node.width * preserveScale);
+          newHeight = Math.max(newHeight, node.height * preserveScale);
+
+          debugFixLog("enforced minimum size for element", {
+            nodeId: node.id,
+            nodeName: node.name,
+            role: elementRole,
+            originalScale: scale,
+            preservedScale: preserveScale,
+            originalSize: { width: node.width, height: node.height },
+            newSize: { width: newWidth, height: newHeight }
+          });
+        }
+      }
+
+      // Handle decorative pointers - preserve aspect ratio to prevent stretching
+      if (isDecorativePointer(node)) {
+        const originalAspect = node.width / node.height;
+        const currentAspect = newWidth / newHeight;
+
+        // If aspect ratio has changed significantly, restore it
+        if (Math.abs(originalAspect - currentAspect) > 0.1) {
+          // Scale to fit within current bounds while preserving aspect ratio
+          const fitWidth = Math.min(newWidth, newHeight * originalAspect);
+          const fitHeight = fitWidth / originalAspect;
+          newWidth = fitWidth;
+          newHeight = fitHeight;
+
+          debugFixLog("preserved decorative pointer aspect ratio", {
+            nodeId: node.id,
+            nodeName: node.name,
+            originalAspect,
+            preservedSize: { width: newWidth, height: newHeight }
+          });
+        }
+      }
+    }
+
+    const safeWidth = Math.max(1, Math.round(newWidth));
+    const safeHeight = Math.max(1, Math.round(newHeight));
+
+    // Validate and apply constraints using dedicated module
+    const validatedConstraints = validateConstraints(scaledConstraints, safeWidth, safeHeight);
+    applyConstraints(node, validatedConstraints, scale);
+
     if ("resizeWithoutConstraints" in node && typeof node.resizeWithoutConstraints === "function") {
-      node.resizeWithoutConstraints(newWidth, newHeight);
+      node.resizeWithoutConstraints(safeWidth, safeHeight);
     } else if ("resize" in node && typeof node.resize === "function") {
-      node.resize(newWidth, newHeight);
+      node.resize(safeWidth, safeHeight);
     }
   }
 
@@ -695,246 +676,17 @@ export async function scaleNodeRecursive(
 
   if ("fills" in node && Array.isArray(node.fills)) {
     node.fills = (node.fills as readonly Paint[]).map((paint) => scalePaint(paint, scale));
+    // Ensure image fills maintain aspect ratio (crop-to-fill, not stretch) - only for backgrounds
+    ensureFillModeForImages(node, false);
   }
 
   adjustAutoLayoutProperties(node, scale);
 }
 
-function adjustNodePosition(node: SceneNode, scale: number): void {
-  if ("layoutPositioning" in node) {
-    if (node.layoutPositioning === "ABSOLUTE") {
-      node.x *= scale;
-      node.y *= scale;
-    }
-    return;
-  }
-
-  if ("x" in node && typeof node.x === "number" && "y" in node && typeof node.y === "number") {
-    node.x *= scale;
-    node.y *= scale;
-  }
-}
-
-/**
- * Get minimum legible font size based on target resolution
- * Thumbnails can use smaller text, large displays need larger text
- */
-function getMinLegibleSize(target: VariantTarget): number {
-  const minDimension = Math.min(target.width, target.height);
-  if (minDimension < RESOLUTION_THRESHOLDS.THUMBNAIL_DIMENSION) {
-    // Thumbnails: smaller text is acceptable (viewed at small size)
-    return MIN_LEGIBLE_SIZES.THUMBNAIL;
-  }
-  if (target.width >= RESOLUTION_THRESHOLDS.LARGE_DISPLAY_DIMENSION || target.height >= RESOLUTION_THRESHOLDS.LARGE_DISPLAY_DIMENSION) {
-    // Large displays (YouTube 2560px): need larger text
-    return MIN_LEGIBLE_SIZES.LARGE_DISPLAY;
-  }
-  // Social/standard: baseline minimum
-  return MIN_LEGIBLE_SIZES.STANDARD;
-}
-
-async function scaleTextNode(node: TextNode, scale: number, fontCache: Set<string>, target: VariantTarget): Promise<void> {
-  const minLegibleSize = getMinLegibleSize(target);
-  const characters = node.characters;
-
-  // STEP 1: Store original auto-resize mode to preserve text box width
-  const originalAutoResize = node.textAutoResize;
-
-  // STEP 2: Set to NONE to prevent auto-shrinking during scaling
-  // This prevents Figma from immediately resizing the box after font changes
-  node.textAutoResize = "NONE";
-
-  // STEP 3: Scale text box dimensions FIRST (before font scaling)
-  // This ensures the text box is large enough to accommodate scaled text
-  const scaledWidth = node.width * scale;
-  const scaledHeight = node.height * scale;
-  node.resize(scaledWidth, scaledHeight);
-
-  if (characters.length === 0) {
-    if (node.fontSize !== figma.mixed && typeof node.fontSize === "number") {
-      node.fontSize = Math.max(node.fontSize * scale, minLegibleSize);
-    }
-    // Restore auto-resize for empty text nodes
-    restoreTextAutoResize(node, originalAutoResize);
-    return;
-  }
-
-  // STEP 4: Load fonts and scale text properties
-  const fontNames = await node.getRangeAllFontNames(0, characters.length);
-  for (const font of fontNames) {
-    const cacheKey = `${font.family}__${font.style}`;
-    if (!fontCache.has(cacheKey)) {
-      await figma.loadFontAsync(font);
-      fontCache.add(cacheKey);
-    }
-  }
-
-  for (let i = 0; i < characters.length; i += 1) {
-    const nextIndex = i + 1;
-
-    const fontSize = node.getRangeFontSize(i, nextIndex);
-    if (fontSize !== figma.mixed && typeof fontSize === "number") {
-      const newFontSize = Math.max(fontSize * scale, minLegibleSize);
-      node.setRangeFontSize(i, nextIndex, newFontSize);
-    }
-
-    const lineHeight = node.getRangeLineHeight(i, nextIndex);
-    if (lineHeight !== figma.mixed && lineHeight.unit === "PIXELS") {
-      node.setRangeLineHeight(i, nextIndex, {
-        unit: "PIXELS",
-        value: lineHeight.value * scale
-      });
-    }
-
-    const letterSpacing = node.getRangeLetterSpacing(i, nextIndex);
-    if (letterSpacing !== figma.mixed && letterSpacing.unit === "PIXELS") {
-      node.setRangeLetterSpacing(i, nextIndex, {
-        unit: "PIXELS",
-        value: letterSpacing.value * scale
-      });
-    }
-  }
-
-  // STEP 5: Restore auto-resize mode with appropriate adjustments
-  restoreTextAutoResize(node, originalAutoResize);
-}
-
-/**
- * Restores text auto-resize mode after scaling, with adjustments to prevent awkward line breaks.
- * - WIDTH_AND_HEIGHT boxes are converted to HEIGHT to preserve the scaled width
- * - This prevents text from shrinking back and causing mid-word line breaks
- */
-function restoreTextAutoResize(node: TextNode, originalAutoResize: TextNode["textAutoResize"]): void {
-  if (originalAutoResize === "WIDTH_AND_HEIGHT") {
-    // For fully auto text, lock width but allow height to grow
-    // This prevents the text box from shrinking back to minimal width
-    node.textAutoResize = "HEIGHT";
-  } else {
-    // Restore original mode (NONE or HEIGHT)
-    node.textAutoResize = originalAutoResize;
-  }
-}
-
-function scaleEffect(effect: Effect, scale: number): Effect {
-  const clone = cloneValue(effect);
-
-  if (clone.type === "DROP_SHADOW" || clone.type === "INNER_SHADOW") {
-    if (typeof clone.radius === "number") {
-      // Dampen shadow radius for large scales to prevent extreme blurs
-      if (scale > 2) {
-        clone.radius = clone.radius * Math.pow(scale, 0.65);
-      } else {
-        clone.radius *= scale;
-      }
-      // Cap shadow radius to prevent extreme effects
-      clone.radius = Math.min(clone.radius, 100);
-    }
-
-    if (clone.offset) {
-      // Dampen offset for large scales
-      const offsetScale = scale > 2 ? Math.pow(scale, 0.7) : scale;
-      clone.offset = {
-        x: clone.offset.x * offsetScale,
-        y: clone.offset.y * offsetScale
-      };
-    }
-
-    // Scale spread if present
-    if (typeof clone.spread === "number") {
-      clone.spread = clone.spread * Math.pow(scale, 0.6);
-    }
-  }
-
-  if (clone.type === "LAYER_BLUR" || clone.type === "BACKGROUND_BLUR") {
-    if (typeof clone.radius === "number") {
-      // Dampen blur radius for large scales
-      if (scale > 2) {
-        clone.radius = clone.radius * Math.pow(scale, 0.6);
-      } else {
-        clone.radius *= scale;
-      }
-      // Cap blur radius to prevent extreme effects
-      clone.radius = Math.min(clone.radius, 50);
-    }
-  }
-
-  return clone as Effect;
-}
-
-function scalePaint(paint: Paint, scale: number): Paint {
-  const clone = cloneValue(paint);
-  if ((clone.type === "IMAGE" || clone.type === "VIDEO") && clone.scaleMode === "TILE") {
-    clone.scalingFactor = (clone.scalingFactor ?? 1) * scale;
-  }
-
-  if (
-    clone.type === "GRADIENT_LINEAR" ||
-    clone.type === "GRADIENT_RADIAL" ||
-    clone.type === "GRADIENT_ANGULAR" ||
-    clone.type === "GRADIENT_DIAMOND"
-  ) {
-    const gradientClone = clone as typeof clone & { gradientHandlePositions?: Vector[] };
-    if (Array.isArray(gradientClone.gradientHandlePositions)) {
-      gradientClone.gradientHandlePositions = gradientClone.gradientHandlePositions.map((position) => ({
-        x: position.x * scale,
-        y: position.y * scale
-      }));
-    }
-
-    gradientClone.gradientTransform = gradientClone.gradientTransform.map((row: readonly number[]) =>
-      row.map((value: number, index: number) => (index === 2 ? value : value * scale))
-    ) as Transform;
-  }
-
-  return clone as Paint;
-}
-
-function repositionChildren(
-  parent: FrameNode,
-  offsetX: number,
-  offsetY: number,
-  rootSnapshot: AutoLayoutSnapshot | null
-): void {
-  if (!("children" in parent)) {
-    return;
-  }
-  for (const child of parent.children) {
-    if ("layoutPositioning" in child && child.layoutPositioning !== "ABSOLUTE") {
-      continue;
-    }
-    
-    // Check if background to reset position
-    if (rootSnapshot && isBackgroundLike(child, rootSnapshot.width, rootSnapshot.height)) {
-      if ("x" in child) child.x = 0;
-      if ("y" in child) child.y = 0;
-      continue;
-    }
-
-    if ("x" in child && typeof child.x === "number") {
-      child.x += offsetX;
-    }
-    if ("y" in child && typeof child.y === "number") {
-      child.y += offsetY;
-    }
-  }
-}
-
-function countAbsoluteChildren(frame: FrameNode): number {
-  if (!("children" in frame)) {
-    return 0;
-  }
-  let count = 0;
-  for (const child of frame.children) {
-    if (hasOverlayRole(child)) {
-      continue;
-    }
-    if ("layoutPositioning" in child && child.layoutPositioning !== "ABSOLUTE" && frame.layoutMode !== "NONE") {
-      continue;
-    }
-    count += 1;
-  }
-  return count;
-}
+// adjustNodePosition, repositionChildren, validateChildrenBounds, countAbsoluteChildren moved to child-positioning.ts
+// getMinLegibleSize, scaleTextNode, restoreTextAutoResize moved to text-scaling.ts
+// scaleEffect and scalePaint moved to effect-scaling.ts
+// ensureFillModeForImages moved to element-classification.ts
 
 function adjustAutoLayoutProperties(node: SceneNode, scale: number): void {
   if (node.type !== "FRAME" && node.type !== "COMPONENT") {
@@ -955,6 +707,4 @@ function adjustAutoLayoutProperties(node: SceneNode, scale: number): void {
   }
 }
 
-function cloneValue<T>(value: T): Mutable<T> {
-  return JSON.parse(JSON.stringify(value)) as Mutable<T>;
-}
+// cloneValue moved to effect-scaling.ts

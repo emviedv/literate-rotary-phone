@@ -21,6 +21,9 @@
     "core/qa-overlay.ts",
     "core/auto-layout-adapter.ts",
     "core/debug.ts",
-    "core/ai-service.ts"
+    "core/ai-service.ts",
+    "core/ai-few-shot-examples.ts",
+    "core/ai-sanitization.ts",
+    "core/ai-frame-summary.ts"
   ]
 }

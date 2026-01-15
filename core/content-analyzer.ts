@@ -340,14 +340,12 @@ export function calculateOptimalScale(
   // For images, cap at 12x to prevent extreme pixelation while ensuring layout fill
   const MAX_SCALE = analysis.hasImages ? 12 : 60;
 
-  // Calculate safe area bounds
+  // Calculate safe area bounds - strict constraint to prevent content overflow
   const maxSafeScale = Math.min(widthScale, heightScale);
 
-  // Allow strategy-calculated scale to exceed safe scale by up to 10%
-  // This enables better fill while safe area padding absorbs minor overflow.
-  // The auto-layout system will handle distribution of any excess.
-  const SCALE_OVERSHOOT_ALLOWANCE = 1.10;
-  const constrainedScale = Math.min(scale, maxSafeScale * SCALE_OVERSHOOT_ALLOWANCE);
+  // Strictly constrain scale to safe bounds to prevent content from exceeding frame
+  // Previous 10% overshoot allowance caused content clipping on tall/complex designs
+  const constrainedScale = Math.min(scale, maxSafeScale);
 
   return Math.max(MIN_SCALE, Math.min(MAX_SCALE, constrainedScale));
 }

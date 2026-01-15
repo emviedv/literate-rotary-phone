@@ -44,7 +44,7 @@ testCase("resolvePatternLabel finds labels for a target/pattern pair", () => {
   }
 });
 
-testCase("autoSelectLayoutPattern picks the highest-confidence option above threshold", () => {
+testCase("autoSelectLayoutPattern picks the highest-confidence option above threshold", async () => {
   const advice = {
     entries: [
       {
@@ -58,7 +58,7 @@ testCase("autoSelectLayoutPattern picks the highest-confidence option above thre
     ]
   };
 
-  const selection = autoSelectLayoutPattern(advice, "figma-cover", { minConfidence: 0.7 });
+  const selection = await autoSelectLayoutPattern(advice, "figma-cover", { minConfidence: 0.7 });
   if (!selection || selection.patternId !== "hero-left") {
     throw new Error("Expected hero-left to be auto-selected as highest-confidence option");
   }
@@ -70,7 +70,7 @@ testCase("autoSelectLayoutPattern picks the highest-confidence option above thre
   }
 });
 
-testCase("autoSelectLayoutPattern marks fallback when no option clears the bar", () => {
+testCase("autoSelectLayoutPattern marks fallback when no option clears the bar", async () => {
   const advice = {
     entries: [
       {
@@ -83,7 +83,7 @@ testCase("autoSelectLayoutPattern marks fallback when no option clears the bar",
     ]
   };
 
-  const selection = autoSelectLayoutPattern(advice, "tiktok-vertical", { minConfidence: 0.6 });
+  const selection = await autoSelectLayoutPattern(advice, "tiktok-vertical", { minConfidence: 0.6 });
   if (!selection?.fallback) {
     throw new Error("Expected fallback when confidence thresholds are not met");
   }
@@ -92,7 +92,7 @@ testCase("autoSelectLayoutPattern marks fallback when no option clears the bar",
   }
 });
 
-testCase("normalizeLayoutAdvice maps confidence fields into scores for auto selection", () => {
+testCase("normalizeLayoutAdvice maps confidence fields into scores for auto selection", async () => {
   const advice = normalizeLayoutAdvice({
     entries: [
       {
@@ -109,7 +109,7 @@ testCase("normalizeLayoutAdvice maps confidence fields into scores for auto sele
     throw new Error("Expected advice to normalize");
   }
 
-  const selection = autoSelectLayoutPattern(advice, "figma-cover", { minConfidence: 0.7 });
+  const selection = await autoSelectLayoutPattern(advice, "figma-cover", { minConfidence: 0.7 });
   if (!selection || selection.patternId !== "hero-left") {
     throw new Error("Expected hero-left to be selected after normalizing confidence");
   }

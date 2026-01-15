@@ -36,3 +36,17 @@ export const SPACING_CONSTANTS = {
   VERTICAL_GAP_SOFT_CAP: 5,     // Allow up to 5x base spacing (was 3)
   VERTICAL_GAP_HARD_CAP: 15,    // Allow up to 15x for extreme cases (was 12)
 };
+
+export const MIN_ELEMENT_SIZES = {
+  LOGO: { width: 24, height: 24 },      // Minimum readable logo
+  ICON: { width: 16, height: 16 },      // Minimum recognizable icon
+  BADGE: { width: 20, height: 16 },     // Minimum readable badge
+  BUTTON: { width: 40, height: 24 },    // Minimum tappable button
+} as const;
+
+export const ELEMENT_ROLE_PATTERNS = {
+  LOGO: /logo|brand|mark/i,
+  ICON: /icon|symbol/i,
+  BADGE: /badge|chip|tag|pill/i,
+  BUTTON: /button|btn|cta/i,
+} as const;

@@ -160,3 +160,221 @@ testCase("sanitizeAiSignals returns undefined when no valid entries remain", () 
     throw new Error("Expected sanitizeAiSignals to return undefined when nothing valid remains.");
   }
 });
+
+// Characterization test: BFS traversal and MAX_SUMMARY_NODES limit
+testCase("summarizeFrame enforces MAX_SUMMARY_NODES limit with BFS traversal", () => {
+  // Create frame with 70 children (exceeds MAX_SUMMARY_NODES of 60)
+  const children: any[] = [];
+  for (let i = 0; i < 70; i++) {
+    children.push({
+      id: `node-${i}`,
+      type: "RECTANGLE",
+      visible: true,
+      name: `Node ${i}`,
+      absoluteBoundingBox: { x: i * 10, y: 0, width: 10, height: 10 },
+      fills: []
+    });
+  }
+
+  const mockFrame = {
+    id: "frame-large",
+    name: "Large Frame",
+    absoluteBoundingBox: { x: 0, y: 0, width: 700, height: 100 },
+    width: 700,
+    height: 100,
+    children
+  };
+
+  // @ts-ignore - partial mock
+  const summary = summarizeFrame(mockFrame);
+
+  // Should cap at MAX_SUMMARY_NODES (60)
+  assertEqual(summary.nodes.length, 60, "Should cap at MAX_SUMMARY_NODES (60)");
+
+  // BFS order: first 60 children should be included
+  assertEqual(summary.nodes[0].id, "node-0", "First node should be node-0 (BFS order)");
+  assertEqual(summary.nodes[59].id, "node-59", "Last node should be node-59 (BFS order)");
+});
+
+// Characterization test: Invisible nodes are filtered
+testCase("summarizeFrame filters invisible nodes", () => {
+  const mockFrame = {
+    id: "frame-vis",
+    name: "Visibility Frame",
+    absoluteBoundingBox: { x: 0, y: 0, width: 100, height: 100 },
+    width: 100,
+    height: 100,
+    children: [
+      {
+        id: "visible-1",
+        type: "RECTANGLE",
+        visible: true,
+        name: "Visible",
+        absoluteBoundingBox: { x: 0, y: 0, width: 50, height: 50 },
+        fills: []
+      },
+      {
+        id: "hidden-1",
+        type: "RECTANGLE",
+        visible: false,
+        name: "Hidden",
+        absoluteBoundingBox: { x: 50, y: 0, width: 50, height: 50 },
+        fills: []
+      },
+      {
+        id: "visible-2",
+        type: "RECTANGLE",
+        visible: true,
+        name: "Visible 2",
+        absoluteBoundingBox: { x: 0, y: 50, width: 50, height: 50 },
+        fills: []
+      }
+    ]
+  };
+
+  // @ts-ignore - partial mock
+  const summary = summarizeFrame(mockFrame);
+
+  assertEqual(summary.nodes.length, 2, "Should only include visible nodes");
+  assertEqual(summary.nodes[0].id, "visible-1", "First visible node");
+  assertEqual(summary.nodes[1].id, "visible-2", "Second visible node");
+});
+
+// Characterization test: Face region sanitization
+testCase("sanitizeAiSignals validates face regions with dimension bounds", () => {
+  const sanitized = sanitizeAiSignals({
+    roles: [],
+    focalPoints: [],
+    qa: [],
+    faceRegions: [
+      // Valid face region
+      { nodeId: "hero", x: 0.5, y: 0.3, width: 0.2, height: 0.25, confidence: 0.85 },
+      // Face too small (should clamp to 3% minimum)
+      { nodeId: "small", x: 0.5, y: 0.5, width: 0.01, height: 0.01, confidence: 0.7 },
+      // Face too large (should clamp to 80% maximum)
+      { nodeId: "large", x: 0.5, y: 0.5, width: 0.95, height: 0.95, confidence: 0.8 },
+      // Out of bounds coordinates (should clamp to 0-1)
+      { nodeId: "oob", x: 1.5, y: -0.3, width: 0.2, height: 0.2, confidence: 0.75 },
+      // Invalid entry (missing required fields)
+      { nodeId: "invalid", x: "bad" },
+      // Missing dimensions
+      { nodeId: "partial", x: 0.5, y: 0.5 }
+    ]
+  });
+
+  if (!sanitized || !sanitized.faceRegions) {
+    throw new Error("Expected sanitized face regions");
+  }
+
+  assertEqual(sanitized.faceRegions.length, 4, "Should keep 4 valid face regions");
+
+  // Check dimension clamping
+  const small = sanitized.faceRegions.find(f => f.nodeId === "small");
+  if (!small) throw new Error("Small face region missing");
+  assertEqual(small.width, 0.03, "Width should clamp to 3% minimum");
+  assertEqual(small.height, 0.03, "Height should clamp to 3% minimum");
+
+  const large = sanitized.faceRegions.find(f => f.nodeId === "large");
+  if (!large) throw new Error("Large face region missing");
+  assertEqual(large.width, 0.8, "Width should clamp to 80% maximum");
+  assertEqual(large.height, 0.8, "Height should clamp to 80% maximum");
+
+  const oob = sanitized.faceRegions.find(f => f.nodeId === "oob");
+  if (!oob) throw new Error("OOB face region missing");
+  assertEqual(oob.x, 1, "X should clamp to 1 maximum");
+  assertEqual(oob.y, 0, "Y should clamp to 0 minimum");
+});
+
+// Characterization test: Layout properties extraction
+testCase("summarizeFrame extracts auto-layout properties from frames", () => {
+  const mockFrame = {
+    id: "frame-layout",
+    name: "Layout Frame",
+    absoluteBoundingBox: { x: 0, y: 0, width: 400, height: 300 },
+    width: 400,
+    height: 300,
+    children: [
+      {
+        id: "auto-h",
+        type: "FRAME",
+        visible: true,
+        name: "Horizontal Stack",
+        absoluteBoundingBox: { x: 0, y: 0, width: 200, height: 100 },
+        layoutMode: "HORIZONTAL",
+        primaryAxisAlignItems: "SPACE_BETWEEN",
+        counterAxisAlignItems: "CENTER",
+        fills: []
+      },
+      {
+        id: "auto-v",
+        type: "FRAME",
+        visible: true,
+        name: "Vertical Stack",
+        absoluteBoundingBox: { x: 0, y: 100, width: 200, height: 200 },
+        layoutMode: "VERTICAL",
+        primaryAxisAlignItems: "MIN",
+        counterAxisAlignItems: "MAX",
+        fills: []
+      },
+      {
+        id: "no-layout",
+        type: "FRAME",
+        visible: true,
+        name: "No Layout",
+        absoluteBoundingBox: { x: 200, y: 0, width: 200, height: 300 },
+        layoutMode: "NONE",
+        fills: []
+      }
+    ]
+  };
+
+  // @ts-ignore - partial mock
+  const summary = summarizeFrame(mockFrame);
+
+  const autoH = summary.nodes.find(n => n.id === "auto-h");
+  if (!autoH) throw new Error("Horizontal auto-layout node missing");
+  assertEqual(autoH.layoutMode, "HORIZONTAL", "Should capture HORIZONTAL layoutMode");
+  assertEqual(autoH.primaryAxisAlignItems, "SPACE_BETWEEN", "Should capture primaryAxisAlignItems");
+  assertEqual(autoH.counterAxisAlignItems, "CENTER", "Should capture counterAxisAlignItems");
+
+  const autoV = summary.nodes.find(n => n.id === "auto-v");
+  if (!autoV) throw new Error("Vertical auto-layout node missing");
+  assertEqual(autoV.layoutMode, "VERTICAL", "Should capture VERTICAL layoutMode");
+  assertEqual(autoV.primaryAxisAlignItems, "MIN", "Should capture MIN alignment");
+  assertEqual(autoV.counterAxisAlignItems, "MAX", "Should capture MAX alignment");
+
+  const noLayout = summary.nodes.find(n => n.id === "no-layout");
+  if (!noLayout) throw new Error("No-layout node missing");
+  assertEqual(noLayout.layoutMode, undefined, "Should not include layoutMode for NONE");
+});
+
+// Characterization test: Relative positioning calculation
+testCase("summarizeFrame calculates relative positions from frame origin", () => {
+  const mockFrame = {
+    id: "frame-rel",
+    name: "Relative Frame",
+    absoluteBoundingBox: { x: 100, y: 200, width: 400, height: 300 },
+    width: 400,
+    height: 300,
+    children: [
+      {
+        id: "offset-node",
+        type: "RECTANGLE",
+        visible: true,
+        name: "Offset Node",
+        absoluteBoundingBox: { x: 150, y: 250, width: 100, height: 50 },
+        fills: []
+      }
+    ]
+  };
+
+  // @ts-ignore - partial mock
+  const summary = summarizeFrame(mockFrame);
+
+  const node = summary.nodes[0];
+  // Relative position should be: (150-100, 250-200) = (50, 50)
+  assertEqual(node.rel.x, 50, "Relative X should be 50 (150-100)");
+  assertEqual(node.rel.y, 50, "Relative Y should be 50 (250-200)");
+  assertEqual(node.rel.width, 100, "Width should be preserved");
+  assertEqual(node.rel.height, 50, "Height should be preserved");
+});

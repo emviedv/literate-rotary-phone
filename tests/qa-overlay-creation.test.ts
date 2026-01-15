@@ -92,10 +92,11 @@ testCase("createQaOverlay generates TikTok safe area", () => {
   assert(overlay.children.length === 1, "Should have 1 child");
   const safeArea = overlay.children[0];
   assert(safeArea.name === "Content Safe Zone", "Should be named 'Content Safe Zone'");
-  // 1080 - 44 - 120 = 916
-  assert(safeArea.width === 916, `Width should be 916, got ${safeArea.width}`);
-  // 1920 - 108 - 320 = 1492
-  assert(safeArea.height === 1492, `Height should be 1492, got ${safeArea.height}`);
+  // TikTok safe area insets: { top: 150, bottom: 400, left: 90, right: 120 }
+  // Width: 1080 - 90 - 120 = 870
+  assert(safeArea.width === 870, `Width should be 870, got ${safeArea.width}`);
+  // Height: 1920 - 150 - 400 = 1370
+  assert(safeArea.height === 1370, `Height should be 1370, got ${safeArea.height}`);
 });
 
 testCase("createQaOverlay generates generic safe area", () => {
@@ -143,9 +144,9 @@ testCase("createQaOverlay positions TikTok safe area correctly", () => {
   assert(overlay.children.length === 1, "Should have 1 child");
   const safeArea = overlay.children[0];
 
-  // TikTok: left=44, top=108
-  assert(safeArea.x === 44, `Safe area X should be 44, got ${safeArea.x}`);
-  assert(safeArea.y === 108, `Safe area Y should be 108, got ${safeArea.y}`);
+  // TikTok: left=90, top=150
+  assert(safeArea.x === 90, `Safe area X should be 90, got ${safeArea.x}`);
+  assert(safeArea.y === 150, `Safe area Y should be 150, got ${safeArea.y}`);
 });
 
 testCase("createQaOverlay positions generic safe area correctly", () => {

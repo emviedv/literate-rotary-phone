@@ -7,7 +7,8 @@ export type TelemetryEvent =
   | "LAYOUT_ADVICE_APPLIED"
   | "AI_ANALYSIS_REQUESTED"
   | "AI_ANALYSIS_COMPLETED"
-  | "AI_ANALYSIS_FAILED";
+  | "AI_ANALYSIS_FAILED"
+  | "AI_ANALYSIS_RECOVERED";
 
 export interface TelemetryProperties {
   readonly [key: string]: string | number | boolean | undefined | null | readonly string[];

@@ -28,10 +28,11 @@ function getTarget(id: string) {
 testCase("resolveSafeAreaInsets returns TikTok-specific chrome insets", () => {
   const target = getTarget("tiktok-vertical");
   const insets = resolveSafeAreaInsets(target, 0.08);
-  assertEqual(insets.left, 44, "TikTok left inset should match chrome allowance");
+  // TikTok safe area insets: { top: 150, bottom: 400, left: 90, right: 120 }
+  assertEqual(insets.left, 90, "TikTok left inset should match chrome allowance");
   assertEqual(insets.right, 120, "TikTok right inset should match chrome allowance");
-  assertEqual(insets.top, 108, "TikTok top inset should match chrome allowance");
-  assertEqual(insets.bottom, 320, "TikTok bottom inset should match chrome allowance");
+  assertEqual(insets.top, 150, "TikTok top inset should match chrome allowance");
+  assertEqual(insets.bottom, 400, "TikTok bottom inset should match chrome allowance");
 });
 
 testCase("resolveSafeAreaInsets falls back to ratio for generic targets", () => {

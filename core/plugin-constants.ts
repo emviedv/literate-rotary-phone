@@ -13,6 +13,7 @@ export const AI_SIGNALS_KEY = `${PLUGIN_DATA_PREFIX}:ai-signals`;
 export const LAYOUT_ADVICE_KEY = `${PLUGIN_DATA_PREFIX}:layout-advice`;
 export const SAFE_AREA_KEY = `${PLUGIN_DATA_PREFIX}:safeArea`;
 export const FOCAL_POINT_KEY = `${PLUGIN_DATA_PREFIX}:focalPoint`;
+export const FACE_REGIONS_KEY = `${PLUGIN_DATA_PREFIX}:faceRegions`;
 
 export const LEGACY_PLUGIN_DATA_PREFIX = "biblio-assets";
 export const LEGACY_DEBUG_KEY = `${LEGACY_PLUGIN_DATA_PREFIX}:debug`;

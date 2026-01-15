@@ -158,5 +158,5 @@ export function shouldExpandAbsoluteChildren(
 }
 
 function roundSpacing(value: number): number {
-  return Math.round(value * 100) / 100;
+  return Math.round(value);
 }

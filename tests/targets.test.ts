@@ -47,8 +47,17 @@ testCase("includes all Phase 2 target identifiers", () => {
     "social-carousel",
     "youtube-cover",
     "tiktok-vertical",
+    "youtube-shorts",
+    "instagram-reels",
     "gumroad-cover",
-    "gumroad-thumbnail"
+    "gumroad-thumbnail",
+    // Social Media & Ad Sizes
+    "facebook-cover",
+    "landscape-feed",
+    "youtube-thumbnail",
+    "youtube-video",
+    "display-leaderboard",
+    "display-rectangle"
   ];
   assertArrayEqual(targetIds, expectedIds, "VARIANT_TARGETS should include the Phase 2 catalog in order.");
 });
@@ -78,5 +87,36 @@ testCase("exposes expected dimensions for new targets", () => {
     JSON.stringify(getDimensions("gumroad-thumbnail")),
     JSON.stringify({ width: 600, height: 600 }),
     "Gumroad thumbnail dimensions should be 600×600."
+  );
+  // Social Media & Ad Sizes
+  assertEqual(
+    JSON.stringify(getDimensions("facebook-cover")),
+    JSON.stringify({ width: 820, height: 312 }),
+    "Facebook cover dimensions should be 820×312."
+  );
+  assertEqual(
+    JSON.stringify(getDimensions("landscape-feed")),
+    JSON.stringify({ width: 1200, height: 628 }),
+    "Landscape feed dimensions should be 1200×628."
+  );
+  assertEqual(
+    JSON.stringify(getDimensions("youtube-thumbnail")),
+    JSON.stringify({ width: 1280, height: 720 }),
+    "YouTube thumbnail dimensions should be 1280×720."
+  );
+  assertEqual(
+    JSON.stringify(getDimensions("youtube-video")),
+    JSON.stringify({ width: 1920, height: 1080 }),
+    "YouTube video dimensions should be 1920×1080."
+  );
+  assertEqual(
+    JSON.stringify(getDimensions("display-leaderboard")),
+    JSON.stringify({ width: 728, height: 90 }),
+    "Display leaderboard dimensions should be 728×90."
+  );
+  assertEqual(
+    JSON.stringify(getDimensions("display-rectangle")),
+    JSON.stringify({ width: 300, height: 250 }),
+    "Display rectangle dimensions should be 300×250."
   );
 });

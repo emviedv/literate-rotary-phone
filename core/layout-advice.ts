@@ -1,8 +1,18 @@
-import type { LayoutAdvice, LayoutAdviceEntry, LayoutPatternOption } from "../types/layout-advice.js";
+import type {
+  LayoutAdvice,
+  LayoutAdviceEntry,
+  LayoutPatternOption,
+  TransformationFeasibility,
+  RestructurePlan,
+  ElementPositioning,
+  LayoutWarning
+} from "../types/layout-advice.js";
 import type { LayoutPatternId } from "../types/layout-patterns.js";
 import { isPatternPreferredForTarget } from "../types/layout-patterns.js";
 import { debugFixLog } from "./debug.js";
 import { LAYOUT_ADVICE_KEY, LEGACY_LAYOUT_ADVICE_KEY } from "./plugin-constants.js";
+import { getCalibratedAffinityWeight } from "./ai-confidence-calibration.js";
+import type { TargetId } from "../types/targets.js";
 
 type PluginDataNode = Pick<FrameNode, "getPluginData">;
 
@@ -87,6 +97,123 @@ function normalizeOption(option: unknown): LayoutPatternOption | null {
   };
 }
 
+/**
+ * Normalizes the feasibility object from AI response.
+ */
+function normalizeFeasibility(raw: unknown): TransformationFeasibility | undefined {
+  if (!raw || typeof raw !== "object") {
+    return undefined;
+  }
+  const obj = raw as Record<string, unknown>;
+
+  return {
+    achievable: typeof obj.achievable === "boolean" ? obj.achievable : true,
+    requiresRestructure: typeof obj.requiresRestructure === "boolean" ? obj.requiresRestructure : false,
+    predictedFill: clampScore(toNumber(obj.predictedFill)) ?? 1.0,  // Default to 100% fill if not specified
+    uniformScaleResult: typeof obj.uniformScaleResult === "string" ? obj.uniformScaleResult : undefined
+  };
+}
+
+/**
+ * Normalizes the restructure plan from AI response.
+ */
+function normalizeRestructure(raw: unknown): RestructurePlan | undefined {
+  if (!raw || typeof raw !== "object") {
+    return undefined;
+  }
+  const obj = raw as Record<string, unknown>;
+
+  // Normalize string arrays
+  const normalizeStringArray = (arr: unknown): readonly string[] => {
+    if (!Array.isArray(arr)) return [];
+    return arr.filter((item): item is string => typeof item === "string");
+  };
+
+  const contentPriority = normalizeStringArray(obj.contentPriority);
+  const keepRequired = normalizeStringArray(obj.keepRequired);
+
+  // If no content priority or keep required, skip
+  if (contentPriority.length === 0 && keepRequired.length === 0) {
+    return undefined;
+  }
+
+  const drop = normalizeStringArray(obj.drop);
+  const arrangement = obj.arrangement === "horizontal" || obj.arrangement === "vertical" || obj.arrangement === "stacked"
+    ? obj.arrangement
+    : undefined;
+  const textTreatment = obj.textTreatment === "single-line" || obj.textTreatment === "wrap" || obj.textTreatment === "truncate"
+    ? obj.textTreatment
+    : undefined;
+
+  return {
+    contentPriority,
+    drop: drop.length > 0 ? drop : undefined,
+    keepRequired,
+    arrangement,
+    textTreatment
+  };
+}
+
+/**
+ * Normalizes the positioning map from AI response.
+ */
+function normalizePositioning(raw: unknown): Readonly<Record<string, ElementPositioning>> | undefined {
+  if (!raw || typeof raw !== "object") {
+    return undefined;
+  }
+  const result: Record<string, ElementPositioning> = {};
+  const obj = raw as Record<string, unknown>;
+
+  for (const [nodeId, posRaw] of Object.entries(obj)) {
+    if (!posRaw || typeof posRaw !== "object") continue;
+    const pos = posRaw as Record<string, unknown>;
+
+    const region = pos.region;
+    if (region !== "left" && region !== "center" && region !== "right" &&
+        region !== "top" && region !== "bottom" && region !== "fill") {
+      continue;
+    }
+
+    const size = pos.size === "auto" || pos.size === "fixed" || pos.size === "fill"
+      ? pos.size
+      : undefined;
+
+    const maxLines = typeof pos.maxLines === "number" && pos.maxLines > 0
+      ? Math.floor(pos.maxLines)
+      : undefined;
+
+    result[nodeId] = { region, size, maxLines };
+  }
+
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+/**
+ * Normalizes warnings array from AI response.
+ */
+function normalizeWarnings(raw: unknown): readonly LayoutWarning[] | undefined {
+  if (!Array.isArray(raw)) {
+    return undefined;
+  }
+
+  const warnings: LayoutWarning[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const obj = item as Record<string, unknown>;
+
+    const code = obj.code;
+    const message = obj.message;
+    const severity = obj.severity;
+
+    if (typeof code !== "string" || typeof message !== "string") continue;
+    if (severity !== "info" && severity !== "warn" && severity !== "error") continue;
+
+    warnings.push({ code, message, severity });
+  }
+
+  return warnings.length > 0 ? warnings : undefined;
+}
+
 function normalizeEntry(entry: unknown): LayoutAdviceEntry | null {
   if (!entry || typeof entry !== "object") {
     return null;
@@ -95,30 +222,64 @@ function normalizeEntry(entry: unknown): LayoutAdviceEntry | null {
   if (typeof targetId !== "string") {
     return null;
   }
-  const options = Array.isArray((entry as { options?: unknown[] }).options)
-    ? (entry as { options: unknown[] }).options
-    : [];
-
-  const normalizedOptions = options
-    .map((option) => normalizeOption(option))
-    .filter((option): option is LayoutPatternOption => Boolean(option));
-
-  if (normalizedOptions.length === 0) {
-    return null;
-  }
 
   const selectedId = (entry as { selectedId?: unknown }).selectedId;
   const rawMode = (entry as { suggestedLayoutMode?: unknown }).suggestedLayoutMode;
   const suggestedLayoutMode =
     rawMode === "HORIZONTAL" || rawMode === "VERTICAL" || rawMode === "NONE" ? rawMode : undefined;
   const backgroundNodeId = (entry as { backgroundNodeId?: unknown }).backgroundNodeId;
+  const description = (entry as { description?: unknown }).description;
+
+  // Normalize new fields for transformation intelligence
+  const feasibility = normalizeFeasibility((entry as { feasibility?: unknown }).feasibility);
+  const restructure = normalizeRestructure((entry as { restructure?: unknown }).restructure);
+  const positioning = normalizePositioning((entry as { positioning?: unknown }).positioning);
+  const warnings = normalizeWarnings((entry as { warnings?: unknown }).warnings);
+
+  // Try to get options array first
+  const options = Array.isArray((entry as { options?: unknown[] }).options)
+    ? (entry as { options: unknown[] }).options
+    : [];
+
+  let normalizedOptions = options
+    .map((option) => normalizeOption(option))
+    .filter((option): option is LayoutPatternOption => Boolean(option));
+
+  // If no options but we have a selectedId and score, create an option from the entry itself
+  // This handles the simpler format: {targetId, selectedId, score, description, suggestedLayoutMode}
+  if (normalizedOptions.length === 0 && typeof selectedId === "string") {
+    const score = clampScore(toNumber((entry as { score?: unknown }).score));
+    const patternLabel = selectedId
+      .split("-")
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(" ");
+
+    normalizedOptions = [
+      {
+        id: selectedId,
+        label: patternLabel,
+        description: typeof description === "string" ? description : "",
+        score
+      }
+    ];
+  }
+
+  if (normalizedOptions.length === 0) {
+    return null;
+  }
 
   return {
     targetId,
     selectedId: typeof selectedId === "string" ? selectedId : undefined,
     suggestedLayoutMode,
     backgroundNodeId: typeof backgroundNodeId === "string" ? backgroundNodeId : undefined,
-    options: normalizedOptions
+    options: normalizedOptions,
+    description: typeof description === "string" ? description : undefined,
+    // New fields for transformation intelligence
+    feasibility,
+    restructure,
+    positioning,
+    warnings
   };
 }
 
@@ -184,24 +345,48 @@ export function resolvePatternLabel(
 }
 
 /**
- * Computes effective confidence with pattern affinity boosting.
- * When AI suggests a pattern that's in the target's preferred list, boost confidence.
+ * Computes effective confidence with adaptive pattern affinity adjustment.
+ * Uses machine learning to adjust confidence based on historical user feedback.
  */
-function computeEffectiveConfidence(
+async function computeEffectiveConfidence(
   baseConfidence: number,
   patternId: string | undefined,
   targetId: string
-): number {
+): Promise<number> {
   if (!patternId) {
     return baseConfidence;
   }
 
-  // Boost confidence if pattern is in target's preferred list
-  if (isPatternPreferredForTarget(patternId as LayoutPatternId, targetId)) {
-    return Math.min(baseConfidence + AFFINITY_BOOST, 1.0);
-  }
+  try {
+    // Get calibrated affinity weight based on historical user feedback
+    const calibratedWeight = await getCalibratedAffinityWeight(
+      targetId as TargetId,
+      patternId as LayoutPatternId
+    );
 
-  return baseConfidence;
+    // Apply calibrated weight instead of fixed boost
+    const adjustedConfidence = baseConfidence + calibratedWeight;
+
+    // Also apply traditional preferred pattern boost for fallback
+    if (isPatternPreferredForTarget(patternId as LayoutPatternId, targetId)) {
+      const traditionalBoost = Math.max(0, AFFINITY_BOOST - Math.abs(calibratedWeight));
+      return Math.min(adjustedConfidence + traditionalBoost, 1.0);
+    }
+
+    return Math.max(0, Math.min(adjustedConfidence, 1.0));
+  } catch (error) {
+    debugFixLog("Failed to get calibrated affinity weight, using fallback", {
+      error: error instanceof Error ? error.message : String(error),
+      patternId,
+      targetId
+    });
+
+    // Fallback to original logic if calibration fails
+    if (isPatternPreferredForTarget(patternId as LayoutPatternId, targetId)) {
+      return Math.min(baseConfidence + AFFINITY_BOOST, 1.0);
+    }
+    return baseConfidence;
+  }
 }
 
 /**
@@ -232,11 +417,11 @@ function getConfidenceTier(confidence: number): "high" | "medium" | "low" | "rej
  * Pattern affinity boosting: When AI suggests a pattern that's in the target's
  * preferred list (from PATTERN_AFFINITY), confidence is boosted by 0.1.
  */
-export function autoSelectLayoutPattern(
+export async function autoSelectLayoutPattern(
   advice: LayoutAdvice | null,
   targetId: string,
   options?: { minConfidence?: number; preferAI?: boolean }
-): AutoSelectedPattern | null {
+): Promise<AutoSelectedPattern | null> {
   const minConfidence = options?.minConfidence ?? CONFIDENCE_TIERS.MEDIUM;
 
   if (!advice) {
@@ -257,8 +442,8 @@ export function autoSelectLayoutPattern(
   const candidate = highest ?? fromSelected ?? null;
   const baseConfidence = candidate?.score ?? 0;
 
-  // Apply affinity boosting
-  const effectiveConfidence = computeEffectiveConfidence(baseConfidence, candidate?.id, targetId);
+  // Apply adaptive affinity adjustment based on user feedback
+  const effectiveConfidence = await computeEffectiveConfidence(baseConfidence, candidate?.id, targetId);
   const tier = getConfidenceTier(effectiveConfidence);
 
   debugFixLog("auto layout selection confidence analysis", {

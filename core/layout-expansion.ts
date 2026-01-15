@@ -86,7 +86,7 @@ function computeAsymmetry(gaps: AxisGaps): number {
 }
 
 function round(value: number): number {
-  return Math.round(value * 100) / 100;
+  return Math.round(value);
 }
 
 function clamp(value: number, min: number, max: number): number {
