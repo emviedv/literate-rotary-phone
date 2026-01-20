@@ -122,8 +122,9 @@ function shouldNormalizeHorizontalMargins(
   horizontalAsymmetry: number,
   threshold: number
 ): boolean {
-  // Always normalize high asymmetry for horizontal targets (YouTube, web banners)
-  if (targetProfile === "horizontal" && horizontalAsymmetry > threshold) {
+  // Normalize high asymmetry for horizontal and vertical targets
+  // In vertical targets, high horizontal asymmetry pushes content off-center in a narrow frame
+  if ((targetProfile === "horizontal" || targetProfile === "vertical") && horizontalAsymmetry > threshold) {
     return true;
   }
 

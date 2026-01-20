@@ -452,8 +452,9 @@ function projectChildrenToBounds(
  * Determines if smart positioning should be used based on aspect ratio change magnitude
  */
 function shouldUseSmartPositioning(aspectRatioChange: number, profile: LayoutProfile): boolean {
-  // Use smart positioning for extreme aspect ratio changes (>2x or <0.5x change)
-  const extremeChange = aspectRatioChange > 2.0 || aspectRatioChange < 0.5;
+  // Use smart positioning for significant aspect ratio changes (>1.5x or <0.66x change)
+  // This is more aggressive than the previous 2.0 threshold to capture more adaptation needs
+  const extremeChange = aspectRatioChange > 1.5 || aspectRatioChange < 0.66;
 
   debugFixLog("aspect ratio positioning decision", {
     aspectRatioChange: aspectRatioChange.toFixed(3),
@@ -488,12 +489,12 @@ function projectChildrenWithSmartPositioning(
 
   // For vertical targets: prioritize Y-axis positioning accuracy and stack elements
   if (profile === "vertical") {
-    return projectChildrenForVerticalTarget(children, source, target);
+    return projectChildrenForVerticalTarget(children, source, target, aspectRatioChange);
   }
 
   // For horizontal targets: prioritize X-axis positioning and create side-by-side layouts
   if (profile === "horizontal") {
-    return projectChildrenForHorizontalTarget(children, source, target);
+    return projectChildrenForHorizontalTarget(children, source, target, aspectRatioChange);
   }
 
   // For square targets: balanced approach with slight bias toward centering
@@ -507,7 +508,8 @@ function projectChildrenWithSmartPositioning(
 function projectChildrenForVerticalTarget(
   children: ReadonlyArray<AbsoluteChildSnapshot>,
   source: Bounds,
-  target: Bounds
+  target: Bounds,
+  aspectRatioChange?: number
 ): AbsolutePlan[] {
   // Sort children by original vertical position to maintain reading order
   const sortedChildren = [...children].sort((a, b) => {
@@ -518,15 +520,33 @@ function projectChildrenForVerticalTarget(
 
   const plans: AbsolutePlan[] = [];
   const totalChildrenHeight = sortedChildren.reduce((sum, child) => sum + child.height, 0);
+  
+  // Calculate vertical distribution based on available space and original layout density
   const availableHeight = target.height - totalChildrenHeight;
   const gapCount = Math.max(sortedChildren.length - 1, 0);
-  const gapSize = gapCount > 0 ? Math.max(availableHeight / (gapCount + 1), 8) : availableHeight / 2;
+  
+  // For extreme vertical targets, use more aggressive spacing
+  const isExtremeVertical = (target.width / Math.max(target.height, 1)) < ASPECT_RATIOS.EXTREME_VERTICAL;
+  const baseGap = isExtremeVertical ? 24 : 12;
+  const gapSize = gapCount > 0 ? Math.max(availableHeight / (gapCount + 1), baseGap) : availableHeight / 2;
 
   let currentY = target.y + gapSize;
 
   sortedChildren.forEach((child) => {
     // Center horizontally, stack vertically
-    const targetX = target.x + (target.width - child.width) / 2;
+    // Smart axis priority: if source was very wide, elements might have had horizontal intent
+    let targetX = target.x + (target.width - child.width) / 2;
+    
+    // If we have source bounds, we can try to preserve some horizontal bias if it was significant
+    if (source.width > 0) {
+      const sourceCenterX = source.x + source.width / 2;
+      const childCenterX = child.x + child.width / 2;
+      const horizontalBias = (childCenterX - sourceCenterX) / (source.width / 2);
+      
+      // Apply 20% horizontal bias from original position for vertical targets
+      targetX += horizontalBias * (target.width * 0.1);
+    }
+
     const constrainedX = clamp(targetX, target.x, target.x + target.width - child.width);
     const constrainedY = clamp(currentY, target.y, target.y + target.height - child.height);
 
@@ -549,7 +569,8 @@ function projectChildrenForVerticalTarget(
 function projectChildrenForHorizontalTarget(
   children: ReadonlyArray<AbsoluteChildSnapshot>,
   source: Bounds,
-  target: Bounds
+  target: Bounds,
+  aspectRatioChange?: number
 ): AbsolutePlan[] {
   // Sort children by original horizontal position
   const sortedChildren = [...children].sort((a, b) => {
@@ -562,13 +583,25 @@ function projectChildrenForHorizontalTarget(
   const totalChildrenWidth = sortedChildren.reduce((sum, child) => sum + child.width, 0);
   const availableWidth = target.width - totalChildrenWidth;
   const gapCount = Math.max(sortedChildren.length - 1, 0);
-  const gapSize = gapCount > 0 ? Math.max(availableWidth / (gapCount + 1), 16) : availableWidth / 2;
+  
+  const isExtremeHorizontal = (target.width / Math.max(target.height, 1)) > ASPECT_RATIOS.EXTREME_HORIZONTAL;
+  const baseGap = isExtremeHorizontal ? 32 : 16;
+  const gapSize = gapCount > 0 ? Math.max(availableWidth / (gapCount + 1), baseGap) : availableWidth / 2;
 
   let currentX = target.x + gapSize;
 
   sortedChildren.forEach((child) => {
     // Center vertically, distribute horizontally
-    const targetY = target.y + (target.height - child.height) / 2;
+    let targetY = target.y + (target.height - child.height) / 2;
+    
+    // Apply vertical bias from original position (20% strength)
+    if (source.height > 0) {
+      const sourceCenterY = source.y + source.height / 2;
+      const childCenterY = child.y + child.height / 2;
+      const verticalBias = (childCenterY - sourceCenterY) / (source.height / 2);
+      targetY += verticalBias * (target.height * 0.1);
+    }
+
     const constrainedX = clamp(currentX, target.x, target.x + target.width - child.width);
     const constrainedY = clamp(targetY, target.y, target.y + target.height - child.height);
 

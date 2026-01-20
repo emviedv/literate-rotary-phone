@@ -10,11 +10,14 @@
 
 import { isBackgroundLike } from "./element-classification.js";
 import { hasOverlayRole } from "./node-roles.js";
-import type { AutoLayoutSnapshot } from "./variant-scaling.js";
+import { enforceTargetSafeArea, type SafeAreaInsets } from "./safe-area.js";
+import type { AutoLayoutSnapshot } from "./auto-layout-management.js";
 
 // ============================================================================
 // Position Adjustment
 // ============================================================================
+
+import { debugFixLog } from "./debug.js";
 
 /**
  * Adjusts a node's position by the given scale factor.
@@ -26,15 +29,37 @@ import type { AutoLayoutSnapshot } from "./variant-scaling.js";
 export function adjustNodePosition(node: SceneNode, scale: number): void {
   if ("layoutPositioning" in node) {
     if (node.layoutPositioning === "ABSOLUTE") {
-      node.x = Math.round(node.x * scale);
-      node.y = Math.round(node.y * scale);
+      const oldX = "x" in node ? (node as { x: number }).x : 0;
+      const oldY = "y" in node ? (node as { y: number }).y : 0;
+      node.x = Math.round(oldX * scale);
+      node.y = Math.round(oldY * scale);
+      debugFixLog("DIAGNOSTIC: Scaled ABSOLUTE positioned node", {
+        nodeId: node.id,
+        nodeName: node.name,
+        from: { x: oldX, y: oldY },
+        to: { x: node.x, y: node.y },
+        scale
+      });
     }
+    // Has layoutPositioning but is AUTO (flow child) - don't scale position
     return;
   }
 
+  // CRITICAL: Node doesn't have layoutPositioning property - this might be a problem!
   if ("x" in node && typeof node.x === "number" && "y" in node && typeof node.y === "number") {
+    const oldX = node.x;
+    const oldY = node.y;
     node.x = Math.round(node.x * scale);
     node.y = Math.round(node.y * scale);
+    debugFixLog("DIAGNOSTIC: Scaled node WITHOUT layoutPositioning (potential issue)", {
+      nodeId: node.id,
+      nodeName: node.name,
+      nodeType: node.type,
+      from: { x: oldX, y: oldY },
+      to: { x: node.x, y: node.y },
+      scale,
+      warning: "This node has no layoutPositioning property - position scaling may cause overlap"
+    });
   }
 }
 
@@ -117,17 +142,20 @@ export function positionHeroBleedChild(
  * - Skips non-absolute children (they flow with auto-layout)
  * - Resets background-like elements to origin (0, 0)
  * - Applies offset and clamps to prevent overflow
+ * - Optionally enforces safe area constraints for regular content
  *
  * @param parent - The parent frame
  * @param offsetX - Horizontal offset to apply
  * @param offsetY - Vertical offset to apply
  * @param rootSnapshot - Original frame snapshot for background detection
+ * @param safeArea - Optional safe area insets for strict enforcement
  */
 export function repositionChildren(
   parent: FrameNode,
   offsetX: number,
   offsetY: number,
-  rootSnapshot: AutoLayoutSnapshot | null
+  rootSnapshot: AutoLayoutSnapshot | null,
+  safeArea?: SafeAreaInsets
 ): void {
   if (!("children" in parent)) {
     return;
@@ -142,7 +170,8 @@ export function repositionChildren(
     }
 
     // Check if background to reset position
-    if (rootSnapshot && isBackgroundLike(child, rootSnapshot.width, rootSnapshot.height)) {
+    const isBackground = rootSnapshot && isBackgroundLike(child, rootSnapshot.width, rootSnapshot.height);
+    if (isBackground) {
       if ("x" in child) child.x = 0;
       if ("y" in child) child.y = 0;
       continue;
@@ -152,15 +181,24 @@ export function repositionChildren(
     const childWidth = "width" in child ? (child as { width: number }).width : 0;
     const childHeight = "height" in child ? (child as { height: number }).height : 0;
 
-    if ("x" in child && typeof child.x === "number") {
+    if ("x" in child && typeof child.x === "number" && "y" in child && typeof child.y === "number") {
       const newX = Math.round(child.x + offsetX);
-      // Clamp to frame bounds: ensure x >= 0 and x + width <= parentWidth
-      child.x = Math.max(0, Math.min(newX, parentWidth - childWidth));
-    }
-    if ("y" in child && typeof child.y === "number") {
       const newY = Math.round(child.y + offsetY);
-      // Clamp to frame bounds: ensure y >= 0 and y + height <= parentHeight
-      child.y = Math.max(0, Math.min(newY, parentHeight - childHeight));
+
+      if (safeArea) {
+        // Strict safe area enforcement for regular content
+        const enforced = enforceTargetSafeArea(
+          { x: newX, y: newY, width: childWidth, height: childHeight },
+          safeArea,
+          { width: parentWidth, height: parentHeight }
+        );
+        child.x = enforced.x;
+        child.y = enforced.y;
+      } else {
+        // Fallback to frame bounds clamping
+        child.x = Math.max(0, Math.min(newX, parentWidth - childWidth));
+        child.y = Math.max(0, Math.min(newY, parentHeight - childHeight));
+      }
     }
   }
 }

@@ -6,15 +6,14 @@ import type { AxisGaps } from "./padding-distribution.js";
 import { MIN_ELEMENT_SIZES } from "./layout-constants.js";
 import { planAbsoluteChildPositions } from "./absolute-layout.js";
 import {
-  computeVerticalSpacing,
-  resolveVerticalAlignItems,
-  resolveVerticalLayoutWrap,
   shouldAdoptVerticalFlow,
   shouldExpandAbsoluteChildren,
+  resolveLayoutProfile,
   type AutoLayoutSummary,
   type LayoutProfile
 } from "./layout-profile.js";
 import { resolveSafeAreaInsets } from "./safe-area.js";
+import { normalizeContentMargins } from "./margin-normalization.js";
 import { debugFixLog } from "./debug.js";
 import { measureContentMargins } from "./warnings.js";
 import { resolvePrimaryFocalPoint, readAiSignals, isHeroBleedNode } from "./ai-signals.js";
@@ -27,9 +26,11 @@ import {
   getElementRole,
   isBackgroundLike,
   isDecorativePointer,
-  ensureFillModeForImages
+  ensureFillModeForImages,
+  isAtomicGroup
 } from "./element-classification.js";
 import { scaleTextNode } from "./text-scaling.js";
+import { validateTextFaceCollisions } from "./collision-validator.js";
 import {
   adjustNodePosition,
   positionHeroBleedChild,
@@ -42,105 +43,25 @@ import {
   validateConstraints,
   applyConstraints
 } from "./constraint-scaling.js";
+import {
+  type AutoLayoutSnapshot,
+  type SafeAreaMetrics,
+  adjustAutoLayoutProperties,
+  scaleAutoLayoutMetric
+} from "./auto-layout-management.js";
 
-export type AutoLayoutSnapshot = {
-  layoutMode: FrameNode["layoutMode"];
-  width: number;
-  height: number;
-  primaryAxisSizingMode: FrameNode["primaryAxisSizingMode"];
-  counterAxisSizingMode: FrameNode["counterAxisSizingMode"];
-  layoutWrap: FrameNode["layoutWrap"];
-  primaryAxisAlignItems: FrameNode["primaryAxisAlignItems"];
-  counterAxisAlignItems: FrameNode["counterAxisAlignItems"];
-  itemSpacing: number;
-  counterAxisSpacing: number | null;
-  paddingLeft: number;
-  paddingRight: number;
-  paddingTop: number;
-  paddingBottom: number;
-  clipsContent: boolean;
-  flowChildCount: number;
-  absoluteChildCount: number;
-};
-
-export type SafeAreaMetrics = {
-  scale: number;
-  scaledWidth: number;
-  scaledHeight: number;
-  safeInsetX: number;
-  safeInsetY: number;
-  targetWidth: number;
-  targetHeight: number;
-  horizontal: AxisExpansionPlan;
-  vertical: AxisExpansionPlan;
-  profile: LayoutProfile;
-  adoptVerticalVariant: boolean;
-};
+// Types are now imported from auto-layout-management module
+export type { AutoLayoutSnapshot, SafeAreaMetrics } from "./auto-layout-management.js";
 
 declare const figma: PluginAPI;
 
-export async function prepareCloneForLayout(
-  frame: FrameNode,
-  autoLayoutSnapshots: Map<string, AutoLayoutSnapshot>
-): Promise<void> {
-  const snapshot = captureAutoLayoutSnapshot(frame);
-  if (snapshot) {
-    autoLayoutSnapshots.set(frame.id, snapshot);
-    frame.layoutMode = "NONE";
-  }
-  frame.primaryAxisSizingMode = "FIXED";
-  frame.counterAxisSizingMode = "FIXED";
-  frame.paddingLeft = 0;
-  frame.paddingRight = 0;
-  frame.paddingTop = 0;
-  frame.paddingBottom = 0;
-  frame.itemSpacing = 0;
-  if ("counterAxisSpacing" in frame && typeof frame.counterAxisSpacing === "number") {
-    frame.counterAxisSpacing = 0;
-  }
-  frame.clipsContent = true;
-}
-
-export function captureAutoLayoutSnapshot(frame: FrameNode): AutoLayoutSnapshot | null {
-  if (frame.layoutMode === "NONE") {
-    return null;
-  }
-
-  let counterAxisSpacing: number | null = null;
-  if ("counterAxisSpacing" in frame && typeof frame.counterAxisSpacing === "number") {
-    counterAxisSpacing = frame.counterAxisSpacing;
-  }
-
-  let flowChildCount = 0;
-  let absoluteChildCount = 0;
-  for (const child of frame.children) {
-    if ("layoutPositioning" in child && child.layoutPositioning === "ABSOLUTE") {
-      absoluteChildCount += 1;
-    } else {
-      flowChildCount += 1;
-    }
-  }
-
-  return {
-    layoutMode: frame.layoutMode,
-    width: frame.width,
-    height: frame.height,
-    primaryAxisSizingMode: frame.primaryAxisSizingMode,
-    counterAxisSizingMode: frame.counterAxisSizingMode,
-    layoutWrap: frame.layoutWrap,
-    primaryAxisAlignItems: frame.primaryAxisAlignItems,
-    counterAxisAlignItems: frame.counterAxisAlignItems,
-    itemSpacing: frame.itemSpacing,
-    counterAxisSpacing,
-    paddingLeft: frame.paddingLeft,
-    paddingRight: frame.paddingRight,
-    paddingTop: frame.paddingTop,
-    paddingBottom: frame.paddingBottom,
-    clipsContent: frame.clipsContent,
-    flowChildCount,
-    absoluteChildCount
-  };
-}
+// These functions are now imported from auto-layout-management module
+// Re-export them to maintain backward compatibility
+export {
+  prepareCloneForLayout,
+  captureAutoLayoutSnapshot,
+  restoreAutoLayoutSettings
+} from "./auto-layout-management.js";
 
 export async function scaleNodeTree(
   frame: FrameNode,
@@ -169,6 +90,17 @@ export async function scaleNodeTree(
 
   const sourceWidth = Math.max(contentAnalysis.effectiveWidth, 1);
   const sourceHeight = Math.max(contentAnalysis.effectiveHeight, 1);
+
+  // Normalize content margins for extreme aspect ratio changes to improve layout adaptation.
+  // This prevents original asymmetric margins from pushing content to edges in new formats.
+  const sourceProfile = resolveLayoutProfile({ width: sourceWidth, height: sourceHeight });
+  const normalizedMargins = normalizeContentMargins(
+    contentMargins,
+    sourceProfile,
+    profile,
+    sourceWidth / sourceHeight,
+    target.width / target.height
+  );
 
   const safeInsets = resolveSafeAreaInsets(target, safeAreaRatio);
   const safeInsetX = safeInsets.left;
@@ -207,10 +139,12 @@ export async function scaleNodeTree(
   const extraWidth = Math.max(target.width - scaledWidth, 0);
   const extraHeight = Math.max(target.height - scaledHeight, 0);
 
-  const horizontalGaps: AxisGaps | null =
-    contentMargins != null ? { start: contentMargins.left, end: contentMargins.right } : null;
-  const verticalGaps: AxisGaps | null =
-    contentMargins != null ? { start: contentMargins.top, end: contentMargins.bottom } : null;
+  const horizontalGaps: AxisGaps | null = normalizedMargins
+    ? { start: normalizedMargins.left, end: normalizedMargins.right }
+    : null;
+  const verticalGaps: AxisGaps | null = normalizedMargins
+    ? { start: normalizedMargins.top, end: normalizedMargins.bottom }
+    : null;
 
   const absoluteChildCount = countAbsoluteChildren(frame);
   const verticalSummary: AutoLayoutSummary | null = rootSnapshot
@@ -265,13 +199,39 @@ export async function scaleNodeTree(
   const offsetY = Math.max(0, verticalPlan.start);
 
   frame.resizeWithoutConstraints(target.width, target.height);
-  repositionChildren(frame, offsetX, offsetY, rootSnapshot);
+  repositionChildren(frame, offsetX, offsetY, rootSnapshot, safeInsets);
 
   // Final validation: ensure all children are within bounds (belt-and-suspenders approach)
   validateChildrenBounds(frame);
 
   if (shouldExpandAbsoluteChildren(rootSnapshot?.layoutMode, adoptVerticalVariant, profile)) {
     expandAbsoluteChildren(frame, horizontalPlan, verticalPlan, profile, primaryFocal, faceRegions);
+  }
+
+  // Post-AI collision validation: ensure text doesn't overlap detected faces
+  // This runs AFTER layout positioning to guarantee no text/face overlap
+  if (faceRegions && faceRegions.length > 0) {
+    const collisionSafeBounds = {
+      x: horizontalPlan.start,
+      y: verticalPlan.start,
+      width: frame.width - horizontalPlan.start - horizontalPlan.end,
+      height: frame.height - verticalPlan.start - verticalPlan.end
+    };
+
+    const collisionResult = validateTextFaceCollisions({
+      frame,
+      faceRegions,
+      safeBounds: collisionSafeBounds
+    });
+
+    if (collisionResult.corrected) {
+      debugFixLog("collision validation applied corrections", {
+        frameId: frame.id,
+        correctionsCount: collisionResult.corrections.length,
+        faceCount: collisionResult.faceCount,
+        textNodeCount: collisionResult.textNodeCount
+      });
+    }
   }
 
   frame.setPluginData(
@@ -322,73 +282,7 @@ export async function scaleNodeTree(
   };
 }
 
-export async function restoreAutoLayoutSettings(
-  frame: FrameNode,
-  autoLayoutSnapshots: Map<string, AutoLayoutSnapshot>,
-  metrics: SafeAreaMetrics
-): Promise<void> {
-  const snapshot = autoLayoutSnapshots.get(frame.id);
-  if (!snapshot) {
-    return;
-  }
-
-  frame.clipsContent = snapshot.clipsContent;
-
-  if (frame.layoutMode === "NONE") {
-    return;
-  }
-
-  const baseItemSpacing = scaleAutoLayoutMetric(snapshot.itemSpacing, metrics.scale);
-  const horizontalPlan = metrics.horizontal;
-  const verticalPlan = metrics.vertical;
-
-  const round = (value: number): number => Math.round(value);
-
-  // The expansion plan's start/end values represent the TOTAL padding needed,
-  // not additional padding. extraWidth = target - scaledContent already accounts
-  // for all available space. Adding basePadding would double-count.
-  frame.paddingLeft = round(horizontalPlan.start);
-  frame.paddingRight = round(horizontalPlan.end);
-  frame.paddingTop = round(verticalPlan.start);
-  frame.paddingBottom = round(verticalPlan.end);
-
-  let nextItemSpacing = baseItemSpacing;
-  if (frame.layoutMode === "HORIZONTAL" && snapshot.flowChildCount >= 2) {
-    const gaps = Math.max(snapshot.flowChildCount - 1, 1);
-    const perGap = horizontalPlan.interior / gaps;
-    nextItemSpacing = round(baseItemSpacing + perGap);
-  } else if (frame.layoutMode === "VERTICAL" && snapshot.flowChildCount >= 2) {
-    nextItemSpacing = computeVerticalSpacing({
-      baseSpacing: baseItemSpacing,
-      interior: verticalPlan.interior,
-      flowChildCount: snapshot.flowChildCount
-    });
-  }
-  frame.itemSpacing = nextItemSpacing;
-
-  if (snapshot.layoutWrap === "WRAP" && snapshot.counterAxisSpacing != null && "counterAxisSpacing" in frame) {
-    const baseCounterSpacing = scaleAutoLayoutMetric(snapshot.counterAxisSpacing, metrics.scale);
-    frame.counterAxisSpacing = round(baseCounterSpacing);
-  }
-
-  if (metrics.profile === "vertical" && frame.layoutMode === "VERTICAL") {
-    frame.primaryAxisAlignItems = resolveVerticalAlignItems(snapshot.primaryAxisAlignItems, {
-      interior: metrics.vertical.interior
-    });
-    frame.layoutWrap = resolveVerticalLayoutWrap(frame.layoutWrap);
-  }
-
-  debugFixLog("auto layout fine-tuned", {
-    nodeId: frame.id,
-    layoutMode: frame.layoutMode
-  });
-}
-
-function scaleAutoLayoutMetric(value: number, scale: number, min: number = 0): number {
-  if (value === 0) return 0;
-  const scaled = value * scale;
-  return Math.max(Math.round(scaled), min);
-}
+// restoreAutoLayoutSettings and scaleAutoLayoutMetric are now imported from auto-layout-management module
 
 function expandAbsoluteChildren(
   frame: FrameNode,
@@ -540,13 +434,65 @@ export async function scaleNodeRecursive(
   rootSnapshot: AutoLayoutSnapshot | null
 ): Promise<void> {
   const isBackground = rootSnapshot ? isBackgroundLike(node, rootSnapshot.width, rootSnapshot.height) : false;
-  
+
   // For backgrounds, we might want to scale differently?
   // But let's keep it simple: apply scale to children/properties, but override size at end.
 
+  // Determine if this node is an auto-layout frame (children should not have positions scaled)
+  const isAutoLayoutFrame = node.type === "FRAME" && "layoutMode" in node && node.layoutMode !== "NONE";
+
+  // DIAGNOSTIC: Log nested auto-layout frame info before scaling children
+  if (isAutoLayoutFrame) {
+    debugFixLog("DIAGNOSTIC: Processing nested auto-layout frame", {
+      nodeId: node.id,
+      nodeName: node.name,
+      layoutMode: (node as FrameNode).layoutMode,
+      primaryAxisAlignItems: (node as FrameNode).primaryAxisAlignItems,
+      counterAxisAlignItems: (node as FrameNode).counterAxisAlignItems,
+      itemSpacing: (node as FrameNode).itemSpacing,
+      childCount: "children" in node ? node.children.length : 0,
+      childrenInfo: "children" in node ? node.children.slice(0, 4).map(c => ({
+        id: c.id,
+        name: c.name,
+        type: c.type,
+        hasLayoutPositioning: "layoutPositioning" in c,
+        layoutPositioning: "layoutPositioning" in c ? (c as { layoutPositioning: string }).layoutPositioning : "N/A",
+        x: "x" in c ? (c as { x: number }).x : "N/A",
+        y: "y" in c ? (c as { y: number }).y : "N/A"
+      })) : []
+    });
+  }
+
+  // Detect atomic groups (illustrations, mockups, device frames) that should preserve internal layout
+  const isAtomicGroupNode = node.type === "GROUP" && isAtomicGroup(node);
+
   if ("children" in node) {
     for (const child of node.children) {
-      adjustNodePosition(child as SceneNode, scale);
+      // FIX: Atomic groups preserve internal relative positions
+      // Only scale child sizes, not positions - the group itself is repositioned at parent level
+      if (isAtomicGroupNode) {
+        debugFixLog("atomic group child - skipping position adjustment", {
+          groupId: node.id,
+          groupName: node.name,
+          childId: child.id,
+          childName: child.name
+        });
+        await scaleNodeRecursive(child as SceneNode, scale, fontCache, target, rootSnapshot);
+        continue;
+      }
+
+      // FIX: Only adjust positions for children of NONE-layout frames
+      // Children in auto-layout frames have their positions managed by Figma
+      // Scaling their positions causes overlapping when auto-layout reflows
+      if (!isAutoLayoutFrame) {
+        adjustNodePosition(child as SceneNode, scale);
+      } else {
+        // For auto-layout children, only scale ABSOLUTE positioned ones
+        if ("layoutPositioning" in child && child.layoutPositioning === "ABSOLUTE") {
+          adjustNodePosition(child as SceneNode, scale);
+        }
+        // Flow children (AUTO) - DON'T scale positions, auto-layout manages them
+      }
       await scaleNodeRecursive(child as SceneNode, scale, fontCache, target, rootSnapshot);
     }
   }
@@ -631,6 +577,43 @@ export async function scaleNodeRecursive(
 
     if ("resizeWithoutConstraints" in node && typeof node.resizeWithoutConstraints === "function") {
       node.resizeWithoutConstraints(safeWidth, safeHeight);
+
+      // FIX: Force auto-layout reflow for nested auto-layout frames
+      // resizeWithoutConstraints doesn't trigger auto-layout, so children stay at old positions
+      // Toggling layoutMode off and on forces Figma to recalculate child positions
+      if (node.type === "FRAME" && "layoutMode" in node && node.layoutMode !== "NONE") {
+        const originalMode = node.layoutMode;
+        const originalPrimary = node.primaryAxisAlignItems;
+        const originalCounter = node.counterAxisAlignItems;
+        const originalPrimarySizing = node.primaryAxisSizingMode;
+        const originalCounterSizing = node.counterAxisSizingMode;
+        const originalWrap = node.layoutWrap;
+
+        // Toggle to NONE and back to force reflow
+        node.layoutMode = "NONE";
+        node.layoutMode = originalMode;
+
+        // Restore all alignment and sizing properties (they get reset when mode changes)
+        node.primaryAxisAlignItems = originalPrimary;
+        node.counterAxisAlignItems = originalCounter;
+        node.primaryAxisSizingMode = originalPrimarySizing;
+        node.counterAxisSizingMode = originalCounterSizing;
+        node.layoutWrap = originalWrap;
+
+        debugFixLog("DIAGNOSTIC: Forced auto-layout reflow on nested frame", {
+          nodeId: node.id,
+          nodeName: node.name,
+          layoutMode: originalMode,
+          alignments: { primary: originalPrimary, counter: originalCounter },
+          newSize: { width: safeWidth, height: safeHeight },
+          childPositions: "children" in node ? node.children.slice(0, 4).map(c => ({
+            id: c.id,
+            name: c.name,
+            x: "x" in c ? (c as { x: number }).x : "N/A",
+            y: "y" in c ? (c as { y: number }).y : "N/A"
+          })) : []
+        });
+      }
     } else if ("resize" in node && typeof node.resize === "function") {
       node.resize(safeWidth, safeHeight);
     }
@@ -688,23 +671,6 @@ export async function scaleNodeRecursive(
 // scaleEffect and scalePaint moved to effect-scaling.ts
 // ensureFillModeForImages moved to element-classification.ts
 
-function adjustAutoLayoutProperties(node: SceneNode, scale: number): void {
-  if (node.type !== "FRAME" && node.type !== "COMPONENT") {
-    return;
-  }
-  if (node.layoutMode === "NONE") {
-    return;
-  }
-
-  node.paddingLeft = scaleAutoLayoutMetric(node.paddingLeft, scale);
-  node.paddingRight = scaleAutoLayoutMetric(node.paddingRight, scale);
-  node.paddingTop = scaleAutoLayoutMetric(node.paddingTop, scale);
-  node.paddingBottom = scaleAutoLayoutMetric(node.paddingBottom, scale);
-  node.itemSpacing = scaleAutoLayoutMetric(node.itemSpacing, scale, 1);
-
-  if (node.layoutWrap === "WRAP" && typeof node.counterAxisSpacing === "number") {
-    node.counterAxisSpacing = scaleAutoLayoutMetric(node.counterAxisSpacing, scale, 1);
-  }
-}
+// adjustAutoLayoutProperties is now imported from auto-layout-management module
 
 // cloneValue moved to effect-scaling.ts

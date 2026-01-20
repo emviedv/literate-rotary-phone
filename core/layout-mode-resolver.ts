@@ -24,6 +24,16 @@ export type LayoutContext = {
     hasText: boolean;
     hasImages: boolean;
     itemSpacing: number | null;
+    padding?: {
+      top: number;
+      right: number;
+      bottom: number;
+      left: number;
+    };
+    alignments?: {
+      primaryAxisAlignItems: FrameNode["primaryAxisAlignItems"];
+      counterAxisAlignItems: FrameNode["counterAxisAlignItems"];
+    };
   };
   targetProfile: {
     type: "horizontal" | "vertical" | "square";
@@ -40,14 +50,36 @@ export type LayoutContext = {
 };
 
 /**
+ * Determines if a layout mode change should be forced regardless of other heuristics.
+ * Triggered by extreme aspect ratio transitions where original layout cannot be preserved.
+ */
+export function shouldForceLayoutModeChange(context: LayoutContext): boolean {
+  const { sourceLayout, targetProfile } = context;
+  const aspectRatio = targetProfile.aspectRatio;
+
+  // Force HORIZONTAL -> VERTICAL for extreme vertical targets (TikTok)
+  if (aspectRatio < ASPECT_RATIOS.EXTREME_VERTICAL && sourceLayout.mode === "HORIZONTAL") {
+    return true;
+  }
+
+  // Force VERTICAL -> HORIZONTAL for extreme horizontal targets (Banners)
+  if (aspectRatio > ASPECT_RATIOS.EXTREME_HORIZONTAL && sourceLayout.mode === "VERTICAL") {
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Determines the optimal layout mode based on source and target.
  * Uses transition zones for smoother aspect ratio handling.
  *
  * Priority order:
  * 1. AI suggestedLayoutMode (explicit override)
  * 2. AI pattern selection (derive from pattern)
- * 3. adoptVerticalVariant flag
- * 4. Aspect ratio heuristics
+ * 3. shouldForceLayoutModeChange (mandatory transitions)
+ * 4. adoptVerticalVariant flag
+ * 5. Aspect ratio heuristics
  */
 export function determineOptimalLayoutMode(context: LayoutContext): "HORIZONTAL" | "VERTICAL" | "NONE" {
   const { sourceLayout, targetProfile, layoutAdvice } = context;
@@ -66,6 +98,17 @@ export function determineOptimalLayoutMode(context: LayoutContext): "HORIZONTAL"
     const patternId = layoutAdvice.selectedId as LayoutPatternId;
     const pattern = LAYOUT_PATTERNS[patternId];
     if (pattern) {
+      // IMPORTANT: Don't apply NONE-layout patterns to frames that originally had auto-layout
+      // This prevents destroying the flow layout and causing children to overlap
+      if (pattern.layoutMode === "NONE" && sourceLayout.mode !== "NONE") {
+        debugAutoLayoutLog("determining optimal layout: AI pattern has NONE but source has auto-layout, preserving source", {
+          patternId,
+          patternLayoutMode: pattern.layoutMode,
+          sourceMode: sourceLayout.mode,
+          context
+        });
+        return sourceLayout.mode;
+      }
       debugAutoLayoutLog("determining optimal layout: deriving from AI pattern selection", {
         patternId,
         patternLayoutMode: pattern.layoutMode,
@@ -73,6 +116,17 @@ export function determineOptimalLayoutMode(context: LayoutContext): "HORIZONTAL"
       });
       return pattern.layoutMode;
     }
+  }
+
+  // Force change if mandatory transition triggered
+  if (shouldForceLayoutModeChange(context)) {
+    const forcedMode = targetProfile.type === "vertical" ? "VERTICAL" : "HORIZONTAL";
+    debugAutoLayoutLog("determining optimal layout: forced mode change triggered", {
+      forcedMode,
+      targetProfile: targetProfile.type,
+      aspectRatio: targetProfile.aspectRatio.toFixed(3)
+    });
+    return forcedMode;
   }
 
   if (context.adoptVerticalVariant && targetProfile.type === "vertical") {

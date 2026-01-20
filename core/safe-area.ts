@@ -35,3 +35,26 @@ export function resolveSafeAreaInsets(target: VariantTarget, safeAreaRatio: numb
     bottom: insetY
   };
 }
+
+/**
+ * Enforces safe area constraints on a set of bounds.
+ * Useful for strictly keeping absolute content within permitted zones.
+ */
+export function enforceTargetSafeArea(
+  bounds: { x: number; y: number; width: number; height: number },
+  safeArea: SafeAreaInsets,
+  containerSize: { width: number; height: number }
+): { x: number; y: number; width: number; height: number } {
+  const minX = safeArea.left;
+  const maxX = containerSize.width - safeArea.right;
+  const minY = safeArea.top;
+  const maxY = containerSize.height - safeArea.bottom;
+
+  const width = Math.min(bounds.width, maxX - minX);
+  const height = Math.min(bounds.height, maxY - minY);
+
+  const x = Math.max(minX, Math.min(bounds.x, maxX - width));
+  const y = Math.max(minY, Math.min(bounds.y, maxY - height));
+
+  return { x, y, width, height };
+}
