@@ -1,3 +1,11 @@
+/**
+ * Tests for auto-layout-adapter module.
+ *
+ * FREESTYLE POSITIONING MODE:
+ * Child adaptations have been removed - AI positioning maps handle per-node decisions.
+ * Tests now focus on frame-level layout properties (layoutMode, alignment, spacing).
+ */
+
 import { createLayoutAdaptationPlan } from "../core/auto-layout-adapter.js";
 
 let childCounter = 0;
@@ -78,7 +86,11 @@ function testCase(name: string, fn: () => void): void {
   }
 }
 
-testCase("child adaptations avoid deprecated layoutAlign values", () => {
+// ============================================================================
+// FREESTYLE MODE: Frame-level layout tests (childAdaptations removed)
+// ============================================================================
+
+testCase("FREESTYLE: plan has no childAdaptations field", () => {
   const frame = createFrame({
     layoutMode: "VERTICAL"
   });
@@ -90,10 +102,7 @@ testCase("child adaptations avoid deprecated layoutAlign values", () => {
     1
   );
 
-  const adaptation = plan.childAdaptations.get("child-1");
-
-  assert(adaptation, "expected adaptation to exist for child-1");
-  assert(adaptation?.layoutAlign === "INHERIT", "layoutAlign should normalize to INHERIT");
+  assert(!("childAdaptations" in plan), "FREESTYLE mode should not have childAdaptations");
 });
 
 testCase("padding adjustments stay non-negative when width shrinks", () => {
@@ -113,60 +122,6 @@ testCase("padding adjustments stay non-negative when width shrinks", () => {
 
   assert(plan.paddingAdjustments.right >= 0, "paddingRight must clamp to >= 0");
   assert(plan.paddingAdjustments.left >= 0, "paddingLeft must clamp to >= 0");
-});
-
-testCase("image children stay inheriting alignment to avoid stretch in tall targets", () => {
-  const imageChild = createChild({
-    id: "image-hero",
-    type: "RECTANGLE",
-    fills: [{ type: "IMAGE" } as Paint]
-  });
-
-  const frame = createFrame({
-    layoutMode: "HORIZONTAL",
-    children: [imageChild, createChild({ id: "text-1" })]
-  });
-
-  const plan = createLayoutAdaptationPlan(
-    frame,
-    { width: 1080, height: 1920 },
-    "vertical",
-    1
-  );
-
-  const imageAdaptation = plan.childAdaptations.get("image-hero");
-  assert(imageAdaptation, "expected an adaptation record for the image child");
-  assert(
-    imageAdaptation?.layoutAlign === "INHERIT" || imageAdaptation?.layoutAlign === undefined,
-    "image children should not be stretched in vertical targets"
-  );
-});
-
-testCase("image children do not grow to fill width in ultra-wide targets", () => {
-  const imageChild = createChild({
-    id: "image-banner",
-    type: "RECTANGLE",
-    fills: [{ type: "IMAGE" } as Paint]
-  });
-
-  const frame = createFrame({
-    layoutMode: "VERTICAL",
-    children: [imageChild, createChild({ id: "text-1" })]
-  });
-
-  const plan = createLayoutAdaptationPlan(
-    frame,
-    { width: 2400, height: 600 },
-    "horizontal",
-    1
-  );
-
-  const imageAdaptation = plan.childAdaptations.get("image-banner");
-  assert(imageAdaptation, "expected an adaptation record for the image child");
-  assert(
-    imageAdaptation?.layoutGrow === 0 || imageAdaptation?.layoutGrow === undefined,
-    "image children should not grow across the main axis when preserving aspect ratio"
-  );
 });
 
 testCase("adopts vertical flow using source snapshot hints and centers stack", () => {
@@ -207,25 +162,27 @@ testCase("converts horizontal moderate vertical targets when adoptVerticalVarian
   assert(plan.layoutMode === "VERTICAL", "should respect adoptVerticalVariant flag even for moderate vertical targets");
 });
 
-testCase("should not stretch non-image children in vertical layouts", () => {
-  const shapeChild = createChild({
-    id: "shape",
-    type: "RECTANGLE",
-  });
-
+testCase("FREESTYLE: frame-level properties still apply", () => {
   const frame = createFrame({
     layoutMode: "HORIZONTAL",
-    children: [shapeChild]
+    width: 1000,
+    height: 500
   });
 
   const plan = createLayoutAdaptationPlan(
     frame,
-    { width: 1080, height: 1920 },
-    "vertical",
-    1,
-    { adoptVerticalVariant: true }
+    { width: 1920, height: 960 },
+    "horizontal",
+    1
   );
-  
-  const shapeAdaptation = plan.childAdaptations.get("shape");
-  assert(shapeAdaptation?.layoutAlign === "INHERIT", "non-image children should not be stretched by default");
+
+  // Frame-level properties should still be determined
+  assert(
+    plan.layoutMode === "HORIZONTAL" || plan.layoutMode === "VERTICAL" || plan.layoutMode === "NONE",
+    "layoutMode should be a valid value"
+  );
+  assert(typeof plan.itemSpacing === "number", "itemSpacing should be set");
+  assert(plan.paddingAdjustments !== undefined, "paddingAdjustments should be set");
 });
+
+console.log("\n✅ All auto-layout-adapter tests passed\n");

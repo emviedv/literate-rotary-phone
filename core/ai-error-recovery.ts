@@ -28,8 +28,8 @@ export interface RecoveredAnalysisResult {
  */
 const RECOVERY_CONFIG = {
   MAX_RETRIES: 3,
-  TIMEOUT_MS: 30000,          // 30s timeout for full analysis
-  STRUCTURE_TIMEOUT_MS: 15000, // 15s timeout for structure-only
+  TIMEOUT_MS: 95000,          // 95s timeout for full analysis (must exceed OPENAI_TIMEOUT_MS of 90s)
+  STRUCTURE_TIMEOUT_MS: 30000, // 30s timeout for structure-only
   CACHE_EXPIRY_MS: 300000,     // 5min cache validity
   CONFIDENCE_ADJUSTMENTS: {
     "full-analysis": 1.0,      // No adjustment
@@ -179,16 +179,21 @@ async function tryFullAnalysis(frame: FrameNode, apiKey: string, targetId?: stri
       setTimeout(() => reject(new Error('Full analysis timeout')), RECOVERY_CONFIG.TIMEOUT_MS);
     });
 
-    const analysisPromise = requestEnhancedAiInsights(frame, apiKey);
+    const analysisPromise = requestEnhancedAiInsights(frame, apiKey, targetId);
     const result = await Promise.race([analysisPromise, timeoutPromise]);
 
-    if (result && result.success && result.signals) {
+    // Accept results with valid signals OR valid layoutAdvice (don't discard good layout advice
+    // just because role sanitization filtered out all signals)
+    if (result && result.success && (result.signals || result.layoutAdvice)) {
+      // Use actual signals or create minimal fallback if only layoutAdvice is valid
+      const signals = result.signals ?? createMinimalFallbackSignals(frame);
+
       // Cache successful result (includes layoutAdvice)
-      await cacheAnalysisResult(frame, result.signals, result.layoutAdvice, targetId);
+      await cacheAnalysisResult(frame, signals, result.layoutAdvice, targetId);
 
       return {
         success: true,
-        signals: result.signals,
+        signals,
         layoutAdvice: result.layoutAdvice,
         recoveryMethod: "full-analysis",
         confidence: RECOVERY_CONFIG.CONFIDENCE_ADJUSTMENTS["full-analysis"],

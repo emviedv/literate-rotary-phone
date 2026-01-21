@@ -1,6 +1,10 @@
 /**
  * Contract tests for auto-layout-adapter module boundaries.
  * These tests validate the interfaces between modules remain stable.
+ *
+ * FREESTYLE POSITIONING MODE:
+ * Child adaptations have been removed in favor of AI positioning maps.
+ * Tests now validate the simplified LayoutAdaptationPlan interface.
  */
 
 import { createLayoutAdaptationPlan } from "../core/auto-layout-adapter.js";
@@ -156,75 +160,10 @@ testCase("LayoutAdaptationPlan contract: padding values are non-negative integer
   assert(left >= 0 && Number.isInteger(left), "paddingLeft must be non-negative integer");
 });
 
-testCase("LayoutAdaptationPlan contract: childAdaptations is a Map", () => {
-  const plan = createLayoutAdaptationPlan(
-    createFrame(),
-    { width: 1920, height: 960 },
-    "horizontal",
-    1
-  );
-
-  assert(plan.childAdaptations instanceof Map, "childAdaptations must be a Map");
-});
-
 // ============================================================================
-// ChildAdaptation Contract Tests
+// FREESTYLE MODE: childAdaptations removed
+// AI positioning maps now handle per-node decisions via layoutAdvice.positioning
 // ============================================================================
-
-testCase("ChildAdaptation contract: layoutAlign is valid when present", () => {
-  const plan = createLayoutAdaptationPlan(
-    createFrame(),
-    { width: 1080, height: 1920 },
-    "vertical",
-    1,
-    { adoptVerticalVariant: true }
-  );
-
-  for (const [childId, adaptation] of plan.childAdaptations) {
-    if (adaptation.layoutAlign !== undefined) {
-      assert(
-        adaptation.layoutAlign === "INHERIT" || adaptation.layoutAlign === "STRETCH",
-        `Child ${childId}: layoutAlign must be INHERIT or STRETCH`
-      );
-    }
-  }
-});
-
-testCase("ChildAdaptation contract: layoutPositioning is valid when present", () => {
-  const plan = createLayoutAdaptationPlan(
-    createFrame(),
-    { width: 1080, height: 1920 },
-    "vertical",
-    1
-  );
-
-  for (const [childId, adaptation] of plan.childAdaptations) {
-    if (adaptation.layoutPositioning !== undefined) {
-      assert(
-        adaptation.layoutPositioning === "AUTO" || adaptation.layoutPositioning === "ABSOLUTE",
-        `Child ${childId}: layoutPositioning must be AUTO or ABSOLUTE`
-      );
-    }
-  }
-});
-
-testCase("ChildAdaptation contract: layoutGrow is non-negative when present", () => {
-  const plan = createLayoutAdaptationPlan(
-    createFrame(),
-    { width: 2560, height: 600 },
-    "horizontal",
-    1
-  );
-
-  for (const [childId, adaptation] of plan.childAdaptations) {
-    if (adaptation.layoutGrow !== undefined) {
-      assert(
-        typeof adaptation.layoutGrow === "number" && adaptation.layoutGrow >= 0,
-        `Child ${childId}: layoutGrow must be non-negative number`
-      );
-    }
-  }
-});
 
 // ============================================================================
 // Module Integration Contract Tests
@@ -260,6 +199,22 @@ testCase("Module contract: plan is deterministic for same inputs", () => {
   assert(plan1.layoutMode === plan2.layoutMode, "layoutMode must be deterministic");
   assert(plan1.itemSpacing === plan2.itemSpacing, "itemSpacing must be deterministic");
   assert(plan1.layoutWrap === plan2.layoutWrap, "layoutWrap must be deterministic");
+});
+
+testCase("Module contract: FREESTYLE mode - no childAdaptations field", () => {
+  const plan = createLayoutAdaptationPlan(
+    createFrame(),
+    { width: 1920, height: 960 },
+    "horizontal",
+    1
+  );
+
+  // In FREESTYLE mode, childAdaptations has been removed
+  // Per-node positioning is handled by AI via layoutAdvice.positioning
+  assert(
+    !("childAdaptations" in plan),
+    "childAdaptations should not exist in FREESTYLE mode"
+  );
 });
 
 console.log("\n✅ All layout adapter contract tests passed\n");

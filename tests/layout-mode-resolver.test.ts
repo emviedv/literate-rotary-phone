@@ -1,7 +1,12 @@
 /**
  * Characterization tests for layout mode resolution logic.
- * These tests lock the current behavior of determineOptimalLayoutMode
- * and related functions before refactoring.
+ *
+ * FREESTYLE POSITIONING MODE:
+ * Pattern-based layout mode derivation has been removed.
+ * In FREESTYLE mode:
+ * 1. AI's `suggestedLayoutMode` is used directly if present
+ * 2. If AI advice exists without suggestedLayoutMode, source layout is preserved
+ * 3. Deterministic fallbacks only apply when no AI advice is available
  */
 
 import { createLayoutAdaptationPlan } from "../core/auto-layout-adapter.js";
@@ -86,7 +91,7 @@ function createFrame(overrides: FrameOverrides = {}): FrameNode {
 }
 
 // ============================================================================
-// Layout Mode Resolution Tests
+// Layout Mode Resolution Tests (FREESTYLE MODE)
 // ============================================================================
 
 testCase("AI suggestedLayoutMode overrides all heuristics", () => {
@@ -98,9 +103,11 @@ testCase("AI suggestedLayoutMode overrides all heuristics", () => {
 
   const layoutAdvice: LayoutAdviceEntry = {
     targetId: "tiktok-vertical",
-    selectedId: "vertical-stack",
     suggestedLayoutMode: "VERTICAL",
-    options: []
+    options: [],
+    positioning: {
+      "child-1": { anchor: "center", visible: true }
+    }
   };
 
   const plan = createLayoutAdaptationPlan(
@@ -114,17 +121,21 @@ testCase("AI suggestedLayoutMode overrides all heuristics", () => {
   assert(plan.layoutMode === "VERTICAL", "AI suggestedLayoutMode should override heuristics");
 });
 
-testCase("AI pattern selection derives layout mode when no explicit suggestedLayoutMode", () => {
+testCase("FREESTYLE: AI advice without suggestedLayoutMode preserves source layout", () => {
   const frame = createFrame({
     layoutMode: "NONE",
     width: 1200,
     height: 800
   });
 
+  // AI advice exists but without explicit suggestedLayoutMode
+  // In FREESTYLE mode, source layout is preserved
   const layoutAdvice: LayoutAdviceEntry = {
     targetId: "youtube-cover",
-    selectedId: "banner-spread", // HORIZONTAL pattern
-    options: []
+    options: [],
+    positioning: {
+      "child-1": { anchor: "center-left", visible: true }
+    }
   };
 
   const plan = createLayoutAdaptationPlan(
@@ -135,7 +146,8 @@ testCase("AI pattern selection derives layout mode when no explicit suggestedLay
     { layoutAdvice }
   );
 
-  assert(plan.layoutMode === "HORIZONTAL", "should derive HORIZONTAL from banner-spread pattern");
+  // In FREESTYLE mode, source layout is preserved when no suggestedLayoutMode
+  assert(plan.layoutMode === "NONE", "FREESTYLE: source layout should be preserved when AI advice lacks suggestedLayoutMode");
 });
 
 testCase("adoptVerticalVariant forces VERTICAL for vertical targets", () => {
@@ -349,10 +361,10 @@ testCase("horizontal layout with few children does not wrap", () => {
 });
 
 // ============================================================================
-// NONE-layout pattern preservation tests
+// FREESTYLE MODE: AI Layout Mode Tests
 // ============================================================================
 
-testCase("AI pattern with NONE preserves source auto-layout to prevent overlaps", () => {
+testCase("FREESTYLE: AI advice with positioning preserves source when no suggestedLayoutMode", () => {
   // Source frame has HORIZONTAL auto-layout
   const frame = createFrame({
     layoutMode: "HORIZONTAL",
@@ -360,11 +372,14 @@ testCase("AI pattern with NONE preserves source auto-layout to prevent overlaps"
     height: 600
   });
 
-  // AI selects "layered-hero" which has layoutMode: "NONE"
+  // AI advice with positioning but no suggestedLayoutMode
   const layoutAdvice: LayoutAdviceEntry = {
     targetId: "figma-cover",
-    selectedId: "layered-hero", // This pattern has layoutMode: "NONE"
-    options: []
+    options: [],
+    positioning: {
+      "child-1": { anchor: "center-left", visible: true },
+      "child-2": { anchor: "center-right", visible: true }
+    }
   };
 
   const plan = createLayoutAdaptationPlan(
@@ -378,47 +393,14 @@ testCase("AI pattern with NONE preserves source auto-layout to prevent overlaps"
     }
   );
 
-  // Should preserve HORIZONTAL, not apply NONE (which would cause overlaps)
+  // In FREESTYLE mode, source layout is preserved when AI advice exists but lacks suggestedLayoutMode
   assert(
     plan.layoutMode === "HORIZONTAL",
-    `Should preserve HORIZONTAL layout when AI selects NONE-layout pattern, got ${plan.layoutMode}`
+    `FREESTYLE: Source layout should be preserved when AI advice lacks suggestedLayoutMode, got ${plan.layoutMode}`
   );
 });
 
-testCase("AI pattern with NONE is applied when source is also NONE", () => {
-  // Source frame has no auto-layout
-  const frame = createFrame({
-    layoutMode: "NONE",
-    width: 800,
-    height: 600
-  });
-
-  // AI selects "layered-hero" which has layoutMode: "NONE"
-  const layoutAdvice: LayoutAdviceEntry = {
-    targetId: "figma-cover",
-    selectedId: "layered-hero",
-    options: []
-  };
-
-  const plan = createLayoutAdaptationPlan(
-    frame,
-    { width: 1920, height: 960 },
-    "horizontal",
-    1,
-    {
-      sourceLayoutMode: "NONE",
-      layoutAdvice
-    }
-  );
-
-  // NONE is fine when source was also NONE
-  assert(
-    plan.layoutMode === "NONE",
-    `Should apply NONE layout when source was also NONE, got ${plan.layoutMode}`
-  );
-});
-
-testCase("AI pattern with VERTICAL is applied even when source is HORIZONTAL", () => {
+testCase("FREESTYLE: AI VERTICAL suggestedLayoutMode is applied", () => {
   // Source frame has HORIZONTAL auto-layout
   const frame = createFrame({
     layoutMode: "HORIZONTAL",
@@ -426,11 +408,13 @@ testCase("AI pattern with VERTICAL is applied even when source is HORIZONTAL", (
     height: 600
   });
 
-  // AI selects "vertical-stack" which has layoutMode: "VERTICAL"
   const layoutAdvice: LayoutAdviceEntry = {
     targetId: "tiktok-vertical",
-    selectedId: "vertical-stack",
-    options: []
+    suggestedLayoutMode: "VERTICAL",
+    options: [],
+    positioning: {
+      "child-1": { anchor: "center", visible: true }
+    }
   };
 
   const plan = createLayoutAdaptationPlan(
@@ -444,10 +428,9 @@ testCase("AI pattern with VERTICAL is applied even when source is HORIZONTAL", (
     }
   );
 
-  // VERTICAL should be applied (it's a valid layout mode, just different orientation)
   assert(
     plan.layoutMode === "VERTICAL",
-    `Should apply VERTICAL layout from AI pattern, got ${plan.layoutMode}`
+    `FREESTYLE: AI VERTICAL suggestedLayoutMode should be applied, got ${plan.layoutMode}`
   );
 });
 

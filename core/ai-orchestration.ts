@@ -270,7 +270,7 @@ async function executeLayoutPhase(
     messages,
     model,
     temperature: 0.1,
-    maxTokens: 4096
+    maxTokens: 8192
   });
 
   if (!result.success || !result.parsed) {

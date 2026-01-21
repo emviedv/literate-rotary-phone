@@ -311,10 +311,10 @@ export const MISTAKE_MISSING_FEASIBILITY: readonly ChatMessage[] = [
 /**
  * Mistake 4: Omitting Targets
  *
- * WRONG: Only providing layoutAdvice for some targets when multiple are requested
- * RIGHT: layoutAdvice.entries MUST have exactly one entry per target
+ * WRONG: Only providing layoutAdvice for some targets when 17 are requested
+ * RIGHT: layoutAdvice.entries MUST have exactly one entry per target (17 entries)
  *
- * Teaching Point: The plugin expects advice for ALL requested targets
+ * Teaching Point: The plugin expects advice for ALL 17 requested targets
  */
 export const MISTAKE_OMITTING_TARGETS: readonly ChatMessage[] = [
   {
@@ -334,8 +334,22 @@ export const MISTAKE_OMITTING_TARGETS: readonly ChatMessage[] = [
       },
       targets: [
         { id: "figma-cover", width: 1920, height: 960, label: "Figma Cover" },
+        { id: "figma-gallery", width: 1600, height: 960, label: "Figma Gallery" },
+        { id: "figma-thumbnail", width: 480, height: 320, label: "Figma Thumbnail" },
+        { id: "web-hero", width: 1440, height: 600, label: "Web Hero" },
         { id: "social-carousel", width: 1080, height: 1080, label: "Social Square" },
-        { id: "tiktok-vertical", width: 1080, height: 1920, label: "TikTok" }
+        { id: "youtube-cover", width: 2560, height: 1440, label: "YouTube Cover" },
+        { id: "tiktok-vertical", width: 1080, height: 1920, label: "TikTok" },
+        { id: "youtube-shorts", width: 1080, height: 1920, label: "YouTube Shorts" },
+        { id: "instagram-reels", width: 1080, height: 1920, label: "Instagram Reels" },
+        { id: "gumroad-cover", width: 1280, height: 720, label: "Gumroad Cover" },
+        { id: "gumroad-thumbnail", width: 600, height: 600, label: "Gumroad Thumbnail" },
+        { id: "facebook-cover", width: 820, height: 312, label: "Facebook Cover" },
+        { id: "landscape-feed", width: 1200, height: 628, label: "Landscape Feed" },
+        { id: "youtube-thumbnail", width: 1280, height: 720, label: "YouTube Thumbnail" },
+        { id: "youtube-video", width: 1920, height: 1080, label: "YouTube Video" },
+        { id: "display-leaderboard", width: 728, height: 90, label: "Leaderboard Ad" },
+        { id: "display-rectangle", width: 300, height: 250, label: "Rectangle Ad" }
       ]
     })
   },
@@ -343,9 +357,9 @@ export const MISTAKE_OMITTING_TARGETS: readonly ChatMessage[] = [
     role: "assistant",
     content: JSON.stringify({
       _correction: {
-        mistake: "Only provided layoutAdvice for 1 target when 3 were requested",
-        why_wrong: "The input specified 3 targets (figma-cover, social-carousel, tiktok-vertical). The response MUST include exactly one layoutAdvice entry for EACH target. Omitting targets causes the plugin to fail or use suboptimal fallbacks.",
-        correct_approach: "Count the targets in the input and ensure layoutAdvice.entries has the same count, with targetId matching each input target"
+        mistake: "Only provided layoutAdvice for 1 target when 17 were requested",
+        why_wrong: "The input specified 17 targets. The response MUST include exactly one layoutAdvice entry for EACH of the 17 targets. Omitting targets causes the plugin to fail or use suboptimal fallbacks.",
+        correct_approach: "Count the targets in the input (17) and ensure layoutAdvice.entries has exactly 17 entries, with targetId matching each input target"
       },
       signals: {
         roles: [
@@ -360,64 +374,277 @@ export const MISTAKE_OMITTING_TARGETS: readonly ChatMessage[] = [
       },
       layoutAdvice: {
         entries: [
+          // 1. Figma Cover (1920×960) - Wide horizontal
           {
             targetId: "figma-cover",
             selectedId: "split-left",
             score: 0.89,
             suggestedLayoutMode: "HORIZONTAL",
             backgroundNodeId: "bg",
-            description: "Wide format accommodates horizontal text arrangement with room to breathe.",
-            feasibility: {
-              achievable: true,
-              requiresRestructure: false,
-              predictedFill: 0.82,
-              uniformScaleResult: "107% scale creates comfortable fit"
-            },
+            description: "Wide format with horizontal text arrangement.",
+            feasibility: { achievable: true, requiresRestructure: false, predictedFill: 0.82, uniformScaleResult: "107% scale" },
             positioning: {
-              "bg": { visible: true, priority: 10, anchor: "fill", constraints: { horizontal: "stretch", vertical: "stretch" }, rationale: "Background fills frame" },
-              "logo": { visible: true, priority: 2, anchor: "top-left", offset: { left: 120, top: 100, fromSafeArea: true }, size: { mode: "fixed", width: 200, height: 80 }, rationale: "Logo in top-left corner" },
-              "heading": { visible: true, priority: 1, anchor: "center-left", offset: { left: 120, fromSafeArea: true }, text: { maxLines: 2, minFontSize: 56, targetFontSize: 72, textAlign: "left" }, rationale: "Title centered vertically, left-aligned" },
-              "date": { visible: true, priority: 3, anchor: "center-left", offset: { left: 120, fromSafeArea: true }, spacing: { before: 24 }, text: { maxLines: 1, minFontSize: 24, targetFontSize: 28, textAlign: "left" }, rationale: "Date below title" }
+              "bg": { visible: true, priority: 10, anchor: "fill", rationale: "Background fills frame" },
+              "logo": { visible: true, priority: 2, anchor: "top-left", offset: { left: 120, top: 100, fromSafeArea: true }, rationale: "Logo top-left" },
+              "heading": { visible: true, priority: 1, anchor: "center-left", offset: { left: 120, fromSafeArea: true }, text: { maxLines: 2, targetFontSize: 72 }, rationale: "Title left-aligned" },
+              "date": { visible: true, priority: 3, anchor: "center-left", offset: { left: 120, fromSafeArea: true }, text: { maxLines: 1, targetFontSize: 28 }, rationale: "Date below title" }
             }
           },
+          // 2. Figma Gallery (1600×960) - Similar to cover
+          {
+            targetId: "figma-gallery",
+            selectedId: "split-left",
+            score: 0.88,
+            suggestedLayoutMode: "HORIZONTAL",
+            backgroundNodeId: "bg",
+            description: "Gallery preview with horizontal layout.",
+            feasibility: { achievable: true, requiresRestructure: false, predictedFill: 0.85, uniformScaleResult: "100% scale" },
+            positioning: {
+              "bg": { visible: true, priority: 10, anchor: "fill", rationale: "Background fills frame" },
+              "logo": { visible: true, priority: 2, anchor: "top-left", offset: { left: 100, top: 80, fromSafeArea: true }, rationale: "Logo top-left" },
+              "heading": { visible: true, priority: 1, anchor: "center-left", text: { maxLines: 2, targetFontSize: 68 }, rationale: "Title left-aligned" },
+              "date": { visible: true, priority: 3, anchor: "center-left", text: { maxLines: 1, targetFontSize: 26 }, rationale: "Date below title" }
+            }
+          },
+          // 3. Figma Thumbnail (480×320) - Small, compact
+          {
+            targetId: "figma-thumbnail",
+            selectedId: "centered-stack",
+            score: 0.82,
+            suggestedLayoutMode: "NONE",
+            backgroundNodeId: "bg",
+            description: "Compact thumbnail with reduced text.",
+            feasibility: { achievable: true, requiresRestructure: true, predictedFill: 0.70, uniformScaleResult: "30% scale requires restructure" },
+            positioning: {
+              "bg": { visible: true, priority: 10, anchor: "fill", rationale: "Background fills frame" },
+              "logo": { visible: true, priority: 2, anchor: "top-center", size: { mode: "fixed", width: 60, height: 24 }, rationale: "Small logo" },
+              "heading": { visible: true, priority: 1, anchor: "center", text: { maxLines: 2, targetFontSize: 24 }, rationale: "Centered title" },
+              "date": { visible: false, priority: 3, rationale: "Hidden for thumbnail legibility" }
+            }
+          },
+          // 4. Web Hero (1440×600) - Wide banner
+          {
+            targetId: "web-hero",
+            selectedId: "split-left",
+            score: 0.87,
+            suggestedLayoutMode: "HORIZONTAL",
+            backgroundNodeId: "bg",
+            description: "Wide hero banner with left-aligned content.",
+            feasibility: { achievable: true, requiresRestructure: false, predictedFill: 0.78, uniformScaleResult: "67% scale" },
+            positioning: {
+              "bg": { visible: true, priority: 10, anchor: "fill", rationale: "Background fills" },
+              "logo": { visible: true, priority: 2, anchor: "top-left", offset: { left: 80, top: 60, fromSafeArea: true }, rationale: "Logo top-left" },
+              "heading": { visible: true, priority: 1, anchor: "center-left", text: { maxLines: 2, targetFontSize: 56 }, rationale: "Title left" },
+              "date": { visible: true, priority: 3, anchor: "center-left", text: { maxLines: 1, targetFontSize: 24 }, rationale: "Date below" }
+            }
+          },
+          // 5. Social Carousel (1080×1080) - Square
           {
             targetId: "social-carousel",
             selectedId: "centered-stack",
             score: 0.86,
             suggestedLayoutMode: "VERTICAL",
             backgroundNodeId: "bg",
-            description: "Square format centers content vertically for balanced composition.",
-            feasibility: {
-              achievable: true,
-              requiresRestructure: false,
-              predictedFill: 0.75,
-              uniformScaleResult: "120% scale centers content in square"
-            },
+            description: "Square format with centered vertical stack.",
+            feasibility: { achievable: true, requiresRestructure: false, predictedFill: 0.75, uniformScaleResult: "120% scale" },
             positioning: {
-              "bg": { visible: true, priority: 10, anchor: "fill", constraints: { horizontal: "stretch", vertical: "stretch" }, rationale: "Background fills square" },
-              "logo": { visible: true, priority: 2, anchor: "top-center", offset: { top: 120, fromSafeArea: true }, size: { mode: "fixed", width: 180, height: 72 }, rationale: "Logo centered at top" },
-              "heading": { visible: true, priority: 1, anchor: "center", text: { maxLines: 3, minFontSize: 48, targetFontSize: 64, textAlign: "center" }, rationale: "Title centered for square impact" },
-              "date": { visible: true, priority: 3, anchor: "center", spacing: { before: 32 }, text: { maxLines: 1, minFontSize: 24, targetFontSize: 32, textAlign: "center" }, rationale: "Date centered below title" }
+              "bg": { visible: true, priority: 10, anchor: "fill", rationale: "Background fills square" },
+              "logo": { visible: true, priority: 2, anchor: "top-center", offset: { top: 120, fromSafeArea: true }, rationale: "Logo centered top" },
+              "heading": { visible: true, priority: 1, anchor: "center", text: { maxLines: 3, targetFontSize: 64, textAlign: "center" }, rationale: "Centered title" },
+              "date": { visible: true, priority: 3, anchor: "center", text: { maxLines: 1, targetFontSize: 32, textAlign: "center" }, rationale: "Centered date" }
             }
           },
+          // 6. YouTube Cover (2560×1440) - Large horizontal
+          {
+            targetId: "youtube-cover",
+            selectedId: "split-left",
+            score: 0.90,
+            suggestedLayoutMode: "HORIZONTAL",
+            backgroundNodeId: "bg",
+            description: "Large channel cover with horizontal layout.",
+            feasibility: { achievable: true, requiresRestructure: false, predictedFill: 0.88, uniformScaleResult: "160% scale" },
+            positioning: {
+              "bg": { visible: true, priority: 10, anchor: "fill", rationale: "Background fills" },
+              "logo": { visible: true, priority: 2, anchor: "top-left", offset: { left: 160, top: 120, fromSafeArea: true }, rationale: "Logo top-left" },
+              "heading": { visible: true, priority: 1, anchor: "center-left", text: { maxLines: 2, targetFontSize: 96 }, rationale: "Large title" },
+              "date": { visible: true, priority: 3, anchor: "center-left", text: { maxLines: 1, targetFontSize: 40 }, rationale: "Date below" }
+            }
+          },
+          // 7. TikTok Vertical (1080×1920) - Extreme vertical
           {
             targetId: "tiktok-vertical",
             selectedId: "centered-stack",
             score: 0.84,
             suggestedLayoutMode: "VERTICAL",
             backgroundNodeId: "bg",
-            description: "Vertical format stacks content with safe zones for TikTok UI.",
-            feasibility: {
-              achievable: true,
-              requiresRestructure: false,
-              predictedFill: 0.65,
-              uniformScaleResult: "56% uniform scale would leave content clustered; vertical arrangement spreads elements"
-            },
+            description: "Vertical format with TikTok safe zones.",
+            feasibility: { achievable: true, requiresRestructure: false, predictedFill: 0.65, uniformScaleResult: "Vertical arrangement spreads elements" },
             positioning: {
-              "bg": { visible: true, priority: 10, anchor: "fill", constraints: { horizontal: "stretch", vertical: "stretch" }, rationale: "Background fills vertical frame" },
-              "logo": { visible: true, priority: 2, anchor: "top-center", offset: { top: 140, fromSafeArea: true }, size: { mode: "fixed", width: 200, height: 80 }, rationale: "Logo below TikTok status bar (108px safe zone)" },
-              "heading": { visible: true, priority: 1, anchor: "center", text: { maxLines: 3, minFontSize: 48, targetFontSize: 72, textAlign: "center" }, spacing: { before: 80 }, rationale: "Large centered title for vertical scroll-stopping impact" },
-              "date": { visible: true, priority: 3, anchor: "center", spacing: { before: 40 }, text: { maxLines: 1, minFontSize: 28, targetFontSize: 36, textAlign: "center" }, rationale: "Date below title in safe zone" }
+              "bg": { visible: true, priority: 10, anchor: "fill", rationale: "Background fills" },
+              "logo": { visible: true, priority: 2, anchor: "top-center", offset: { top: 180, fromSafeArea: true }, rationale: "Logo below TikTok status bar" },
+              "heading": { visible: true, priority: 1, anchor: "center", text: { maxLines: 3, targetFontSize: 72, textAlign: "center" }, rationale: "Centered title" },
+              "date": { visible: true, priority: 3, anchor: "center", text: { maxLines: 1, targetFontSize: 36, textAlign: "center" }, rationale: "Date in safe zone" }
+            }
+          },
+          // 8. YouTube Shorts (1080×1920) - Vertical
+          {
+            targetId: "youtube-shorts",
+            selectedId: "centered-stack",
+            score: 0.84,
+            suggestedLayoutMode: "VERTICAL",
+            backgroundNodeId: "bg",
+            description: "Vertical shorts format.",
+            feasibility: { achievable: true, requiresRestructure: false, predictedFill: 0.65, uniformScaleResult: "Vertical spread" },
+            positioning: {
+              "bg": { visible: true, priority: 10, anchor: "fill", rationale: "Background fills" },
+              "logo": { visible: true, priority: 2, anchor: "top-center", offset: { top: 160, fromSafeArea: true }, rationale: "Logo at top" },
+              "heading": { visible: true, priority: 1, anchor: "center", text: { maxLines: 3, targetFontSize: 72, textAlign: "center" }, rationale: "Centered title" },
+              "date": { visible: true, priority: 3, anchor: "center", text: { maxLines: 1, targetFontSize: 36, textAlign: "center" }, rationale: "Centered date" }
+            }
+          },
+          // 9. Instagram Reels (1080×1920) - Vertical
+          {
+            targetId: "instagram-reels",
+            selectedId: "centered-stack",
+            score: 0.84,
+            suggestedLayoutMode: "VERTICAL",
+            backgroundNodeId: "bg",
+            description: "Vertical reels format.",
+            feasibility: { achievable: true, requiresRestructure: false, predictedFill: 0.65, uniformScaleResult: "Vertical spread" },
+            positioning: {
+              "bg": { visible: true, priority: 10, anchor: "fill", rationale: "Background fills" },
+              "logo": { visible: true, priority: 2, anchor: "top-center", offset: { top: 160, fromSafeArea: true }, rationale: "Logo at top" },
+              "heading": { visible: true, priority: 1, anchor: "center", text: { maxLines: 3, targetFontSize: 72, textAlign: "center" }, rationale: "Centered title" },
+              "date": { visible: true, priority: 3, anchor: "center", text: { maxLines: 1, targetFontSize: 36, textAlign: "center" }, rationale: "Centered date" }
+            }
+          },
+          // 10. Gumroad Cover (1280×720) - Standard horizontal
+          {
+            targetId: "gumroad-cover",
+            selectedId: "split-left",
+            score: 0.87,
+            suggestedLayoutMode: "HORIZONTAL",
+            backgroundNodeId: "bg",
+            description: "Product cover with horizontal layout.",
+            feasibility: { achievable: true, requiresRestructure: false, predictedFill: 0.80, uniformScaleResult: "80% scale" },
+            positioning: {
+              "bg": { visible: true, priority: 10, anchor: "fill", rationale: "Background fills" },
+              "logo": { visible: true, priority: 2, anchor: "top-left", offset: { left: 60, top: 50, fromSafeArea: true }, rationale: "Logo top-left" },
+              "heading": { visible: true, priority: 1, anchor: "center-left", text: { maxLines: 2, targetFontSize: 56 }, rationale: "Title left" },
+              "date": { visible: true, priority: 3, anchor: "center-left", text: { maxLines: 1, targetFontSize: 22 }, rationale: "Date below" }
+            }
+          },
+          // 11. Gumroad Thumbnail (600×600) - Small square
+          {
+            targetId: "gumroad-thumbnail",
+            selectedId: "centered-stack",
+            score: 0.83,
+            suggestedLayoutMode: "VERTICAL",
+            backgroundNodeId: "bg",
+            description: "Small square thumbnail.",
+            feasibility: { achievable: true, requiresRestructure: true, predictedFill: 0.70, uniformScaleResult: "67% scale" },
+            positioning: {
+              "bg": { visible: true, priority: 10, anchor: "fill", rationale: "Background fills" },
+              "logo": { visible: true, priority: 2, anchor: "top-center", size: { mode: "fixed", width: 80, height: 32 }, rationale: "Small logo" },
+              "heading": { visible: true, priority: 1, anchor: "center", text: { maxLines: 2, targetFontSize: 36, textAlign: "center" }, rationale: "Centered title" },
+              "date": { visible: false, priority: 3, rationale: "Hidden for legibility" }
+            }
+          },
+          // 12. Facebook Cover (820×312) - Wide banner
+          {
+            targetId: "facebook-cover",
+            selectedId: "banner-spread",
+            score: 0.82,
+            suggestedLayoutMode: "HORIZONTAL",
+            backgroundNodeId: "bg",
+            description: "Wide Facebook cover banner.",
+            feasibility: { achievable: true, requiresRestructure: true, predictedFill: 0.72, uniformScaleResult: "35% scale, very wide" },
+            positioning: {
+              "bg": { visible: true, priority: 10, anchor: "fill", rationale: "Background fills" },
+              "logo": { visible: true, priority: 2, anchor: "center-left", offset: { left: 40, fromSafeArea: true }, rationale: "Logo left" },
+              "heading": { visible: true, priority: 1, anchor: "center", text: { maxLines: 1, targetFontSize: 32, textAlign: "center" }, rationale: "Centered title" },
+              "date": { visible: true, priority: 3, anchor: "center-right", text: { maxLines: 1, targetFontSize: 18 }, rationale: "Date right" }
+            }
+          },
+          // 13. Landscape Feed (1200×628) - Standard horizontal
+          {
+            targetId: "landscape-feed",
+            selectedId: "split-left",
+            score: 0.87,
+            suggestedLayoutMode: "HORIZONTAL",
+            backgroundNodeId: "bg",
+            description: "Feed image with horizontal layout.",
+            feasibility: { achievable: true, requiresRestructure: false, predictedFill: 0.78, uniformScaleResult: "70% scale" },
+            positioning: {
+              "bg": { visible: true, priority: 10, anchor: "fill", rationale: "Background fills" },
+              "logo": { visible: true, priority: 2, anchor: "top-left", offset: { left: 60, top: 50, fromSafeArea: true }, rationale: "Logo top-left" },
+              "heading": { visible: true, priority: 1, anchor: "center-left", text: { maxLines: 2, targetFontSize: 48 }, rationale: "Title left" },
+              "date": { visible: true, priority: 3, anchor: "center-left", text: { maxLines: 1, targetFontSize: 22 }, rationale: "Date below" }
+            }
+          },
+          // 14. YouTube Thumbnail (1280×720) - Standard horizontal
+          {
+            targetId: "youtube-thumbnail",
+            selectedId: "split-left",
+            score: 0.87,
+            suggestedLayoutMode: "HORIZONTAL",
+            backgroundNodeId: "bg",
+            description: "Video thumbnail with horizontal layout.",
+            feasibility: { achievable: true, requiresRestructure: false, predictedFill: 0.80, uniformScaleResult: "80% scale" },
+            positioning: {
+              "bg": { visible: true, priority: 10, anchor: "fill", rationale: "Background fills" },
+              "logo": { visible: true, priority: 2, anchor: "top-left", offset: { left: 60, top: 50, fromSafeArea: true }, rationale: "Logo top-left" },
+              "heading": { visible: true, priority: 1, anchor: "center-left", text: { maxLines: 2, targetFontSize: 56 }, rationale: "Title left" },
+              "date": { visible: true, priority: 3, anchor: "center-left", text: { maxLines: 1, targetFontSize: 22 }, rationale: "Date below" }
+            }
+          },
+          // 15. YouTube Video (1920×1080) - Standard 16:9
+          {
+            targetId: "youtube-video",
+            selectedId: "split-left",
+            score: 0.88,
+            suggestedLayoutMode: "HORIZONTAL",
+            backgroundNodeId: "bg",
+            description: "Standard video format.",
+            feasibility: { achievable: true, requiresRestructure: false, predictedFill: 0.85, uniformScaleResult: "120% scale" },
+            positioning: {
+              "bg": { visible: true, priority: 10, anchor: "fill", rationale: "Background fills" },
+              "logo": { visible: true, priority: 2, anchor: "top-left", offset: { left: 100, top: 80, fromSafeArea: true }, rationale: "Logo top-left" },
+              "heading": { visible: true, priority: 1, anchor: "center-left", text: { maxLines: 2, targetFontSize: 72 }, rationale: "Title left" },
+              "date": { visible: true, priority: 3, anchor: "center-left", text: { maxLines: 1, targetFontSize: 28 }, rationale: "Date below" }
+            }
+          },
+          // 16. Display Leaderboard (728×90) - Extreme horizontal, height < 115px
+          {
+            targetId: "display-leaderboard",
+            selectedId: "banner-spread",
+            score: 0.75,
+            suggestedLayoutMode: "HORIZONTAL",
+            backgroundNodeId: "bg",
+            description: "Extreme banner ad with single line text only.",
+            restructure: { drop: [], textTreatment: "single-line" },
+            feasibility: { achievable: true, requiresRestructure: true, predictedFill: 0.60, uniformScaleResult: "10% scale, extreme horizontal" },
+            positioning: {
+              "bg": { visible: true, priority: 10, anchor: "fill", rationale: "Background fills" },
+              "logo": { visible: true, priority: 2, anchor: "center-left", offset: { left: 20, fromSafeArea: true }, size: { mode: "fixed", width: 80, height: 40 }, rationale: "Small logo left" },
+              "heading": { visible: true, priority: 1, anchor: "center", text: { maxLines: 1, targetFontSize: 24, textAlign: "center" }, rationale: "Single line title - height < 115px" },
+              "date": { visible: false, priority: 3, rationale: "HIDDEN: Height < 115px requires single-line text only" }
+            }
+          },
+          // 17. Display Rectangle (300×250) - Small rectangle
+          {
+            targetId: "display-rectangle",
+            selectedId: "centered-stack",
+            score: 0.80,
+            suggestedLayoutMode: "VERTICAL",
+            backgroundNodeId: "bg",
+            description: "Small display ad with compact layout.",
+            feasibility: { achievable: true, requiresRestructure: true, predictedFill: 0.65, uniformScaleResult: "28% scale" },
+            positioning: {
+              "bg": { visible: true, priority: 10, anchor: "fill", rationale: "Background fills" },
+              "logo": { visible: true, priority: 2, anchor: "top-center", size: { mode: "fixed", width: 60, height: 24 }, rationale: "Small logo" },
+              "heading": { visible: true, priority: 1, anchor: "center", text: { maxLines: 2, targetFontSize: 20, textAlign: "center" }, rationale: "Compact centered title" },
+              "date": { visible: false, priority: 3, rationale: "Hidden for ad legibility" }
             }
           }
         ]

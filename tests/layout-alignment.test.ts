@@ -1,7 +1,12 @@
 /**
  * Characterization tests for alignment strategy logic.
- * These tests lock the current behavior of determineAlignments
- * before refactoring.
+ *
+ * FREESTYLE POSITIONING MODE:
+ * Pattern-based alignment lookups have been removed.
+ * Alignments are now determined by:
+ * 1. Preserving source alignments when layout mode is unchanged
+ * 2. Target profile heuristics (vertical targets center, horizontal use SPACE_BETWEEN)
+ * 3. Default centered approach
  */
 
 import { createLayoutAdaptationPlan } from "../core/auto-layout-adapter.js";
@@ -86,10 +91,10 @@ function createFrame(overrides: FrameOverrides = {}): FrameNode {
 }
 
 // ============================================================================
-// Alignment Strategy Tests
+// FREESTYLE MODE: Alignment Strategy Tests (pattern-based removed)
 // ============================================================================
 
-testCase("pattern-specific alignments from AI advice are honored (centered-stack)", () => {
+testCase("FREESTYLE: AI suggestedLayoutMode is honored", () => {
   const frame = createFrame({
     layoutMode: "HORIZONTAL",
     width: 1200,
@@ -98,9 +103,11 @@ testCase("pattern-specific alignments from AI advice are honored (centered-stack
 
   const layoutAdvice: LayoutAdviceEntry = {
     targetId: "tiktok-vertical",
-    selectedId: "centered-stack", // CENTER primary, CENTER counter
     suggestedLayoutMode: "VERTICAL",
-    options: []
+    options: [],
+    positioning: {
+      "child-1": { anchor: "center", visible: true }
+    }
   };
 
   const plan = createLayoutAdaptationPlan(
@@ -111,11 +118,10 @@ testCase("pattern-specific alignments from AI advice are honored (centered-stack
     { layoutAdvice }
   );
 
-  assert(plan.primaryAxisAlignItems === "CENTER", "centered-stack should use CENTER primary alignment");
-  assert(plan.counterAxisAlignItems === "CENTER", "centered-stack should use CENTER counter alignment");
+  assert(plan.layoutMode === "VERTICAL", "AI suggestedLayoutMode should be used");
 });
 
-testCase("pattern-specific alignments from AI advice are honored (banner-spread)", () => {
+testCase("FREESTYLE: horizontal AI advice produces horizontal layout", () => {
   const frame = createFrame({
     layoutMode: "VERTICAL",
     width: 800,
@@ -124,9 +130,11 @@ testCase("pattern-specific alignments from AI advice are honored (banner-spread)
 
   const layoutAdvice: LayoutAdviceEntry = {
     targetId: "web-hero",
-    selectedId: "banner-spread", // SPACE_BETWEEN primary, CENTER counter
     suggestedLayoutMode: "HORIZONTAL",
-    options: []
+    options: [],
+    positioning: {
+      "child-1": { anchor: "center-left", visible: true }
+    }
   };
 
   const plan = createLayoutAdaptationPlan(
@@ -137,8 +145,7 @@ testCase("pattern-specific alignments from AI advice are honored (banner-spread)
     { layoutAdvice }
   );
 
-  assert(plan.primaryAxisAlignItems === "SPACE_BETWEEN", "banner-spread should use SPACE_BETWEEN primary");
-  assert(plan.counterAxisAlignItems === "CENTER", "banner-spread should use CENTER counter");
+  assert(plan.layoutMode === "HORIZONTAL", "AI HORIZONTAL layoutMode should be honored");
 });
 
 testCase("vertical layout in vertical target centers content", () => {
@@ -246,7 +253,7 @@ testCase("mixed scenario defaults to CENTER/CENTER", () => {
   assert(plan.counterAxisAlignItems === "CENTER", "mixed scenario should center on counter axis");
 });
 
-testCase("hero-first pattern uses MIN primary alignment", () => {
+testCase("FREESTYLE: vertical target defaults to CENTER primary alignment", () => {
   const frame = createFrame({
     layoutMode: "HORIZONTAL",
     width: 1200,
@@ -255,9 +262,11 @@ testCase("hero-first pattern uses MIN primary alignment", () => {
 
   const layoutAdvice: LayoutAdviceEntry = {
     targetId: "tiktok-vertical",
-    selectedId: "hero-first", // MIN primary
     suggestedLayoutMode: "VERTICAL",
-    options: []
+    options: [],
+    positioning: {
+      "child-1": { anchor: "center", visible: true }
+    }
   };
 
   const plan = createLayoutAdaptationPlan(
@@ -268,8 +277,9 @@ testCase("hero-first pattern uses MIN primary alignment", () => {
     { layoutAdvice }
   );
 
-  // hero-first uses MIN for primary alignment (content at top)
-  assert(plan.primaryAxisAlignItems === "MIN", "hero-first should use MIN primary alignment");
+  // In FREESTYLE mode, vertical layouts default to CENTER
+  // (pattern-based alignment lookup has been removed)
+  assert(plan.primaryAxisAlignItems === "CENTER", "vertical target should default to CENTER primary alignment");
 });
 
 console.log("\n✅ All alignment strategy tests passed\n");

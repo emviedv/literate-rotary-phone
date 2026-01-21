@@ -5,6 +5,8 @@
  * It receives "hard facts" from the vision analysis phase and uses them as
  * immutable constraints for layout decisions.
  *
+ * FREESTYLE POSITIONING MODE:
+ * AI provides per-node positioning directly - no pattern abstraction.
  * The key innovation: face regions are GIVEN to this prompt, not detected by it.
  * This prevents the layout reasoning from "hallucinating away" inconvenient faces.
  */
@@ -19,52 +21,60 @@ import { PLUGIN_NAME } from "./plugin-constants.js";
 export function buildLayoutPromptWithFacts(facts: VisionFacts): string {
   const faceSummary = formatFaceFactsForPrompt(facts);
 
-  return `You are the ${PLUGIN_NAME} Layout Engineer. You receive VERIFIED visual facts and produce layout recommendations.
+  return `You are the ${PLUGIN_NAME} Layout Engineer. You receive VERIFIED visual facts and produce FREESTYLE positioning recommendations.
 
 ## IMMUTABLE VISUAL FACTS (Pre-verified - DO NOT question or override)
 ${faceSummary}
 
 ## YOUR MISSION
-Using the verified facts above, generate layout recommendations for 17 target formats.
-Your job is LAYOUT REASONING, not visual analysis - that has already been done.
+Using the verified facts above, generate FREESTYLE positioning for ALL 17 target formats.
+**CRITICAL: Your response MUST contain exactly 17 layoutAdvice entries - one per target. Each entry MUST have positioning for EVERY visible node.**
 
-## 1. THE REPULSION LAW (Mandatory)
+## 1. FREESTYLE POSITIONING (Per-Node Decisions)
+For EACH target, provide explicit positioning for EVERY visible node:
+- **anchor:** 9-point grid (top-left, top-center, top-right, center-left, center, center-right, bottom-left, bottom-center, bottom-right, fill)
+- **visible:** Show (true) or hide (false) this node for this target
+- **offset:** Pixel offsets from anchor point or safe area
+- **text:** For text nodes: targetFontSize, maxLines, textAlign
+- **rationale:** MUST start with "Face at [X,Y]." or "No face." then explain positioning
+
+## 2. THE REPULSION LAW (Mandatory)
 The subject occupancy fact above is a PHYSICAL WALL. Typography is REPELLED from it.
 ${facts.subjectOccupancy === "left" ? "- Subject is LEFT: All text MUST anchor RIGHT (center-right, top-right, bottom-right)" :
   facts.subjectOccupancy === "right" ? "- Subject is RIGHT: All text MUST anchor LEFT (center-left, top-left, bottom-left)" :
   facts.subjectOccupancy === "center" ? "- Subject is CENTER: Text MUST be TOP or BOTTOM with 20% offset from center" :
   "- No subject detected: Use standard centered layouts"}
 
-## 2. FACE EXCLUSION ZONES (Mandatory)
+## 3. FACE EXCLUSION ZONES (Mandatory)
 ${facts.faceRegions.length > 0
     ? `You have ${facts.faceRegions.length} verified face region(s). For EVERY target:
 - Calculate if text box would overlap any face region
-- If overlap > 0%: Nudge text to achieve 0% overlap
+- If overlap > 0%: Nudge text anchor to achieve 0% overlap
 - The rationale MUST state: "Face at [X,Y]. Text anchored to [opposite side]."
 - NEVER position text such that its bounding box intersects face bounds`
     : "No faces detected. Standard layout rules apply."}
 
-## 3. DIMENSIONAL VETOES (Height-based rules)
+## 4. DIMENSIONAL VETOES (Height-based rules)
 | Target Height | Subject Rule | Text Rule |
 | :--- | :--- | :--- |
-| **< 110px** | HIDE subject (visible: false) | Max 1 line, textTreatment: "single-line" |
-| **110-350px** | SIDE-ANCHOR only | Max 2 lines, no center overlays |
+| **< 115px** | visible: false (Always hide photos) | Max 1 line, textTreatment: "single-line" |
+| **115px - 350px** | SIDE-ANCHOR only | Max 2 lines, no center overlays |
 | **> 350px** | Normal positioning | Full text stack allowed |
 
-## 4. TOPOLOGY MANDATES (Aspect Ratio Rules)
+## 5. TOPOLOGY MANDATES (Aspect Ratio Rules)
 - **Extreme Vertical (Ratio < 0.6):** MUST use \`suggestedLayoutMode: "VERTICAL"\`. (TikTok/Reels)
 - **Extreme Horizontal (Ratio > 2.0):** MUST use \`suggestedLayoutMode: "HORIZONTAL"\`. (Web Banners)
 - **Square/Standard:** Use best fit for content.
 
-## 5. ANCHORED MEMORY PROTOCOL
-For EVERY one of the 17 target entries, your rationale MUST begin with:
+## 6. ANCHORED MEMORY PROTOCOL
+For EVERY one of the 17 target entries, your positioning rationale MUST begin with:
 "${facts.faceRegions.length > 0
     ? `Face at [${facts.faceRegions[0]?.x.toFixed(2)}, ${facts.faceRegions[0]?.y.toFixed(2)}]. `
     : "No face detected. "}"
 
 This forces you to re-calculate spatial logic for each target.
 
-## 6. OUTPUT SCHEMA
+## 7. OUTPUT SCHEMA
 Exactly 17 entries. Use the verified facts above - do not re-detect them.
 
 \`\`\`json
@@ -85,14 +95,15 @@ Exactly 17 entries. Use the verified facts above - do not re-detect them.
   "layoutAdvice": {
     "entries": [{
       "targetId": "string",
-      "selectedId": "split-left"|"split-right"|"centered-stack"|"banner-spread",
       "suggestedLayoutMode": "HORIZONTAL"|"VERTICAL"|"NONE",
       "restructure": { "drop": ["nodeId"], "textTreatment": "single-line"|"wrap" },
       "positioning": {
         "NODE_ID": {
           "visible": boolean,
           "anchor": "top-left"|"center-right"|"bottom-center"|etc,
-          "rationale": "${facts.faceRegions.length > 0 ? "Face at [X,Y]. " : ""}[explain positioning]"
+          "offset": { "top": number, "left": number, "fromSafeArea": boolean },
+          "text": { "targetFontSize": number, "maxLines": number, "textAlign": "left"|"center" },
+          "rationale": "${facts.faceRegions.length > 0 ? "Face at [X,Y]. " : "No face. "}[explain positioning]"
         }
       }
     }]
@@ -102,10 +113,12 @@ Exactly 17 entries. Use the verified facts above - do not re-detect them.
 
 ## VERIFICATION CHECKLIST (Before outputting)
 1. ✓ Did I use the GIVEN face regions (not re-detect them)?
-2. ✓ Does EVERY rationale mention the face/subject location?
+2. ✓ Does EVERY positioning rationale mention the face/subject location?
 3. ✓ Is text ALWAYS on the opposite side from the subject?
-4. ✓ Are subjects hidden for targets < 110px tall?
-5. ✓ Do I have exactly 17 entries?`;
+4. ✓ Are subjects hidden for targets < 115px tall?
+5. ✓ Do I have EXACTLY 17 entries?
+6. ✓ Does EVERY entry have positioning for EVERY visible node?
+7. ✓ Did I include suggestedLayoutMode for each entry?`;
 }
 
 /**
@@ -156,7 +169,8 @@ ${facts.faceRegions.map((f, i) =>
     `Face ${i + 1}: center (${f.x.toFixed(2)}, ${f.y.toFixed(2)}), size ${(f.width * 100).toFixed(0)}%x${(f.height * 100).toFixed(0)}%`
   ).join("\n")}
 
-Please generate layout recommendations for all 17 targets using these verified facts.`;
+Please generate FREESTYLE positioning recommendations for all 17 targets using these verified facts.
+REMINDER: Each target entry MUST include positioning for EVERY visible node.`;
 }
 
 /**

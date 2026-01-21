@@ -1,5 +1,9 @@
 import { debugAutoLayoutLog } from "./debug.js";
-import type { LayoutAdviceEntry } from "../types/layout-advice.js";
+import type {
+  LayoutAdviceEntry,
+  ElementPositioning,
+  AnchorRegion
+} from "../types/layout-advice.js";
 import {
   hasTextChildren,
   hasImageChildren,
@@ -14,11 +18,24 @@ import {
 } from "./layout-mode-resolver.js";
 import { determineAlignments } from "./layout-alignment.js";
 import { calculateSpacing, calculatePaddingAdjustments } from "./layout-spacing.js";
-import { type ChildAdaptation, createChildAdaptations } from "./child-adaptations.js";
 
 /**
  * Auto Layout Adapter - Intelligently restructures auto layouts for different target formats
- * This ensures layouts don't break and adapt properly to extreme aspect ratio changes
+ *
+ * FREESTYLE POSITIONING MODE:
+ * This module now operates in "full freestyle" mode where the AI provides
+ * per-node positioning directly via the `positioning` map. Pattern-based
+ * child adaptations have been removed - AI decisions are trusted directly.
+ *
+ * When AI positioning is available, children are positioned using:
+ * - anchor: 9-point grid positioning
+ * - offset: edge offsets with safe area awareness
+ * - size: fixed/percentage sizing
+ * - text: maxLines, minFontSize, textAlign
+ * - visible: show/hide nodes
+ *
+ * When AI positioning is NOT available (fallback), children use scaled
+ * source positioning without deterministic restructuring.
  */
 
 export interface LayoutAdaptationPlan {
@@ -37,11 +54,7 @@ export interface LayoutAdaptationPlan {
     bottom: number;
     left: number;
   };
-  childAdaptations: Map<string, ChildAdaptation>;
 }
-
-// Re-export ChildAdaptation for consumers
-export type { ChildAdaptation } from "./child-adaptations.js";
 
 
 /**
@@ -148,8 +161,8 @@ export function createLayoutAdaptationPlan(
   // Calculate padding adjustments
   const padding = calculatePaddingAdjustments(frame, newLayoutMode, context);
 
-  // Create child-specific adaptations
-  const childAdaptations = createChildAdaptations(frame, newLayoutMode, context);
+  // FREESTYLE MODE: Child adaptations are now handled by AI positioning map
+  // No deterministic child-specific adaptations are created here
 
   const plan: LayoutAdaptationPlan = {
     layoutMode: newLayoutMode,
@@ -160,11 +173,10 @@ export function createLayoutAdaptationPlan(
     layoutWrap: wrapBehavior,
     itemSpacing: spacing.item,
     counterAxisSpacing: spacing.counter,
-    paddingAdjustments: padding,
-    childAdaptations
+    paddingAdjustments: padding
   };
 
-  debugAutoLayoutLog("layout adaptation plan summary", {
+  debugAutoLayoutLog("layout adaptation plan summary (FREESTYLE)", {
     targetType: context.targetProfile.type,
     adoptVerticalVariant: context.adoptVerticalVariant,
     targetSize: `${context.targetProfile.width}x${context.targetProfile.height}`,
@@ -188,7 +200,7 @@ export function createLayoutAdaptationPlan(
     layoutWrap: plan.layoutWrap,
     itemSpacing: plan.itemSpacing,
     paddingAdjustments: plan.paddingAdjustments,
-    childAdaptations: { count: childAdaptations.size }
+    hasAiPositioning: !!(options?.layoutAdvice?.positioning)
   });
 
   return plan;
@@ -196,9 +208,15 @@ export function createLayoutAdaptationPlan(
 
 /**
  * Applies the adaptation plan to a frame
+ *
+ * FREESTYLE POSITIONING MODE:
+ * - If AI positioning map is available, use it for per-node decisions
+ * - If AI positioning is missing, apply frame-level layout only (scale-only fallback)
+ * - No deterministic child adaptations are applied
+ *
  * @param frame The frame to adapt
  * @param plan The layout adaptation plan
- * @param layoutAdvice Optional AI layout advice containing restructure instructions
+ * @param layoutAdvice Optional AI layout advice containing positioning instructions
  */
 export function applyLayoutAdaptation(
   frame: FrameNode,
@@ -210,7 +228,7 @@ export function applyLayoutAdaptation(
     hideDroppedElements(frame, layoutAdvice.restructure.drop);
   }
 
-  // Apply main layout properties
+  // Apply main layout properties (frame-level)
   frame.layoutMode = plan.layoutMode;
 
   if (plan.layoutMode !== "NONE") {
@@ -225,37 +243,313 @@ export function applyLayoutAdaptation(
       frame.counterAxisSpacing = plan.counterAxisSpacing;
     }
 
-    // Apply padding
     frame.paddingTop = plan.paddingAdjustments.top;
     frame.paddingRight = plan.paddingAdjustments.right;
     frame.paddingBottom = plan.paddingAdjustments.bottom;
     frame.paddingLeft = plan.paddingAdjustments.left;
+  }
 
-    // Apply child adaptations (skip hidden children)
-    frame.children.forEach(child => {
-      // Skip hidden children
-      if ("visible" in child && !child.visible) {
-        return;
-      }
+  // ============================================================================
+  // FREESTYLE MODE: Apply AI per-node positioning if available
+  // ============================================================================
+  if (layoutAdvice?.positioning && Object.keys(layoutAdvice.positioning).length > 0) {
+    debugAutoLayoutLog("applyLayoutAdaptation: FREESTYLE MODE - using AI positioning map", {
+      frameId: frame.id,
+      frameName: frame.name,
+      positioningEntries: Object.keys(layoutAdvice.positioning).length,
+      targetId: layoutAdvice.targetId
+    });
 
-      const adaptation = plan.childAdaptations.get(child.id);
-      if (adaptation) {
-        if ("layoutPositioning" in child && adaptation.layoutPositioning) {
-          child.layoutPositioning = adaptation.layoutPositioning;
-        }
-        if ("layoutAlign" in child && adaptation.layoutAlign) {
-          child.layoutAlign = adaptation.layoutAlign;
-        }
-        if ("layoutGrow" in child && adaptation.layoutGrow !== undefined) {
-          child.layoutGrow = adaptation.layoutGrow;
-        }
-        if (child.type === "TEXT" && adaptation.textAlignHorizontal) {
-          (child as TextNode).textAlignHorizontal = adaptation.textAlignHorizontal;
-        }
-      }
+    applyAiPositioningToChildren(frame, layoutAdvice.positioning);
+  } else {
+    // SCALE-ONLY FALLBACK: No AI positioning available
+    // Children retain their source positioning (scaled proportionally)
+    debugAutoLayoutLog("applyLayoutAdaptation: SCALE-ONLY FALLBACK - no AI positioning", {
+      frameId: frame.id,
+      frameName: frame.name,
+      targetId: layoutAdvice?.targetId ?? "unknown",
+      reason: "AI positioning map is empty or missing"
     });
   }
 }
+
+// ============================================================================
+// AI POSITIONING APPLICATION (AI-ONLY MODE)
+// ============================================================================
+
+/**
+ * Applies AI positioning directives to a child node.
+ * This is the core of AI-ONLY mode - trusting AI's per-node positioning.
+ *
+ * @param child - The child node to position
+ * @param positioning - AI's positioning directive for this node
+ * @param frameWidth - Parent frame width for calculating positions
+ * @param frameHeight - Parent frame height for calculating positions
+ */
+function applyAiPositioning(
+  child: SceneNode,
+  positioning: ElementPositioning,
+  frameWidth: number,
+  frameHeight: number
+): void {
+  // Handle visibility first
+  if (positioning.visible === false && "visible" in child) {
+    child.visible = false;
+    debugAutoLayoutLog("AI positioning: hiding node", {
+      nodeId: child.id,
+      nodeName: child.name,
+      reason: positioning.rationale ?? "AI marked as not visible"
+    });
+    return; // Don't position hidden nodes
+  }
+
+  // Apply anchor-based positioning for ABSOLUTE positioned nodes
+  if ("layoutPositioning" in child && child.layoutPositioning === "ABSOLUTE") {
+    const childWidth = "width" in child ? (child as { width: number }).width : 0;
+    const childHeight = "height" in child ? (child as { height: number }).height : 0;
+
+    const { x, y } = calculatePositionFromAnchor(
+      positioning.anchor,
+      frameWidth,
+      frameHeight,
+      childWidth,
+      childHeight,
+      positioning.offset
+    );
+
+    if ("x" in child && "y" in child) {
+      (child as SceneNode & { x: number; y: number }).x = Math.round(x);
+      (child as SceneNode & { y: number }).y = Math.round(y);
+
+      debugAutoLayoutLog("AI positioning: positioned absolute node", {
+        nodeId: child.id,
+        nodeName: child.name,
+        anchor: positioning.anchor,
+        offset: positioning.offset,
+        position: { x: Math.round(x), y: Math.round(y) }
+      });
+    }
+  }
+
+  // Apply size directives if specified
+  if (positioning.size && "resize" in child) {
+    const resizable = child as SceneNode & { resize: (width: number, height: number) => void };
+    if (positioning.size.mode === "fixed" && positioning.size.width && positioning.size.height) {
+      resizable.resize(positioning.size.width, positioning.size.height);
+      debugAutoLayoutLog("AI positioning: applied fixed size", {
+        nodeId: child.id,
+        nodeName: child.name,
+        size: { width: positioning.size.width, height: positioning.size.height }
+      });
+    }
+  }
+
+  // Apply text directives for TEXT nodes
+  if (child.type === "TEXT" && positioning.text) {
+    const textNode = child as TextNode;
+    const textDirective = positioning.text;
+
+    // Apply text alignment if specified
+    if (textDirective.textAlign) {
+      const alignMap: Record<string, "LEFT" | "CENTER" | "RIGHT" | "JUSTIFIED"> = {
+        "left": "LEFT",
+        "center": "CENTER",
+        "right": "RIGHT",
+        "justify": "JUSTIFIED"
+      };
+      if (alignMap[textDirective.textAlign]) {
+        textNode.textAlignHorizontal = alignMap[textDirective.textAlign];
+      }
+    }
+
+    debugAutoLayoutLog("AI positioning: applied text directives", {
+      nodeId: child.id,
+      nodeName: child.name,
+      textAlign: textDirective.textAlign,
+      maxLines: textDirective.maxLines,
+      minFontSize: textDirective.minFontSize
+    });
+  }
+
+  // Apply layout alignment for flow children
+  if ("layoutAlign" in child && positioning.containerAlignment) {
+    const alignMap: Record<string, "INHERIT" | "STRETCH" | "MIN" | "CENTER" | "MAX"> = {
+      "start": "MIN",
+      "center": "CENTER",
+      "end": "MAX",
+      "stretch": "STRETCH"
+    };
+
+    if (positioning.containerAlignment.counter && alignMap[positioning.containerAlignment.counter]) {
+      (child as SceneNode & { layoutAlign: "INHERIT" | "STRETCH" | "MIN" | "CENTER" | "MAX" }).layoutAlign = alignMap[positioning.containerAlignment.counter];
+    }
+
+    // Apply layout grow
+    if ("layoutGrow" in child && positioning.containerAlignment.grow !== undefined) {
+      (child as SceneNode & { layoutGrow: number }).layoutGrow = positioning.containerAlignment.grow;
+    }
+
+    debugAutoLayoutLog("AI positioning: applied container alignment", {
+      nodeId: child.id,
+      nodeName: child.name,
+      alignment: positioning.containerAlignment
+    });
+  }
+}
+
+/**
+ * Calculates x/y position from an anchor region and optional offset.
+ */
+function calculatePositionFromAnchor(
+  anchor: AnchorRegion,
+  frameWidth: number,
+  frameHeight: number,
+  childWidth: number,
+  childHeight: number,
+  offset?: ElementPositioning["offset"]
+): { x: number; y: number } {
+  let x = 0;
+  let y = 0;
+
+  // Calculate base position from anchor
+  switch (anchor) {
+    case "top-left":
+      x = 0;
+      y = 0;
+      break;
+    case "top-center":
+      x = (frameWidth - childWidth) / 2;
+      y = 0;
+      break;
+    case "top-right":
+      x = frameWidth - childWidth;
+      y = 0;
+      break;
+    case "center-left":
+      x = 0;
+      y = (frameHeight - childHeight) / 2;
+      break;
+    case "center":
+      x = (frameWidth - childWidth) / 2;
+      y = (frameHeight - childHeight) / 2;
+      break;
+    case "center-right":
+      x = frameWidth - childWidth;
+      y = (frameHeight - childHeight) / 2;
+      break;
+    case "bottom-left":
+      x = 0;
+      y = frameHeight - childHeight;
+      break;
+    case "bottom-center":
+      x = (frameWidth - childWidth) / 2;
+      y = frameHeight - childHeight;
+      break;
+    case "bottom-right":
+      x = frameWidth - childWidth;
+      y = frameHeight - childHeight;
+      break;
+    case "fill":
+      // Fill means position at 0,0 and stretch to fill (size would be handled separately)
+      x = 0;
+      y = 0;
+      break;
+  }
+
+  // Apply offsets if provided
+  if (offset) {
+    if (offset.left !== undefined) x += offset.left;
+    if (offset.right !== undefined) x -= offset.right;
+    if (offset.top !== undefined) y += offset.top;
+    if (offset.bottom !== undefined) y -= offset.bottom;
+  }
+
+  return { x, y };
+}
+
+/**
+ * Applies AI positioning to all children of a frame using the positioning map.
+ *
+ * FREESTYLE MODE: This function is the core of freestyle positioning.
+ * It validates coverage and logs warnings when nodes are missing from the map.
+ *
+ * @param frame - The frame whose children to position
+ * @param positioningMap - AI's per-node positioning directives
+ */
+function applyAiPositioningToChildren(
+  frame: FrameNode,
+  positioningMap: Record<string, ElementPositioning>
+): void {
+  const visibleChildren = frame.children.filter(c => "visible" in c && c.visible);
+  const positionedCount = { found: 0, missing: 0 };
+  const missingChildren: string[] = [];
+
+  debugAutoLayoutLog("AI positioning: applying positioning map to children (FREESTYLE)", {
+    frameId: frame.id,
+    frameName: frame.name,
+    positioningEntries: Object.keys(positioningMap).length,
+    visibleChildCount: visibleChildren.length,
+    totalChildCount: frame.children.length
+  });
+
+  for (const child of frame.children) {
+    // Skip hidden children - they don't need positioning
+    if ("visible" in child && !child.visible) {
+      continue;
+    }
+
+    // Try to find positioning by ID first, then by name, then lowercase name
+    let positioning = positioningMap[child.id];
+    if (!positioning) {
+      positioning = positioningMap[child.name];
+    }
+    if (!positioning) {
+      positioning = positioningMap[child.name.toLowerCase()];
+    }
+
+    if (positioning) {
+      applyAiPositioning(child, positioning, frame.width, frame.height);
+      positionedCount.found++;
+    } else {
+      positionedCount.missing++;
+      missingChildren.push(child.name || child.id);
+      debugAutoLayoutLog("AI positioning: no directive found for child (FREESTYLE FALLBACK)", {
+        nodeId: child.id,
+        nodeName: child.name,
+        childType: child.type,
+        availableKeys: Object.keys(positioningMap).slice(0, 10)
+      });
+    }
+  }
+
+  // Log positioning coverage summary
+  const coveragePercent = visibleChildren.length > 0
+    ? Math.round((positionedCount.found / visibleChildren.length) * 100)
+    : 100;
+
+  debugAutoLayoutLog("AI positioning: coverage summary (FREESTYLE)", {
+    frameId: frame.id,
+    frameName: frame.name,
+    coverage: `${coveragePercent}%`,
+    positioned: positionedCount.found,
+    missing: positionedCount.missing,
+    missingNodes: missingChildren.length > 0 ? missingChildren.slice(0, 5) : "none"
+  });
+
+  // Warn if coverage is incomplete
+  if (positionedCount.missing > 0) {
+    debugAutoLayoutLog("AI positioning: INCOMPLETE COVERAGE WARNING", {
+      frameId: frame.id,
+      missingCount: positionedCount.missing,
+      missingNodes: missingChildren,
+      recommendation: "Missing nodes will retain scaled source positioning"
+    });
+  }
+}
+
+// ============================================================================
+// END AI POSITIONING APPLICATION
+// ============================================================================
 
 /**
  * Hides elements that AI determined won't fit in target dimensions.

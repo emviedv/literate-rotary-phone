@@ -1,7 +1,9 @@
 /**
  * Characterization tests for layout detection helper functions.
- * These tests lock the current behavior of isBackgroundLike,
- * isComponentLikeFrame, countFlowChildren, and related utilities.
+ *
+ * FREESTYLE POSITIONING MODE:
+ * Child adaptations have been removed - AI positioning maps handle per-node decisions.
+ * Tests now focus on frame-level layout behavior and flow child counting.
  */
 
 import { createLayoutAdaptationPlan } from "../core/auto-layout-adapter.js";
@@ -92,11 +94,10 @@ function createFrame(overrides: FrameOverrides = {}): FrameNode {
 }
 
 // ============================================================================
-// Background Detection Tests (via childAdaptations behavior)
+// FREESTYLE MODE: Plan Structure Tests (childAdaptations removed)
 // ============================================================================
 
-testCase("background-like element with high area coverage becomes ABSOLUTE", () => {
-  // Create a background that covers 90%+ of the frame
+testCase("FREESTYLE: plan has no childAdaptations field", () => {
   const bgChild = createChild({
     id: "bg-layer",
     type: "RECTANGLE",
@@ -108,44 +109,6 @@ testCase("background-like element with high area coverage becomes ABSOLUTE", () 
 
   const textChild = createChild({
     id: "text-1",
-    type: "TEXT",
-    width: 200,
-    height: 50
-  });
-
-  const frame = createFrame({
-    width: 800,
-    height: 600,
-    layoutMode: "VERTICAL",
-    children: [textChild, bgChild] // bg is bottom layer (last in children array)
-  });
-
-  const plan = createLayoutAdaptationPlan(
-    frame,
-    { width: 1080, height: 1920 },
-    "vertical",
-    1
-  );
-
-  const bgAdaptation = plan.childAdaptations.get("bg-layer");
-  assert(
-    bgAdaptation?.layoutPositioning === "ABSOLUTE",
-    "background-like layer should be positioned ABSOLUTE"
-  );
-});
-
-testCase("element with background in name becomes ABSOLUTE", () => {
-  const bgChild = createChild({
-    id: "hero-bg",
-    type: "RECTANGLE",
-    name: "hero-background",
-    width: 780, // 97.5% coverage
-    height: 580,
-    fills: []
-  });
-
-  const textChild = createChild({
-    id: "text-content",
     type: "TEXT",
     width: 200,
     height: 50
@@ -160,118 +123,19 @@ testCase("element with background in name becomes ABSOLUTE", () => {
 
   const plan = createLayoutAdaptationPlan(
     frame,
-    { width: 1080, height: 1080 },
-    "square",
-    1
-  );
-
-  const bgAdaptation = plan.childAdaptations.get("hero-bg");
-  assert(
-    bgAdaptation?.layoutPositioning === "ABSOLUTE",
-    "element with 'background' in name should be ABSOLUTE"
-  );
-});
-
-testCase("small element does not become ABSOLUTE even with image fill", () => {
-  const smallImage = createChild({
-    id: "small-img",
-    type: "RECTANGLE",
-    width: 100, // Only 12.5% of 800
-    height: 100,
-    fills: [{ type: "IMAGE" } as Paint]
-  });
-
-  const textChild = createChild({
-    id: "text-1",
-    type: "TEXT",
-    width: 200,
-    height: 50
-  });
-
-  const frame = createFrame({
-    width: 800,
-    height: 600,
-    layoutMode: "HORIZONTAL",
-    children: [smallImage, textChild]
-  });
-
-  const plan = createLayoutAdaptationPlan(
-    frame,
-    { width: 1920, height: 960 },
-    "horizontal",
-    1
-  );
-
-  const imgAdaptation = plan.childAdaptations.get("small-img");
-  assert(
-    imgAdaptation?.layoutPositioning !== "ABSOLUTE",
-    "small image should not be positioned ABSOLUTE"
-  );
-});
-
-testCase("AI backgroundNodeId overrides heuristic background detection", () => {
-  // Even though bg-layer looks like a background, AI says specific-bg is the background
-  const bgLayer = createChild({
-    id: "bg-layer",
-    type: "RECTANGLE",
-    name: "background",
-    width: 800,
-    height: 600,
-    fills: [{ type: "IMAGE" } as Paint]
-  });
-
-  const specificBg = createChild({
-    id: "specific-bg",
-    type: "RECTANGLE",
-    width: 400,
-    height: 300
-  });
-
-  const textChild = createChild({
-    id: "text-1",
-    type: "TEXT",
-    width: 200,
-    height: 50
-  });
-
-  const frame = createFrame({
-    width: 800,
-    height: 600,
-    layoutMode: "VERTICAL",
-    children: [textChild, specificBg, bgLayer]
-  });
-
-  const plan = createLayoutAdaptationPlan(
-    frame,
     { width: 1080, height: 1920 },
     "vertical",
-    1,
-    {
-      layoutAdvice: {
-        targetId: "tiktok-vertical",
-        selectedId: "layered-hero",
-        backgroundNodeId: "specific-bg",
-        options: []
-      }
-    }
+    1
   );
 
-  const specificBgAdaptation = plan.childAdaptations.get("specific-bg");
   assert(
-    specificBgAdaptation?.layoutPositioning === "ABSOLUTE",
-    "AI-specified background should be ABSOLUTE"
-  );
-
-  // The heuristic-detected bg-layer should NOT be made absolute when AI specifies another
-  const bgLayerAdaptation = plan.childAdaptations.get("bg-layer");
-  assert(
-    bgLayerAdaptation?.layoutPositioning !== "ABSOLUTE",
-    "heuristic background should not be ABSOLUTE when AI specifies different node"
+    !("childAdaptations" in plan),
+    "FREESTYLE mode should not have childAdaptations - AI handles per-node positioning"
   );
 });
 
 // ============================================================================
-// Component-like Frame Detection Tests (via adaptNestedFrames behavior)
+// Flow Children Count Tests (affects spacing distribution)
 // ============================================================================
 
 testCase("flow children count excludes invisible children", () => {
@@ -344,74 +208,49 @@ testCase("flow children count excludes ABSOLUTE positioned children", () => {
 });
 
 // ============================================================================
-// Edge Element Handling Tests
+// Frame-Level Layout Mode Tests
 // ============================================================================
 
-testCase("edge elements in extreme formats get layoutGrow=0", () => {
-  const firstChild = createChild({
-    id: "first",
-    width: 100,
-    height: 50
-  });
-
-  const middleChild = createChild({
-    id: "middle",
-    width: 100,
-    height: 50
-  });
-
-  const lastChild = createChild({
-    id: "last",
-    width: 100,
-    height: 50
-  });
-
+testCase("FREESTYLE: layout mode is determined by target profile", () => {
   const frame = createFrame({
-    layoutMode: "VERTICAL",
-    width: 400,
-    height: 800,
-    children: [firstChild, middleChild, lastChild]
+    layoutMode: "HORIZONTAL",
+    width: 800,
+    height: 600
   });
 
-  const plan = createLayoutAdaptationPlan(
+  // Vertical target
+  const verticalPlan = createLayoutAdaptationPlan(
     frame,
-    { width: 1080, height: 1920 }, // aspectRatio = 0.5625 < 0.5 threshold
+    { width: 1080, height: 1920 },
     "vertical",
+    1,
+    { adoptVerticalVariant: true }
+  );
+
+  assert(
+    verticalPlan.layoutMode === "VERTICAL",
+    "vertical target with adoptVerticalVariant should result in VERTICAL layoutMode"
+  );
+
+  // Horizontal target
+  const horizontalPlan = createLayoutAdaptationPlan(
+    frame,
+    { width: 1920, height: 960 },
+    "horizontal",
     1
   );
 
-  const firstAdaptation = plan.childAdaptations.get("first");
-  const lastAdaptation = plan.childAdaptations.get("last");
-
-  // Edge elements in extreme aspect ratios should not expand excessively
-  if (firstAdaptation) {
-    assert(
-      firstAdaptation.layoutGrow === 0 || firstAdaptation.layoutGrow === undefined,
-      "first child should have layoutGrow=0 in extreme format"
-    );
-  }
-  if (lastAdaptation) {
-    assert(
-      lastAdaptation.layoutGrow === 0 || lastAdaptation.layoutGrow === undefined,
-      "last child should have layoutGrow=0 in extreme format"
-    );
-  }
+  assert(
+    horizontalPlan.layoutMode === "HORIZONTAL",
+    "horizontal target should preserve HORIZONTAL layoutMode"
+  );
 });
 
-// ============================================================================
-// Image Content Detection Tests
-// ============================================================================
-
-testCase("image children are detected via fill type", () => {
-  const imageChild = createChild({
-    id: "hero-image",
-    type: "RECTANGLE",
-    fills: [{ type: "IMAGE" } as Paint]
-  });
-
+testCase("FREESTYLE: AI layoutAdvice can override layout mode", () => {
   const frame = createFrame({
     layoutMode: "HORIZONTAL",
-    children: [imageChild, createChild({ id: "text" })]
+    width: 800,
+    height: 600
   });
 
   const plan = createLayoutAdaptationPlan(
@@ -419,43 +258,66 @@ testCase("image children are detected via fill type", () => {
     { width: 1080, height: 1920 },
     "vertical",
     1,
-    { adoptVerticalVariant: true }
+    {
+      layoutAdvice: {
+        targetId: "tiktok-vertical",
+        suggestedLayoutMode: "VERTICAL",
+        options: [],
+        positioning: {
+          "child-1": { anchor: "center", visible: true }
+        }
+      }
+    }
   );
 
-  const imageAdaptation = plan.childAdaptations.get("hero-image");
-  // Image children should get INHERIT alignment to prevent stretching
   assert(
-    imageAdaptation?.layoutAlign === "INHERIT" || imageAdaptation?.layoutAlign === undefined,
-    "image children should not stretch"
+    plan.layoutMode === "VERTICAL",
+    "AI suggestedLayoutMode should be respected"
   );
 });
 
-testCase("video children are detected via fill type", () => {
-  const videoChild = createChild({
-    id: "promo-video",
-    type: "RECTANGLE",
-    fills: [{ type: "VIDEO" } as Paint]
-  });
+// ============================================================================
+// Spacing and Padding Tests
+// ============================================================================
 
+testCase("item spacing is non-negative", () => {
   const frame = createFrame({
     layoutMode: "HORIZONTAL",
-    children: [videoChild, createChild({ id: "text" })]
+    itemSpacing: 24
   });
 
   const plan = createLayoutAdaptationPlan(
     frame,
-    { width: 1080, height: 1920 },
-    "vertical",
-    1,
-    { adoptVerticalVariant: true }
+    { width: 1920, height: 960 },
+    "horizontal",
+    1
   );
 
-  const videoAdaptation = plan.childAdaptations.get("promo-video");
-  // Video children should get INHERIT alignment like images
   assert(
-    videoAdaptation?.layoutAlign === "INHERIT" || videoAdaptation?.layoutAlign === undefined,
-    "video children should not stretch"
+    plan.itemSpacing >= 0,
+    `itemSpacing should be non-negative, got ${plan.itemSpacing}`
   );
+});
+
+testCase("padding adjustments are non-negative", () => {
+  const frame = createFrame({
+    paddingTop: 16,
+    paddingRight: 16,
+    paddingBottom: 16,
+    paddingLeft: 16
+  });
+
+  const plan = createLayoutAdaptationPlan(
+    frame,
+    { width: 1920, height: 960 },
+    "horizontal",
+    1
+  );
+
+  assert(plan.paddingAdjustments.top >= 0, "paddingTop should be non-negative");
+  assert(plan.paddingAdjustments.right >= 0, "paddingRight should be non-negative");
+  assert(plan.paddingAdjustments.bottom >= 0, "paddingBottom should be non-negative");
+  assert(plan.paddingAdjustments.left >= 0, "paddingLeft should be non-negative");
 });
 
 console.log("\n✅ All detection helper tests passed\n");

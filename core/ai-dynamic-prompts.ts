@@ -92,7 +92,26 @@ Return ONLY valid JSON with this exact structure:
     "faceRegions": [{"nodeId", "x", "y", "width", "height", "confidence"}]
   },
   "layoutAdvice": {
-    "entries": [{"targetId", "selectedId", "score", "suggestedLayoutMode", "backgroundNodeId", "description"}]
+    "entries": [{
+      "targetId": "string",
+      "selectedId": "pattern-id",
+      "score": 0.0-1.0,
+      "suggestedLayoutMode": "HORIZONTAL"|"VERTICAL"|"NONE",
+      "backgroundNodeId": "node-id",
+      "description": "rationale",
+      "restructure": { "drop": ["nodeId"], "textTreatment": "single-line"|"wrap" },
+      "positioning": {
+        "EVERY_NODE_ID": {
+          "visible": true|false,
+          "anchor": "top-left"|"top-center"|"top-right"|"center-left"|"center"|"center-right"|"bottom-left"|"bottom-center"|"bottom-right"|"fill",
+          "offset": { "top": number, "left": number, "right": number, "bottom": number, "fromSafeArea": boolean },
+          "size": { "mode": "auto"|"fixed"|"fill", "width": number, "height": number },
+          "text": { "targetFontSize": number, "maxLines": number, "textAlign": "left"|"center"|"right" },
+          "image": { "fit": "cover"|"contain", "allowBleed": boolean, "bleedAnchor": "left"|"right"|"top"|"bottom" },
+          "rationale": "Face at [X,Y]. [Positioning explanation]"
+        }
+      }
+    }]
   }
 }
 
