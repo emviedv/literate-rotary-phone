@@ -122,9 +122,53 @@ You are looking at a marketing frame that needs to be transformed into a ${TIKTO
 ${nodeTreeJson}
 \`\`\`
 
+## DEEP DESIGN ANALYSIS (Complete this BEFORE planning transformation)
+
+You must deeply understand the design as a whole system before making ANY transformation decisions. Analyze the source design holistically across all dimensions:
+
+### 1. Visual Composition
+- Where does the eye naturally flow?
+- What's the primary focal point?
+- How are secondary elements weighted?
+- Is the composition balanced or intentionally asymmetrical?
+
+### 2. Layout Structure
+- What's the organizational logic? (grid, stack, free-form)
+- How does whitespace guide attention?
+- What spacing patterns are consistent?
+- Which layout relationships are intentional?
+
+### 3. Typography System
+- What's the visual hierarchy through type? (sizes, weights, colors)
+- How does text spacing reinforce hierarchy?
+- Is there a consistent scale or rhythm?
+
+### 4. Image & Visual Elements
+- What role does each image serve? (hero, supporting, decorative)
+- Are images part of a collection or independent?
+- What visual weight do they carry?
+
+### 5. Color & Contrast
+- What color relationships are most important?
+- Which elements rely on color for separation?
+- How does contrast guide attention?
+
+### 6. Design Intent
+- What's the primary message/goal?
+- Why is content arranged this way?
+- Which relationships are CRITICAL to preserve?
+
+### 7. Content Meaning (Critical for Hiding Decisions)
+- What does each element represent semantically?
+- Which elements form "complete thoughts" that can't be split?
+  - Examples: team grids (all members or none), feature card sets, process step sequences
+- If I hide element X, does the remaining content still make sense?
+
+Based on this deep understanding, now plan your transformation...
+
 ### Your Task
-1. **Analyze the visual composition**: What is the main subject? Where are faces/people? What's the visual hierarchy?
-2. **Identify key elements**: Which elements are essential vs. expendable?
+1. **Document your design analysis**: Fill in the designAnalysis field with your understanding
+2. **Identify critical relationships**: What must stay together as "complete thoughts"
 3. **Plan the transformation**: How should content be reorganized for vertical format?
 4. **Define layout zones**: Where should each type of content go?
 
@@ -141,15 +185,53 @@ The node tree includes parent-child relationships (\`parentId\`, \`hasChildren\`
 - Containers with ONLY decorative shapes (rectangles, lines, ellipses with no text children)
 - Individual decorative elements (dividers, background shapes)
 
+### CRITICAL: Atomic Groups (Mockups & Illustrations)
+Some containers are **atomic visual units** that must move as one piece:
+- **Device mockups**: iPhone, Android, tablet frames with screen content
+- **Illustrations**: Vector artwork, graphics, diagrams
+- **Screenshots**: Device screenshots with frames/bezels
+
+**Rules for atomic groups:**
+1. Position the PARENT container only - children move with it
+2. Do NOT provide separate positioning for children inside mockups
+3. If you see a "phone", "device", "mockup", "illustration" container, treat it as ONE element
+4. The bezel and screen content are NOT separate elements - they are one unit
+
+**Example - WRONG:**
+\`\`\`
+"iPhone Frame": { position: { x: 200, y: 400 } }
+"Screen Content": { position: { x: 180, y: 350 } }  // ❌ This tears apart the mockup!
+\`\`\`
+
+**Example - CORRECT:**
+\`\`\`
+"iPhone Mockup": { position: { x: 200, y: 400 } }  // ✓ Position the parent only
+// Children omitted - they stay in their relative positions within the mockup
+\`\`\`
+
 ### Output Schema
 Respond with JSON matching this exact structure:
 \`\`\`typescript
 {
   "designStrategy": string,     // Brief description of your approach
   "reasoning": string,          // Why this strategy works for TikTok
+
+  // REQUIRED: Your deep understanding of the source design
+  "designAnalysis": {
+    "visualFocal": string,           // Primary focal point description
+    "compositionalFlow": string,     // How eye moves through design
+    "layoutLogic": string,           // Grid, stack, hierarchy explanation
+    "typographyHierarchy": string,   // Type system analysis
+    "imageRoles": string,            // What each image/visual serves
+    "colorHarmony": string,          // Color relationships
+    "designIntent": string,          // Message/purpose of the design
+    "criticalRelationships": string[], // Must-preserve dependencies (e.g., "team grid members must stay together")
+    "completeThoughts": string[]     // Elements that form semantic units that can't be split
+  },
+
   "elements": {
     "keep": string[],           // Node names to keep visible
-    "hide": string[],           // Node names to hide
+    "hide": string[],           // Node names to hide (with reasoning for each)
     "emphasize": string[]       // Node names to scale up / position prominently
   },
   "layoutZones": {
@@ -203,9 +285,9 @@ ${nodeTreeJson}
 \`\`\`
 
 ### Your Task
-For EACH node in the tree, specify exactly how it should be handled:
+For each node in the tree, specify how it should be handled. **Only include position for nodes that need repositioning** - text nodes inside auto-layout containers often don't need explicit positions.
 1. **Visibility**: Should it be visible?
-2. **Position**: Where should it be placed (in target frame coordinates)?
+2. **Position**: Where should it be placed? **Omit for nodes that fit naturally in their container's flow.**
 3. **Size**: What dimensions should it have?
 4. **Z-order**: What's its stacking order?
 
@@ -225,7 +307,7 @@ Respond with JSON matching this exact structure:
       "nodeId": string,         // Figma node ID (from the tree)
       "nodeName": string,       // Human-readable name
       "visible": boolean,       // false to hide
-      "position": {             // Only if visible
+      "position": {             // ONLY if repositioning is needed - omit for auto-layout children
         "x": number,            // Pixels from left edge
         "y": number             // Pixels from top edge
       },
@@ -358,6 +440,65 @@ export function parseStage1Response(
     }
 
     const warnings: string[] = [];
+
+    // Validate designAnalysis is present and populated
+    if (!parsed.designAnalysis || typeof parsed.designAnalysis !== "object") {
+      console.warn(
+        "[Design AI] WARNING: AI skipped deep design analysis. This may lead to poor transformation decisions."
+      );
+      warnings.push(
+        "AI did not provide design analysis - transformation may not understand design intent"
+      );
+    } else {
+      // Check for empty or placeholder values in critical fields
+      const analysis = parsed.designAnalysis;
+      const requiredFields = [
+        "visualFocal",
+        "compositionalFlow",
+        "layoutLogic",
+        "typographyHierarchy",
+        "designIntent"
+      ];
+      const missingFields = requiredFields.filter(
+        (field) => !analysis[field] || analysis[field].trim() === ""
+      );
+
+      if (missingFields.length > 0) {
+        console.warn(
+          "[Design AI] WARNING: Design analysis incomplete, missing:",
+          missingFields
+        );
+        warnings.push(
+          `Incomplete design analysis - missing: ${missingFields.join(", ")}`
+        );
+      }
+
+      // Check for completeThoughts - critical for hiding decisions
+      if (
+        !Array.isArray(analysis.completeThoughts) ||
+        analysis.completeThoughts.length === 0
+      ) {
+        console.warn(
+          "[Design AI] WARNING: No 'completeThoughts' identified - AI may incorrectly split semantic groups"
+        );
+        warnings.push(
+          "No 'completeThoughts' identified - risk of splitting semantic groups like team grids"
+        );
+      }
+
+      // Check for criticalRelationships
+      if (
+        !Array.isArray(analysis.criticalRelationships) ||
+        analysis.criticalRelationships.length === 0
+      ) {
+        console.warn(
+          "[Design AI] WARNING: No 'criticalRelationships' identified - layout dependencies may be broken"
+        );
+        warnings.push(
+          "No 'criticalRelationships' identified - layout dependencies may be broken"
+        );
+      }
+    }
 
     // Validate container visibility decisions if node tree is provided
     if (nodeTreeJson && Array.isArray(parsed.elements.hide) && parsed.elements.hide.length > 0) {

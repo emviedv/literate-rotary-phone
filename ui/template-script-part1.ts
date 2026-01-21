@@ -276,7 +276,8 @@ export const UI_SCRIPT_PART1 = /* js */ `
 
       function updateGenerateState() {
         const ids = getSelectedTargetIds();
-        generateButton.disabled = isBusy || !selectionReady || ids.length === 0;
+        // Generate button is permanently disabled - feature removed, use TikTok Design instead
+        generateButton.disabled = true;
         updateTargetSummary(ids);
       }
       

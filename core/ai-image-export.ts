@@ -6,7 +6,9 @@
  */
 
 import { debugFixLog } from "./debug.js";
-import { MAX_IMAGE_DIMENSION } from "./ai-system-prompt.js";
+
+// Maximum image dimension for vision model analysis (matches OpenAI recommended size)
+const MAX_IMAGE_DIMENSION = 1024;
 
 /**
  * Exports a frame as a base64-encoded PNG for vision analysis.

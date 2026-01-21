@@ -8,6 +8,7 @@
 import { debugFixLog } from "./debug.js";
 import type { DesignSpecs, NodeSpec } from "../types/design-types.js";
 import { TIKTOK_CONSTRAINTS as CONSTRAINTS } from "../types/design-types.js";
+import { isAtomicGroup } from "./element-classification.js";
 
 declare const figma: PluginAPI;
 
@@ -64,12 +65,27 @@ export async function createDesignVariant(
     variant.layoutMode = "NONE";
   }
 
+  // Detach all instances to allow repositioning of their children
+  const detachCount = detachAllInstances(variant);
+  if (detachCount > 0) {
+    debugFixLog("Detached instances for repositioning", { detachCount });
+  }
+
   // Build node map for fast lookup
   const nodeMap = buildNodeMap(sourceFrame, variant);
 
   debugFixLog("Node map built", {
     mappedNodes: Object.keys(nodeMap).length
   });
+
+  // Identify children of atomic groups (mockups, illustrations, etc.)
+  // These should NOT be repositioned independently - they move with their parent
+  const atomicGroupChildIds = collectAtomicGroupChildren(variant);
+  if (atomicGroupChildIds.size > 0) {
+    debugFixLog("Atomic group children identified (will skip repositioning)", {
+      count: atomicGroupChildIds.size
+    });
+  }
 
   // Load fonts for text nodes
   await loadFontsForFrame(variant, fontCache);
@@ -83,7 +99,9 @@ export async function createDesignVariant(
         // Try finding by name as fallback
         const foundByName = findNodeByName(variant, spec.nodeName);
         if (foundByName) {
-          applyNodeSpec(foundByName, spec);
+          // Check if this is a child of an atomic group
+          const isAtomicChild = atomicGroupChildIds.has(foundByName.id);
+          applyNodeSpec(foundByName, spec, isAtomicChild);
           appliedSpecs++;
         } else {
           debugFixLog("Node not found for spec", {
@@ -95,7 +113,9 @@ export async function createDesignVariant(
         continue;
       }
 
-      applyNodeSpec(targetNode, spec);
+      // Check if this is a child of an atomic group
+      const isAtomicChild = atomicGroupChildIds.has(targetNode.id);
+      applyNodeSpec(targetNode, spec, isAtomicChild);
       appliedSpecs++;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -184,9 +204,33 @@ function findNodeByName(frame: FrameNode, name: string): SceneNode | null {
 // ============================================================================
 
 /**
- * Applies a single node specification to a Figma node.
+ * Threshold for position changes that warrant breaking auto-layout.
+ * If the AI-specified position is within this threshold of the node's current
+ * position, we skip repositioning entirely to preserve auto-layout flow.
  */
-function applyNodeSpec(node: SceneNode, spec: NodeSpec): void {
+const POSITION_CHANGE_THRESHOLD = 10; // pixels
+
+/**
+ * Determines if a position change is significant enough to break auto-layout.
+ * Returns true if the target position differs from current by more than threshold.
+ */
+function shouldBreakAutoLayout(
+  node: SceneNode,
+  targetPos: { x: number; y: number }
+): boolean {
+  const dx = Math.abs(node.x - targetPos.x);
+  const dy = Math.abs(node.y - targetPos.y);
+  return dx > POSITION_CHANGE_THRESHOLD || dy > POSITION_CHANGE_THRESHOLD;
+}
+
+/**
+ * Applies a single node specification to a Figma node.
+ *
+ * @param node - The Figma node to modify
+ * @param spec - The specification from AI
+ * @param isAtomicChild - If true, skip repositioning (child of atomic group like iPhone mockup)
+ */
+function applyNodeSpec(node: SceneNode, spec: NodeSpec, isAtomicChild: boolean = false): void {
   // Handle visibility
   if (!spec.visible) {
     node.visible = false;
@@ -195,24 +239,56 @@ function applyNodeSpec(node: SceneNode, spec: NodeSpec): void {
 
   node.visible = true;
 
-  // Break out of auto-layout if needed for repositioning
-  if ("layoutPositioning" in node && node.layoutPositioning === "AUTO") {
-    try {
-      (node as FrameNode).layoutPositioning = "ABSOLUTE";
-    } catch {
-      // Some nodes don't support this
-    }
+  // Skip repositioning for children of atomic groups (mockups, illustrations)
+  // These elements must stay in their relative positions within the parent
+  if (isAtomicChild && spec.position) {
+    debugFixLog("Skipping repositioning for atomic group child", {
+      nodeId: spec.nodeId,
+      nodeName: spec.nodeName,
+      reason: "Child of atomic group (mockup/illustration) - preserving relative position"
+    });
+    // Still allow size/scale changes, just not repositioning
   }
 
-  // Apply position
-  if (spec.position) {
-    try {
-      node.x = spec.position.x;
-      node.y = spec.position.y;
-    } catch (error) {
-      debugFixLog("Failed to set position", {
+  // Apply position - only break auto-layout if position change is significant
+  // AND this is not a child of an atomic group
+  if (spec.position && !isAtomicChild) {
+    const needsRepositioning = shouldBreakAutoLayout(node, spec.position);
+
+    if (needsRepositioning) {
+      // Break out of auto-layout for repositioning
+      if ("layoutPositioning" in node && node.layoutPositioning === "AUTO") {
+        try {
+          (node as FrameNode).layoutPositioning = "ABSOLUTE";
+          debugFixLog("Breaking auto-layout for significant repositioning", {
+            nodeId: spec.nodeId,
+            nodeName: spec.nodeName,
+            currentPos: { x: node.x, y: node.y },
+            targetPos: spec.position
+          });
+        } catch {
+          // Some nodes don't support this
+        }
+      }
+
+      try {
+        node.x = spec.position.x;
+        node.y = spec.position.y;
+      } catch (error) {
+        debugFixLog("Failed to set position", {
+          nodeId: spec.nodeId,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    } else {
+      // Position change is minimal - preserve auto-layout flow
+      debugFixLog("Skipping repositioning to preserve auto-layout", {
         nodeId: spec.nodeId,
-        error: error instanceof Error ? error.message : String(error)
+        nodeName: spec.nodeName,
+        currentPos: { x: node.x, y: node.y },
+        targetPos: spec.position,
+        deltaX: Math.abs(node.x - spec.position.x),
+        deltaY: Math.abs(node.y - spec.position.y)
       });
     }
   }
@@ -434,6 +510,116 @@ async function loadFontsForFrame(frame: FrameNode, cache: Set<string>): Promise<
       queue.push(...node.children);
     }
   }
+}
+
+// ============================================================================
+// Instance Detachment
+// ============================================================================
+
+/**
+ * Recursively detaches all component instances in a frame tree.
+ * This converts instances to regular frames, allowing their children
+ * to be repositioned freely (Figma locks instance children by default).
+ *
+ * @param frame - The frame to process
+ * @returns Number of instances detached
+ */
+function detachAllInstances(frame: FrameNode): number {
+  let detachCount = 0;
+
+  // Process children in reverse order since detachment may affect indices
+  // Use a queue-based approach for the tree traversal
+  const nodesToProcess: SceneNode[] = [...frame.children];
+
+  while (nodesToProcess.length > 0) {
+    const node = nodesToProcess.shift()!;
+
+    // Check if this is an instance that can be detached
+    if (node.type === "INSTANCE") {
+      try {
+        const instance = node as InstanceNode;
+        // detachInstance() converts the instance to a FrameNode in place
+        const detached = instance.detachInstance();
+        detachCount++;
+
+        // The detached frame may have its own children to process
+        if ("children" in detached) {
+          nodesToProcess.push(...detached.children);
+        }
+      } catch (error) {
+        debugFixLog("Failed to detach instance", {
+          nodeId: node.id,
+          nodeName: node.name,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    } else if ("children" in node) {
+      // Regular frame/group - process its children
+      nodesToProcess.push(...(node as FrameNode | GroupNode).children);
+    }
+  }
+
+  return detachCount;
+}
+
+// ============================================================================
+// Atomic Group Detection
+// ============================================================================
+
+/**
+ * Collects all node IDs that are children of atomic groups.
+ * Atomic groups (mockups, illustrations, device frames) should be treated as
+ * single visual units - their children should NOT be repositioned independently.
+ *
+ * This prevents issues like iPhone mockups being torn apart when AI provides
+ * separate positioning for the phone frame and screen content.
+ *
+ * @param frame - The root frame to scan
+ * @returns Set of node IDs that are children of atomic groups
+ */
+function collectAtomicGroupChildren(frame: FrameNode): Set<string> {
+  const atomicChildIds = new Set<string>();
+
+  function collectChildIds(parent: SceneNode): void {
+    if (!("children" in parent)) return;
+
+    for (const child of (parent as FrameNode | GroupNode).children) {
+      atomicChildIds.add(child.id);
+      // Recursively collect nested children
+      if ("children" in child) {
+        collectChildIds(child);
+      }
+    }
+  }
+
+  function scanForAtomicGroups(node: SceneNode): void {
+    // Check if this node is an atomic group
+    if (isAtomicGroup(node)) {
+      debugFixLog("Found atomic group", {
+        nodeId: node.id,
+        nodeName: node.name,
+        type: node.type
+      });
+      // Collect all children of this atomic group
+      collectChildIds(node);
+      // Don't recurse into atomic groups - we've already collected their children
+      return;
+    }
+
+    // Recurse into non-atomic containers
+    if ("children" in node) {
+      for (const child of (node as FrameNode | GroupNode).children) {
+        scanForAtomicGroups(child);
+      }
+    }
+  }
+
+  // Scan all children of the root frame
+  for (const child of frame.children) {
+    scanForAtomicGroups(child);
+  }
+
+  return atomicChildIds;
 }
 
 // ============================================================================

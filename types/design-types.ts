@@ -21,6 +21,31 @@ export interface LayoutZone {
 }
 
 /**
+ * Deep design analysis capturing the AI's understanding of the source design.
+ * This must be populated BEFORE making any transformation decisions.
+ */
+export interface DesignAnalysis {
+  /** Primary focal point description */
+  readonly visualFocal: string;
+  /** How eye moves through design */
+  readonly compositionalFlow: string;
+  /** Grid, stack, hierarchy explanation */
+  readonly layoutLogic: string;
+  /** Type system analysis */
+  readonly typographyHierarchy: string;
+  /** What each image/visual serves */
+  readonly imageRoles: string;
+  /** Color relationships */
+  readonly colorHarmony: string;
+  /** Message/purpose of the design */
+  readonly designIntent: string;
+  /** Must-preserve dependencies (e.g., "team grid members must stay together") */
+  readonly criticalRelationships: readonly string[];
+  /** Elements that form semantic units that can't be split */
+  readonly completeThoughts: readonly string[];
+}
+
+/**
  * Design plan output from Stage 1 vision analysis.
  * High-level strategy for transforming the source frame to TikTok format.
  */
@@ -29,6 +54,8 @@ export interface DesignPlan {
   readonly designStrategy: string;
   /** Reasoning behind the strategy choice */
   readonly reasoning: string;
+  /** Deep understanding of the source design - REQUIRED before transformation */
+  readonly designAnalysis?: DesignAnalysis;
   /** Element categorization for the transformation */
   readonly elements: {
     /** Node names/IDs to keep visible and position prominently */

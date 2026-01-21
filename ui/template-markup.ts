@@ -69,7 +69,7 @@ export const UI_MARKUP = /* html */ `
       <p class="preset-hint">Adjusts the inset used for QA overlays and safe-area checks. Presets snap to brand policies; use the slider for custom ratios.</p>
     </section>
 
-    <button id="generateButton" disabled>Generate variants</button>
+    <button id="generateButton" disabled title="Coming soon - use Design for TikTok">Generate variants (coming soon)</button>
 
     <div class="design-tiktok-section">
       <div class="design-tiktok-divider">

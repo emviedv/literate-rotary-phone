@@ -1,53 +1,15 @@
-import { VARIANT_TARGETS, getTargetById, type VariantTarget } from "../types/targets.js";
-import type { ToCoreMessage, ToUIMessage, VariantResult } from "../types/messages.js";
-import type { LayoutAdvice } from "../types/layout-advice.js";
-import type { AiSignals } from "../types/ai-signals.js";
+import { VARIANT_TARGETS } from "../types/targets.js";
+import type { ToCoreMessage, ToUIMessage } from "../types/messages.js";
 import { UI_TEMPLATE } from "../ui/template.js";
-import { configureQaOverlay, createQaOverlay } from "./qa-overlay.js";
-import { resolveLayoutProfile } from "./layout-profile.js";
-import { createLayoutAdaptationPlan, applyLayoutAdaptation, adaptNestedFrames } from "./auto-layout-adapter.js";
-import { readAiSignals, resolvePrimaryFocalPoint } from "./ai-signals.js";
-import { autoSelectLayoutPattern, normalizeLayoutAdvice, readLayoutAdvice, resolvePatternLabel } from "./layout-advice.js";
-import { requestAiInsightsWithRecovery } from "./ai-service.js";
 import { trackEvent } from "./telemetry.js";
 import { debugFixLog, setLogHandler, isDebugFixEnabled } from "./debug.js";
-import { ensureAiKeyLoaded, getCachedAiApiKey, persistApiKey, resetAiStatus, setAiStatus } from "./ai-state.js";
+import { ensureAiKeyLoaded, getCachedAiApiKey, persistApiKey } from "./ai-state.js";
 import { createSelectionState, getSelectionFrame } from "./selection.js";
-import { ensureStagingPage, createRunContainer, exposeRun, layoutVariants, finalizeOverlays, promoteVariantsToPage } from "./run-ops.js";
-import { readLastRun, writeLastRun } from "./run-store.js";
-import {
-  AI_SIGNALS_KEY,
-  LAYOUT_ADVICE_KEY,
-  LAYOUT_PATTERN_KEY,
-  LEGACY_AI_SIGNALS_KEY,
-  LEGACY_LAYOUT_ADVICE_KEY,
-  PLUGIN_NAME,
-  RUN_ID_KEY,
-  TARGET_ID_KEY
-} from "./plugin-constants.js";
-import { collectWarnings } from "./warnings.js";
-import { applyLeaderboardKillSwitch } from "./leaderboard-kill-switch.js";
-import { propagateRolesToNodes } from "./node-roles.js";
-import {
-  prepareCloneForLayout,
-  restoreAutoLayoutSettings,
-  scaleNodeTree,
-  tagNodeTreeWithSourceIds,
-  type AutoLayoutSnapshot
-} from "./variant-scaling.js";
-import { captureLayoutSnapshot } from "./layout-snapshot.js";
-import { convertFrameToAutoLayoutIfBeneficial } from "./auto-layout-converter.js";
+import { PLUGIN_NAME } from "./plugin-constants.js";
 import { executeDesignFlow, validateSourceFrame } from "./design-orchestration.js";
 import type { DesignStatus } from "../types/design-types.js";
 
-export { collectWarnings, combineChildBounds } from "./warnings.js";
-
 declare const __BUILD_TIMESTAMP__: string;
-
-const MAX_SAFE_AREA_RATIO = 0.25;
-const MIN_PATTERN_CONFIDENCE = 0.65;
-
-let aiRequestToken = 0;
 
 declare const figma: PluginAPI;
 
@@ -63,23 +25,23 @@ figma.ui.onmessage = async (rawMessage: ToCoreMessage) => {
       await postInitialState();
       break;
     case "generate-variants":
-      await handleGenerateRequest(
-        rawMessage.payload.targetIds,
-        rawMessage.payload.safeAreaRatio,
-        rawMessage.payload.layoutPatterns ?? {}
-      );
+      // Generate variants feature removed - use Design for TikTok instead
+      postToUI({ type: "error", payload: { message: "Generate variants feature has been removed. Use 'Design for TikTok' instead." } });
       break;
     case "set-ai-signals":
-      await handleSetAiSignals(rawMessage.payload.signals);
+      // AI signals feature removed - use Design for TikTok instead
+      postToUI({ type: "error", payload: { message: "AI signals feature has been removed." } });
       break;
     case "set-layout-advice":
-      await handleSetLayoutAdvice(rawMessage.payload.advice);
+      // Layout advice feature removed - use Design for TikTok instead
+      postToUI({ type: "error", payload: { message: "Layout advice feature has been removed." } });
       break;
     case "set-api-key":
       await handleSetApiKey(rawMessage.payload.key);
       break;
     case "refresh-ai":
-      await handleRefreshAiRequest();
+      // AI analysis feature removed - use Design for TikTok instead
+      postToUI({ type: "error", payload: { message: "AI analysis feature has been removed. Use 'Design for TikTok' instead." } });
       break;
     case "design-for-tiktok":
       await handleDesignForTikTok();
@@ -104,7 +66,6 @@ async function postInitialState(): Promise<void> {
   await ensureAiKeyLoaded();
   const selectionFrame = getSelectionFrame();
   const selectionState = createSelectionState(selectionFrame);
-  const lastRunSummary = readLastRun();
 
   const payload = {
     selectionOk: selectionState.selectionOk,
@@ -113,7 +74,7 @@ async function postInitialState(): Promise<void> {
     aiSignals: selectionState.aiSignals,
     layoutAdvice: selectionState.layoutAdvice,
     targets: VARIANT_TARGETS,
-    lastRun: lastRunSummary ?? undefined,
+    lastRun: undefined, // Generate feature removed
     debugEnabled: isDebugFixEnabled(),
     buildTimestamp: typeof __BUILD_TIMESTAMP__ !== "undefined" ? __BUILD_TIMESTAMP__ : "unknown"
   };
@@ -126,365 +87,8 @@ async function postInitialState(): Promise<void> {
   postToUI({ type: "init", payload });
 }
 
-async function handleGenerateRequest(
-  targetIds: readonly string[],
-  rawSafeAreaRatio: number,
-  layoutPatterns: Record<string, string | undefined>
-): Promise<void> {
-  debugFixLog("`handleGenerateRequest` entered", { targetIds, rawSafeAreaRatio });
-  const selectionFrame = getSelectionFrame();
-  if (!selectionFrame) {
-    postToUI({ type: "error", payload: { message: "Select exactly one frame before generating variants." } });
-    return;
-  }
-
-  const targets = targetIds
-    .map((id) => getTargetById(id))
-    .filter((target): target is VariantTarget => Boolean(target));
-
-  if (targets.length === 0) {
-    postToUI({ type: "error", payload: { message: "Pick at least one target size." } });
-    return;
-  }
-
-  const safeAreaRatio = clamp(rawSafeAreaRatio, 0, MAX_SAFE_AREA_RATIO);
-
-  postToUI({ type: "status", payload: { status: "running" } });
-
-  try {
-    const stagingPage = ensureStagingPage();
-    const runId = `run-${Date.now()}`;
-    const runContainer = createRunContainer(stagingPage, runId, selectionFrame.name);
-
-    const results: VariantResult[] = [];
-    const variantNodes: FrameNode[] = [];
-    const overlaysToLock: FrameNode[] = [];
-
-    const fontCache = new Set<string>();
-    await loadFontsForNode(selectionFrame, fontCache);
-
-    const layoutAdvice = readLayoutAdvice(selectionFrame);
-    const aiSignals = readAiSignals(selectionFrame);
-    const primaryFocal = resolvePrimaryFocalPoint(aiSignals);
-    const faceRegions = aiSignals?.faceRegions;
-
-    debugFixLog("face detection status", {
-      hasFaceRegions: Boolean(faceRegions?.length),
-      faceCount: faceRegions?.length ?? 0,
-      faces: faceRegions?.map(f => ({ x: f.x.toFixed(2), y: f.y.toFixed(2), confidence: f.confidence.toFixed(2) })),
-      hasFocalPoint: Boolean(primaryFocal),
-      focalPoint: primaryFocal ? { x: primaryFocal.x.toFixed(2), y: primaryFocal.y.toFixed(2) } : null
-    });
-
-    for (const target of targets) {
-      const layoutProfile = resolveLayoutProfile({ width: target.width, height: target.height });
-      debugFixLog("prepping variant target", {
-        targetId: target.id,
-        targetLabel: target.label,
-        dimensions: `${target.width}x${target.height}`,
-        runId,
-        safeAreaRatio,
-        layoutProfile
-      });
-
-      const variantNode = selectionFrame.clone();
-      variantNode.name = `${selectionFrame.name} → ${target.label}`;
-      variantNode.setPluginData(TARGET_ID_KEY, target.id);
-      variantNode.setPluginData(RUN_ID_KEY, runId);
-
-      // Tag all nodes in the variant with their source IDs for AI matching
-      tagNodeTreeWithSourceIds(selectionFrame, variantNode);
-
-      runContainer.appendChild(variantNode);
-
-      // Apply auto-layout to non-auto-layout frames before scaling
-      // This gives the scaling algorithm properly structured content to work with
-      if (variantNode.layoutMode === "NONE") {
-        convertFrameToAutoLayoutIfBeneficial(variantNode);
-      }
-
-      // Diagnostic: Log frame structure before processing
-      debugFixLog("Frame structure before processing", {
-        frameId: variantNode.id,
-        frameName: variantNode.name,
-        layoutMode: variantNode.layoutMode,
-        childCount: variantNode.children.length,
-        children: variantNode.children.slice(0, 10).map(c => ({
-          name: c.name,
-          type: c.type,
-          layoutPositioning: "layoutPositioning" in c ? c.layoutPositioning : "N/A"
-        }))
-      });
-
-      const autoLayoutSnapshots = new Map<string, AutoLayoutSnapshot>();
-      await prepareCloneForLayout(variantNode, autoLayoutSnapshots);
-      const rootSnapshot = autoLayoutSnapshots.get(variantNode.id) ?? null;
-
-      debugFixLog("Snapshot captured", {
-        hasSnapshot: !!rootSnapshot,
-        snapshotLayoutMode: rootSnapshot?.layoutMode ?? "none captured",
-        flowChildCount: rootSnapshot?.flowChildCount ?? 0,
-        absoluteChildCount: rootSnapshot?.absoluteChildCount ?? 0
-      });
-      const safeAreaMetrics = await scaleNodeTree(
-        variantNode,
-        target,
-        safeAreaRatio,
-        fontCache,
-        rootSnapshot,
-        layoutProfile,
-        primaryFocal,
-        faceRegions
-      );
-
-            // Create and apply intelligent layout adaptation instead of just restoring
-            const adviceEntry = layoutAdvice?.entries.find((entry) => entry.targetId === target.id);
-            const layoutAdaptationPlan = createLayoutAdaptationPlan(
-              variantNode,
-              target,
-              layoutProfile,
-              safeAreaMetrics.scale,
-              {
-                sourceLayoutMode:
-                  rootSnapshot?.layoutMode && rootSnapshot.layoutMode !== "GRID" ? rootSnapshot.layoutMode : "NONE",
-                sourceSize:
-                  rootSnapshot && Number.isFinite(rootSnapshot.width) && Number.isFinite(rootSnapshot.height)
-                    ? { width: rootSnapshot.width, height: rootSnapshot.height }
-                    : undefined,
-                sourceFlowChildCount: rootSnapshot?.flowChildCount ?? undefined,
-                sourceItemSpacing: rootSnapshot?.itemSpacing ?? null,
-                sourcePadding: rootSnapshot
-                  ? {
-                      top: rootSnapshot.paddingTop,
-                      right: rootSnapshot.paddingRight,
-                      bottom: rootSnapshot.paddingBottom,
-                      left: rootSnapshot.paddingLeft
-                    }
-                  : undefined,
-                adoptVerticalVariant: safeAreaMetrics.adoptVerticalVariant,
-                layoutAdvice: adviceEntry,
-                safeAreaRatio
-              }
-            );
-      
-            debugFixLog("Layout adaptation plan created", {
-              targetId: target.id,
-              originalMode: rootSnapshot?.layoutMode ?? "NONE",
-              newMode: layoutAdaptationPlan.layoutMode,
-              profile: layoutProfile,
-              hasSnapshot: !!rootSnapshot,
-              snapshotFlowChildren: rootSnapshot?.flowChildCount ?? 0,
-              snapshotAbsoluteChildren: rootSnapshot?.absoluteChildCount ?? 0,
-              variantLayoutMode: variantNode.layoutMode,
-              childCount: variantNode.children.length
-            });
-
-                  // Apply the adaptation plan for intelligent layout restructuring
-                  // Pass adviceEntry to enable AI-driven element hiding for extreme transformations
-                  await applyLayoutAdaptation(variantNode, layoutAdaptationPlan, adviceEntry);
-
-                  // Log feasibility and restructure info if present
-                  if (adviceEntry?.feasibility) {
-                    debugFixLog("AI feasibility analysis", {
-                      targetId: target.id,
-                      achievable: adviceEntry.feasibility.achievable,
-                      predictedFill: adviceEntry.feasibility.predictedFill,
-                      requiresRestructure: adviceEntry.feasibility.requiresRestructure,
-                      uniformScaleResult: adviceEntry.feasibility.uniformScaleResult
-                    });
-                  }
-                  if (adviceEntry?.restructure?.drop?.length) {
-                    debugFixLog("Elements hidden per AI recommendation", {
-                      targetId: target.id,
-                      dropped: adviceEntry.restructure.drop,
-                      kept: adviceEntry.restructure.keepRequired
-                    });
-                  }
-
-                  // Apply kill-switch for small targets (e.g., 728x90 leaderboards)
-                  // This hides subject/hero elements that become unrecognizable at small sizes
-                  const killSwitchResult = applyLeaderboardKillSwitch(variantNode, target, aiSignals);
-                  if (killSwitchResult.activated) {
-                    debugFixLog("Kill-switch activated for small target", {
-                      targetId: target.id,
-                      hiddenCount: killSwitchResult.hiddenNodeIds.length,
-                      targetHeight: killSwitchResult.targetHeight,
-                      threshold: killSwitchResult.threshold
-                    });
-                  }
-
-                  // Recursively adapt nested structural containers
-                  adaptNestedFrames(variantNode, target, layoutProfile, safeAreaMetrics.scale);
-            
-                  // Then apply any additional auto layout settings that weren't covered
-      restoreAutoLayoutSettings(variantNode, autoLayoutSnapshots, safeAreaMetrics);
-            // Use target dimensions for the overlay to ensure it matches the viewport,
-            // even if the variant content has expanded (e.g. scrolling vertical).
-            const overlay = createQaOverlay(target, safeAreaRatio, target.width, target.height);
-            variantNode.appendChild(overlay);
-            
-            // TikTok vertical uses special constraints (pins to top for scrolling content)
-            // All other targets use default STRETCH/STRETCH
-            const overlayConstraints: FrameNode["constraints"] | undefined =
-              target.id === "tiktok-vertical"
-                ? { horizontal: "STRETCH", vertical: "MIN" }
-                : undefined;
-
-            const overlayConfig = configureQaOverlay(overlay, {
-              parentLayoutMode: variantNode.layoutMode,
-              constraints: overlayConstraints
-            });
-            overlaysToLock.push(overlay);
-            debugFixLog("qa overlay configured", {
-              overlayId: overlay.id,
-              variantId: variantNode.id,
-              positioningUpdated: overlayConfig.positioningUpdated,
-              layoutPositioning: "layoutPositioning" in overlay ? overlay.layoutPositioning : undefined,
-              constraints: "constraints" in overlay ? overlay.constraints : undefined,
-              locked: overlay.locked,
-              willLockAfterFlush: false
-            });
-      
-            const patternSelection = await autoSelectLayoutPattern(layoutAdvice, target.id, { minConfidence: MIN_PATTERN_CONFIDENCE });
-            const userSelection = layoutPatterns[target.id];
-            
-            const chosenPatternId =
-              userSelection ??
-              (patternSelection && !patternSelection.fallback
-                ? patternSelection.patternId ?? adviceEntry?.selectedId
-                : undefined);
-            // Determine if we fell back to deterministic patterns
-            // BUT: If we have freestyle positioning map, we are NOT falling back, we are just using the new mode.
-            const hasFreestylePositioning = adviceEntry && adviceEntry.positioning && Object.keys(adviceEntry.positioning).length > 0;
-            const layoutFallback = !userSelection && (patternSelection?.fallback ?? false) && !hasFreestylePositioning;
-      const patternConfidence =
-        chosenPatternId && patternSelection?.patternId === chosenPatternId && !layoutFallback
-          ? patternSelection.confidence
-          : undefined;
-      const layoutSnapshot = captureLayoutSnapshot(variantNode);
-
-      if (chosenPatternId) {
-        variantNode.setPluginData(LAYOUT_PATTERN_KEY, chosenPatternId);
-        debugFixLog("layout pattern tagged on variant", {
-          targetId: target.id,
-          patternId: chosenPatternId,
-          confidence: patternConfidence
-        });
-        trackEvent("LAYOUT_ADVICE_APPLIED", {
-          targetId: target.id,
-          patternId: chosenPatternId,
-          confidence: patternConfidence,
-          fallback: layoutFallback,
-          runId
-        });
-      }
-
-      debugFixLog("layout output ready", {
-        targetId: target.id,
-        variantId: variantNode.id,
-        dimensions: `${variantNode.width}x${variantNode.height}`,
-        profile: layoutProfile,
-        safeAreaScale: safeAreaMetrics.scale,
-        adoptVerticalVariant: safeAreaMetrics.adoptVerticalVariant,
-        patternId: chosenPatternId ?? null,
-        patternConfidence,
-        fallback: layoutFallback,
-        layout: layoutSnapshot
-      });
-
-      const warnings = collectWarnings(variantNode, target, safeAreaRatio);
-      if (layoutFallback) {
-        warnings.push({
-          code: "AI_LAYOUT_FALLBACK",
-          severity: "info",
-          message: "AI confidence was low, so a deterministic layout was used."
-        });
-      }
-      
-      warnings.forEach(w => {
-        trackEvent("QA_ALERT_DISPLAYED", {
-           targetId: target.id,
-           code: w.code,
-           severity: w.severity,
-           runId
-        });
-      });
-
-      variantNodes.push(variantNode);
-      
-      trackEvent("VARIANT_GENERATED", {
-        targetId: target.id,
-        warningsCount: warnings.length,
-        hasLayoutPattern: Boolean(chosenPatternId),
-        safeAreaRatio,
-        runId
-      });
-
-      results.push({
-        targetId: target.id,
-        nodeId: variantNode.id,
-        warnings,
-        layoutPatternId: chosenPatternId,
-        layoutPatternLabel:
-          resolvePatternLabel(layoutAdvice, target.id, chosenPatternId) ?? patternSelection?.patternLabel,
-        layoutPatternConfidence: patternConfidence,
-        layoutPatternFallback: layoutFallback
-      });
-    }
-
-    await finalizeOverlays(overlaysToLock);
-    layoutVariants(runContainer, variantNodes);
-    promoteVariantsToPage(stagingPage, runContainer, variantNodes);
-    exposeRun(stagingPage, variantNodes);
-    writeLastRun({
-      runId,
-      timestamp: Date.now(),
-      sourceNodeName: selectionFrame.name,
-      targetIds: targets.map((target) => target.id)
-    });
-
-    postToUI({
-      type: "generation-complete",
-      payload: {
-        runId,
-        results
-      }
-    });
-
-    postToUI({ type: "status", payload: { status: "idle" } });
-    figma.notify(`${PLUGIN_NAME}: Generated ${targets.length} variant${targets.length === 1 ? "" : "s"}.`);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unexpected error while generating variants.";
-    console.error(`${PLUGIN_NAME} generation failed`, error);
-    postToUI({ type: "error", payload: { message } });
-    postToUI({ type: "status", payload: { status: "idle" } });
-  }
-}
-
-async function handleSetAiSignals(signals: AiSignals): Promise<void> {
-  const frame = getSelectionFrame();
-  if (!frame) {
-    postToUI({ type: "error", payload: { message: "Select a single frame before applying AI signals." } });
-    return;
-  }
-
-  try {
-    const serialized = JSON.stringify(signals);
-    frame.setPluginData(AI_SIGNALS_KEY, serialized);
-    // Propagate roles to individual nodes so they survive cloning
-    propagateRolesToNodes(signals);
-    debugFixLog("ai signals stored on selection", {
-      roleCount: signals.roles?.length ?? 0,
-      qaCount: signals.qa?.length ?? 0
-    });
-    figma.notify("AI signals applied to selection.");
-    const selectionState = createSelectionState(frame);
-    postToUI({ type: "selection-update", payload: selectionState });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to apply AI signals.";
-    postToUI({ type: "error", payload: { message } });
-  }
-}
+// handleGenerateRequest removed - generate variants feature disabled
+// Use Design for TikTok flow instead
 
 function postToUI(message: ToUIMessage): void {
   figma.ui.postMessage(message);
@@ -494,29 +98,6 @@ setLogHandler((message: string) => {
   postToUI({ type: "debug-log", payload: { message } });
 });
 
-async function loadFontsForNode(node: SceneNode, cache: Set<string>): Promise<void> {
-  if (node.type === "TEXT") {
-    const characters = node.characters;
-    const fonts = await node.getRangeAllFontNames(0, characters.length);
-    for (const font of fonts) {
-      const key = `${font.family}__${font.style}`;
-      if (!cache.has(key)) {
-        await figma.loadFontAsync(font);
-        cache.add(key);
-      }
-    }
-  }
-
-  if ("children" in node) {
-    for (const child of node.children) {
-      await loadFontsForNode(child as SceneNode, cache);
-    }
-  }
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(Math.max(value, min), max);
-}
 
 async function handleSetApiKey(key: string): Promise<void> {
   const snapshot = await persistApiKey(key);
@@ -531,189 +112,6 @@ async function handleSetApiKey(key: string): Promise<void> {
   const frame = getSelectionFrame();
   const selectionState = createSelectionState(frame);
   postToUI({ type: "selection-update", payload: selectionState });
-}
-
-async function handleRefreshAiRequest(): Promise<void> {
-  await ensureAiKeyLoaded();
-  const frame = getSelectionFrame();
-  if (!frame) {
-    figma.notify("Select a single frame to analyze with AI.");
-    postToUI({ type: "selection-update", payload: createSelectionState(null) });
-    return;
-  }
-  if (!getCachedAiApiKey()) {
-    setAiStatus("missing-key", null);
-    figma.notify("AI key is missing in this build. Contact an admin.");
-    postToUI({ type: "selection-update", payload: createSelectionState(frame) });
-    return;
-  }
-
-  // Clear old AI data before making new request
-  debugFixLog("Clearing old AI data before refresh", { frameId: frame.id, frameName: frame.name });
-  try {
-    frame.setPluginData(AI_SIGNALS_KEY, "");
-    frame.setPluginData(LAYOUT_ADVICE_KEY, "");
-    // Also clear legacy keys
-    frame.setPluginData(LEGACY_AI_SIGNALS_KEY, "");
-    frame.setPluginData(LEGACY_LAYOUT_ADVICE_KEY, "");
-    // Clear any cached analysis from error recovery system
-    frame.setPluginData("ai-analysis-default", "");
-  } catch (error) {
-    debugFixLog("Failed to clear old AI data", {
-      error: error instanceof Error ? error.message : String(error)
-    });
-  }
-
-  await maybeRequestAiForFrame(frame, { force: true });
-}
-
-function resolveLiveFrame(frameId: string): FrameNode | null {
-  try {
-    const node = figma.getNodeById(frameId);
-    if (node && node.type === "FRAME" && !(node as FrameNode).removed) {
-      return node as FrameNode;
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    debugFixLog("failed to resolve frame after ai request", {
-      frameId,
-      errorMessage: message
-    });
-  }
-  return null;
-}
-
-async function maybeRequestAiForFrame(frame: FrameNode, options?: { readonly force?: boolean }): Promise<void> {
-  const cachedKey = getCachedAiApiKey();
-  if (!cachedKey) {
-    setAiStatus("missing-key", null);
-    const current = getSelectionFrame();
-    postToUI({ type: "selection-update", payload: createSelectionState(current) });
-    return;
-  }
-
-  if (frame.removed) {
-    debugFixLog("skipping ai request because frame was removed before fetch", { frameId: frame.id });
-    return;
-  }
-
-  const existingSignals = readAiSignals(frame);
-  const existingAdvice = readLayoutAdvice(frame);
-  if (!options?.force && existingSignals && existingAdvice) {
-    return;
-  }
-
-  const requestId = ++aiRequestToken;
-  setAiStatus("fetching", null);
-  const currentSelection = getSelectionFrame();
-  if (currentSelection && currentSelection.id === frame.id) {
-    postToUI({ type: "selection-update", payload: createSelectionState(frame) });
-  }
-
-  let encounteredError = false;
-
-  try {
-    debugFixLog("requesting ai insights with recovery", { frameId: frame.id, nodeName: frame.name });
-    trackEvent("AI_ANALYSIS_REQUESTED", { frameId: frame.id, requestId });
-    const result = await requestAiInsightsWithRecovery(frame, cachedKey);
-
-    if (!result.success) {
-      encounteredError = true;
-      const errorDetail = `AI analysis failed (${result.recoveryMethod}): ${result.error || "Unknown error"}`;
-      setAiStatus("error", errorDetail);
-      trackEvent("AI_ANALYSIS_FAILED", {
-        frameId: frame.id,
-        reason: errorDetail,
-        recoveryMethod: result.recoveryMethod,
-        confidence: result.confidence
-      });
-      return;
-    }
-
-    // Log recovery method for telemetry
-    if (result.recoveryMethod && result.recoveryMethod !== "full-analysis") {
-      debugFixLog("AI analysis used recovery method", {
-        method: result.recoveryMethod,
-        confidence: result.confidence
-      });
-      trackEvent("AI_ANALYSIS_RECOVERED", {
-        frameId: frame.id,
-        recoveryMethod: result.recoveryMethod,
-        confidence: result.confidence
-      });
-    }
-
-    const targetFrame = resolveLiveFrame(frame.id);
-    if (!targetFrame) {
-      debugFixLog("ai insights skipped because frame no longer exists", { frameId: frame.id });
-      return;
-    }
-
-    if (result.signals) {
-      targetFrame.setPluginData(AI_SIGNALS_KEY, JSON.stringify(result.signals));
-      // Propagate roles to individual nodes so they survive cloning
-      propagateRolesToNodes(result.signals);
-    } else {
-      targetFrame.setPluginData(AI_SIGNALS_KEY, "");
-    }
-    if (result.layoutAdvice) {
-      targetFrame.setPluginData(LAYOUT_ADVICE_KEY, JSON.stringify(result.layoutAdvice));
-    } else {
-      targetFrame.setPluginData(LAYOUT_ADVICE_KEY, "");
-    }
-    debugFixLog("ai insights stored on frame", {
-      frameId: targetFrame.id,
-      roles: result.signals?.roles.length ?? 0,
-      layoutEntries: result.layoutAdvice?.entries.length ?? 0
-    });
-    trackEvent("AI_ANALYSIS_COMPLETED", {
-      frameId: targetFrame.id,
-      roleCount: result.signals?.roles.length ?? 0,
-      qaCount: result.signals?.qa?.length ?? 0,
-      layoutEntries: result.layoutAdvice?.entries.length ?? 0
-    });
-  } catch (error) {
-    encounteredError = true;
-    const detail = error instanceof Error ? error.message : String(error);
-    setAiStatus("error", detail);
-    console.error(`${PLUGIN_NAME} AI request failed`, error);
-    trackEvent("AI_ANALYSIS_FAILED", { frameId: frame.id, reason: detail });
-  } finally {
-    if (!encounteredError) {
-      resetAiStatus();
-    }
-    if (requestId === aiRequestToken) {
-      const current = getSelectionFrame();
-      postToUI({ type: "selection-update", payload: createSelectionState(current) });
-    }
-  }
-}
-
-async function handleSetLayoutAdvice(advice: LayoutAdvice): Promise<void> {
-  const frame = getSelectionFrame();
-  if (!frame) {
-    postToUI({ type: "error", payload: { message: "Select a single frame before applying layout advice." } });
-    return;
-  }
-
-  try {
-    const normalized = normalizeLayoutAdvice(advice);
-    if (!normalized) {
-      postToUI({ type: "error", payload: { message: "Layout advice was empty or malformed." } });
-      return;
-    }
-    const serialized = JSON.stringify(normalized);
-    frame.setPluginData(LAYOUT_ADVICE_KEY, serialized);
-    debugFixLog("layout advice stored on selection", {
-      entries: normalized.entries?.length ?? 0
-    });
-    figma.notify("Layout advice applied to selection.");
-    const selectionState = createSelectionState(frame);
-    postToUI({ type: "selection-update", payload: selectionState });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to apply layout advice.";
-    postToUI({ type: "error", payload: { message } });
-  }
 }
 
 async function handleDesignForTikTok(): Promise<void> {

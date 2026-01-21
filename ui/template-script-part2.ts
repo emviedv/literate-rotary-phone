@@ -74,27 +74,8 @@ export const UI_SCRIPT_PART2 = /* js */ `
       updateSafeAreaValue();
       updateSafeAreaPresetDisplay();
 
-      generateButton.addEventListener("click", () => {
-        const targets = getSelectedTargetIds();
-        if (targets.length === 0) {
-          statusMessage.textContent = "Select at least one target size.";
-          return;
-        }
-        setBusy(true, "Generating variants…");
-        parent.postMessage(
-          {
-            pluginMessage: {
-              type: "generate-variants",
-              payload: {
-                targetIds: targets,
-                safeAreaRatio: Number(safeAreaSlider.value),
-                layoutPatterns: layoutSelections
-              }
-            }
-          },
-          "*"
-        );
-      });
+      // Generate button click handler removed - feature disabled
+      // Use "Design for TikTok" instead
 
       function setBusy(active, message) {
         isBusy = active;
