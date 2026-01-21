@@ -86,6 +86,12 @@ export interface NodeSummary {
    * repositioned independently.
    */
   readonly isComponentInstance?: boolean;
+  /**
+   * True if this node's direct parent has active auto-layout (layoutMode !== "NONE").
+   * Nodes with this flag should NOT receive explicit position specs - they flow
+   * with their parent container automatically.
+   */
+  readonly inAutoLayoutParent?: boolean;
 }
 
 /**
@@ -357,15 +363,17 @@ export function summarizeFrameEnhanced(frame: FrameNode): EnhancedFrameSummary {
 
   // Collect all visible nodes with priority calculation
   // Track parent IDs for hierarchy awareness
-  const allNodes: Array<NodePriority & { parentId?: string }> = [];
-  const queue: Array<{ node: SceneNode; depth: number; parentId?: string }> =
-    frame.children.map(child => ({ node: child, depth: 0, parentId: frame.id }));
+  const allNodes: Array<NodePriority & { parentId?: string; parentIsAutoLayout?: boolean }> = [];
+  // Track whether parent has auto-layout (frame root has layoutMode)
+  const frameIsAutoLayout = frame.layoutMode !== "NONE";
+  const queue: Array<{ node: SceneNode; depth: number; parentId?: string; parentIsAutoLayout?: boolean }> =
+    frame.children.map(child => ({ node: child, depth: 0, parentId: frame.id, parentIsAutoLayout: frameIsAutoLayout }));
 
   let maxDepthReached = 0;
   let totalNodesVisited = 0;
 
   while (queue.length > 0) {
-    const { node, depth, parentId } = queue.shift()!;
+    const { node, depth, parentId, parentIsAutoLayout } = queue.shift()!;
     totalNodesVisited++;
 
     if (!node.visible || depth > ENHANCED_ANALYSIS_CONFIG.MAX_DEPTH) {
@@ -376,12 +384,14 @@ export function summarizeFrameEnhanced(frame: FrameNode): EnhancedFrameSummary {
 
     // Calculate priority for this node
     const priorityData = calculateNodePriority(node, frameArea, depth);
-    allNodes.push({ ...priorityData, parentId });
+    allNodes.push({ ...priorityData, parentId, parentIsAutoLayout });
 
     // Add children to queue for deeper analysis
+    // Determine if this node is an auto-layout container for its children
+    const nodeIsAutoLayout = "layoutMode" in node && node.layoutMode !== "NONE";
     if ("children" in node && depth < ENHANCED_ANALYSIS_CONFIG.MAX_DEPTH) {
       for (const child of node.children) {
-        queue.push({ node: child, depth: depth + 1, parentId: node.id });
+        queue.push({ node: child, depth: depth + 1, parentId: node.id, parentIsAutoLayout: nodeIsAutoLayout });
       }
     }
   }
@@ -409,7 +419,7 @@ export function summarizeFrameEnhanced(frame: FrameNode): EnhancedFrameSummary {
   // Convert to node summaries
   const nodes: NodeSummary[] = selectedNodes
     .map((priorityNode, index) =>
-      describeNode(priorityNode.node, originX, originY, index, priorityNode.depth === 0, priorityNode.parentId, frame.width, frame.height))
+      describeNode(priorityNode.node, originX, originY, index, priorityNode.depth === 0, priorityNode.parentId, frame.width, frame.height, priorityNode.parentIsAutoLayout))
     .filter((summary): summary is NodeSummary => summary !== null);
 
   const totalPriority = selectedNodes.reduce((sum, node) => sum + node.priority, 0);
@@ -446,9 +456,10 @@ export function summarizeFrame(frame: FrameNode): FrameSummary {
   const originY = frameBounds?.y ?? 0;
 
   const nodes: NodeSummary[] = [];
-  // Track parent IDs for hierarchy awareness
-  const queue: Array<{ node: SceneNode; parentId: string }> =
-    frame.children.map(child => ({ node: child, parentId: frame.id }));
+  // Track parent IDs for hierarchy awareness and auto-layout status
+  const frameIsAutoLayout = frame.layoutMode !== "NONE";
+  const queue: Array<{ node: SceneNode; parentId: string; parentIsAutoLayout: boolean }> =
+    frame.children.map(child => ({ node: child, parentId: frame.id, parentIsAutoLayout: frameIsAutoLayout }));
   let zIndex = 0;
 
   while (queue.length > 0 && nodes.length < MAX_SUMMARY_NODES) {
@@ -456,15 +467,17 @@ export function summarizeFrame(frame: FrameNode): FrameSummary {
     if (!item || !item.node.visible) {
       continue;
     }
-    const { node, parentId } = item;
+    const { node, parentId, parentIsAutoLayout } = item;
     const isDirectChild = node.parent?.id === frame.id;
-    const description = describeNode(node, originX, originY, zIndex, isDirectChild, parentId, frame.width, frame.height);
+    const description = describeNode(node, originX, originY, zIndex, isDirectChild, parentId, frame.width, frame.height, parentIsAutoLayout);
     zIndex++;
     if (description) {
       nodes.push(description);
     }
     if ("children" in node) {
-      queue.push(...node.children.map(child => ({ node: child, parentId: node.id })));
+      // Determine if this node is auto-layout for its children
+      const nodeIsAutoLayout = "layoutMode" in node && node.layoutMode !== "NONE";
+      queue.push(...node.children.map(child => ({ node: child, parentId: node.id, parentIsAutoLayout: nodeIsAutoLayout })));
     }
   }
 
@@ -646,7 +659,8 @@ function describeNode(
   isDirectChild: boolean = false,
   parentId?: string,
   frameWidth: number = 1920,
-  frameHeight: number = 1080
+  frameHeight: number = 1080,
+  parentIsAutoLayout: boolean = false
 ): NodeSummary | null {
   if (!("absoluteBoundingBox" in node) || !node.absoluteBoundingBox) {
     return null;
@@ -749,6 +763,7 @@ function describeNode(
     ...(childCount !== undefined ? { childCount } : {}),
     ...(inferredRole !== "unknown" ? { inferredRole } : {}),
     ...(node.type === "INSTANCE" ? { isComponentInstance: true } : {}),
+    ...(parentIsAutoLayout ? { inAutoLayoutParent: true } : {}),
     ...layoutDetails
   };
 }

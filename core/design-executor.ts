@@ -101,8 +101,22 @@ export async function createDesignVariant(
   // Load fonts for text nodes
   await loadFontsForFrame(variant, fontCache);
 
+  // Track containers that have been repositioned
+  // Children of repositioned containers should NOT have their positions overridden
+  // (they already moved with the parent)
+  const repositionedContainerIds = new Set<string>();
+
   // Apply each node spec
   for (const spec of specs.nodes) {
+    // Diagnostic: Log each spec before application
+    debugFixLog("Processing spec", {
+      nodeId: spec.nodeId,
+      nodeName: spec.nodeName,
+      visible: spec.visible,
+      hasPosition: !!spec.position,
+      position: spec.position,
+      hasSize: !!spec.size
+    });
     try {
       const targetNode = nodeMap[spec.nodeId];
 
@@ -110,9 +124,39 @@ export async function createDesignVariant(
         // Try finding by name as fallback
         const foundByName = findNodeByName(variant, spec.nodeName);
         if (foundByName) {
-          // Check if this is a child of an atomic group
+          // Check if this node's parent was repositioned
+          // If so, skip position override (child already moved with parent)
+          if (spec.position && foundByName.parent && repositionedContainerIds.has(foundByName.parent.id)) {
+            debugFixLog("Skipping position spec for child of repositioned container", {
+              nodeId: spec.nodeId,
+              nodeName: spec.nodeName,
+              parentId: foundByName.parent.id,
+              parentName: foundByName.parent.name
+            });
+            // Still apply other spec properties (visibility, size) but NOT position
+            const specWithoutPosition = { ...spec, position: undefined };
+            const isAtomicChild = atomicGroupChildIds.has(foundByName.id);
+            const isAtomicInstance = atomicInstanceIds.has(foundByName.id);
+            applyNodeSpec(foundByName, specWithoutPosition, isAtomicChild, isAtomicInstance);
+            appliedSpecs++;
+            continue;
+          }
+
+          // Check if this is a child of an atomic group OR is an atomic instance itself
           const isAtomicChild = atomicGroupChildIds.has(foundByName.id);
-          applyNodeSpec(foundByName, spec, isAtomicChild);
+          const isAtomicInstance = atomicInstanceIds.has(foundByName.id);
+          applyNodeSpec(foundByName, spec, isAtomicChild, isAtomicInstance);
+
+          // Track if this was a container that got repositioned
+          if (spec.position && "children" in foundByName && (foundByName as FrameNode).children.length > 0) {
+            repositionedContainerIds.add(foundByName.id);
+            debugFixLog("Tracked repositioned container", {
+              nodeId: foundByName.id,
+              nodeName: foundByName.name,
+              childCount: (foundByName as FrameNode).children.length
+            });
+          }
+
           appliedSpecs++;
         } else {
           debugFixLog("Node not found for spec", {
@@ -124,9 +168,39 @@ export async function createDesignVariant(
         continue;
       }
 
-      // Check if this is a child of an atomic group
+      // Check if this node's parent was repositioned
+      // If so, skip position override (child already moved with parent)
+      if (spec.position && targetNode.parent && repositionedContainerIds.has(targetNode.parent.id)) {
+        debugFixLog("Skipping position spec for child of repositioned container", {
+          nodeId: spec.nodeId,
+          nodeName: spec.nodeName,
+          parentId: targetNode.parent.id,
+          parentName: targetNode.parent.name
+        });
+        // Still apply other spec properties (visibility, size) but NOT position
+        const specWithoutPosition = { ...spec, position: undefined };
+        const isAtomicChild = atomicGroupChildIds.has(targetNode.id);
+        const isAtomicInstance = atomicInstanceIds.has(targetNode.id);
+        applyNodeSpec(targetNode, specWithoutPosition, isAtomicChild, isAtomicInstance);
+        appliedSpecs++;
+        continue;
+      }
+
+      // Check if this is a child of an atomic group OR is an atomic instance itself
       const isAtomicChild = atomicGroupChildIds.has(targetNode.id);
-      applyNodeSpec(targetNode, spec, isAtomicChild);
+      const isAtomicInstance = atomicInstanceIds.has(targetNode.id);
+      applyNodeSpec(targetNode, spec, isAtomicChild, isAtomicInstance);
+
+      // Track if this was a container that got repositioned
+      if (spec.position && "children" in targetNode && (targetNode as FrameNode).children.length > 0) {
+        repositionedContainerIds.add(targetNode.id);
+        debugFixLog("Tracked repositioned container", {
+          nodeId: targetNode.id,
+          nodeName: targetNode.name,
+          childCount: (targetNode as FrameNode).children.length
+        });
+      }
+
       appliedSpecs++;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -210,6 +284,9 @@ export async function applyEvaluationAdjustments(
   // Identify atomic group children (should not be repositioned)
   const atomicGroupChildIds = collectAtomicGroupChildren(variant);
 
+  // Identify atomic instances (should not be resized)
+  const atomicInstanceIds = collectAtomicInstanceIds(variant);
+
   for (const adjustment of adjustments) {
     try {
       // Find node in variant - adjustments reference variant node IDs
@@ -229,11 +306,12 @@ export async function applyEvaluationAdjustments(
         continue;
       }
 
-      // Check if this is a child of an atomic group
+      // Check if this is a child of an atomic group OR is an atomic instance itself
       const isAtomicChild = atomicGroupChildIds.has(targetNode.id);
+      const isAtomicInstance = atomicInstanceIds.has(targetNode.id);
 
       // Apply the adjustment spec
-      applyNodeSpec(targetNode, adjustment, isAtomicChild);
+      applyNodeSpec(targetNode, adjustment, isAtomicChild, isAtomicInstance);
       applied++;
 
       debugFixLog("Adjustment applied", {
@@ -362,8 +440,14 @@ function shouldBreakAutoLayout(
  * @param node - The Figma node to modify
  * @param spec - The specification from AI
  * @param isAtomicChild - If true, skip ALL modifications (child of atomic group like iPhone mockup)
+ * @param isAtomicInstance - If true, skip size/scale changes but allow position (the instance itself)
  */
-function applyNodeSpec(node: SceneNode, spec: NodeSpec, isAtomicChild: boolean = false): void {
+function applyNodeSpec(
+  node: SceneNode,
+  spec: NodeSpec,
+  isAtomicChild: boolean = false,
+  isAtomicInstance: boolean = false
+): void {
   // CRITICAL: Skip ALL modifications for atomic group children
   // They must maintain their exact state relative to parent - including visibility,
   // size, scale, and position. Modifying any of these breaks component integrity
@@ -386,82 +470,146 @@ function applyNodeSpec(node: SceneNode, spec: NodeSpec, isAtomicChild: boolean =
   node.visible = true;
 
   // Apply position - only break auto-layout if position change is significant
-  // AND this is not a child of an atomic group
-  if (spec.position && !isAtomicChild) {
-    const needsRepositioning = shouldBreakAutoLayout(node, spec.position);
+  // Position is safe for atomic instances (moves the whole component)
+  if (spec.position) {
+    // SAFEGUARD: Check if parent is auto-layout - if so, skip position to preserve flow
+    // This catches cases where the AI mistakenly provides positions for auto-layout children
+    const parentIsAutoLayout = node.parent &&
+      "layoutMode" in node.parent &&
+      (node.parent as FrameNode).layoutMode !== "NONE";
 
-    if (needsRepositioning) {
-      // Break out of auto-layout for repositioning
-      if ("layoutPositioning" in node && node.layoutPositioning === "AUTO") {
-        try {
-          (node as FrameNode).layoutPositioning = "ABSOLUTE";
-          debugFixLog("Breaking auto-layout for significant repositioning", {
-            nodeId: spec.nodeId,
-            nodeName: spec.nodeName,
-            currentPos: { x: node.x, y: node.y },
-            targetPos: spec.position
-          });
-        } catch {
-          // Some nodes don't support this
-        }
-      }
-
-      try {
-        node.x = spec.position.x;
-        node.y = spec.position.y;
-      } catch (error) {
-        debugFixLog("Failed to set position", {
-          nodeId: spec.nodeId,
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-    } else {
-      // Position change is minimal - preserve auto-layout flow
-      debugFixLog("Skipping repositioning to preserve auto-layout", {
+    if (parentIsAutoLayout) {
+      debugFixLog("Skipping position for auto-layout child", {
         nodeId: spec.nodeId,
         nodeName: spec.nodeName,
-        currentPos: { x: node.x, y: node.y },
-        targetPos: spec.position,
-        deltaX: Math.abs(node.x - spec.position.x),
-        deltaY: Math.abs(node.y - spec.position.y)
+        parentLayoutMode: (node.parent as FrameNode).layoutMode,
+        reason: "Child of auto-layout container - position would break flow"
       });
-    }
-  }
+      // Don't apply position - let it flow with parent
+    } else {
+      const needsRepositioning = shouldBreakAutoLayout(node, spec.position);
 
-  // Apply size
-  if (spec.size && "resize" in node) {
-    try {
-      (node as FrameNode).resize(spec.size.width, spec.size.height);
-    } catch {
-      // Try resizeWithoutConstraints
-      try {
-        if ("resizeWithoutConstraints" in node) {
-          (node as FrameNode).resizeWithoutConstraints(spec.size.width, spec.size.height);
+      if (needsRepositioning) {
+        // Break out of auto-layout for repositioning
+        if ("layoutPositioning" in node && node.layoutPositioning === "AUTO") {
+          try {
+            (node as FrameNode).layoutPositioning = "ABSOLUTE";
+            debugFixLog("Breaking auto-layout for significant repositioning", {
+              nodeId: spec.nodeId,
+              nodeName: spec.nodeName,
+              currentPos: { x: node.x, y: node.y },
+              targetPos: spec.position
+            });
+          } catch {
+            // Some nodes don't support this
+          }
         }
-      } catch (error) {
-        debugFixLog("Failed to resize node", {
+
+        try {
+          node.x = spec.position.x;
+          node.y = spec.position.y;
+        } catch (error) {
+          debugFixLog("Failed to set position", {
+            nodeId: spec.nodeId,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+      } else {
+        // Position change is minimal - preserve auto-layout flow
+        debugFixLog("Skipping repositioning to preserve auto-layout", {
           nodeId: spec.nodeId,
-          error: error instanceof Error ? error.message : String(error)
+          nodeName: spec.nodeName,
+          currentPos: { x: node.x, y: node.y },
+          targetPos: spec.position,
+          deltaX: Math.abs(node.x - spec.position.x),
+          deltaY: Math.abs(node.y - spec.position.y)
         });
       }
     }
   }
 
-  // Apply scale factor (if size not explicitly set)
-  if (spec.scaleFactor && spec.scaleFactor !== 1.0 && !spec.size) {
-    try {
-      if ("width" in node && "height" in node && "resize" in node) {
-        const frameNode = node as FrameNode;
-        const newWidth = frameNode.width * spec.scaleFactor;
-        const newHeight = frameNode.height * spec.scaleFactor;
-        frameNode.resize(newWidth, newHeight);
-      }
-    } catch (error) {
-      debugFixLog("Failed to apply scale factor", {
+  // Apply size - SKIP for atomic instances, PRESERVE ASPECT RATIO for images
+  if (spec.size && "resize" in node) {
+    if (isAtomicInstance) {
+      debugFixLog("Skipping size change for atomic instance", {
         nodeId: spec.nodeId,
-        scaleFactor: spec.scaleFactor,
-        error: error instanceof Error ? error.message : String(error)
+        nodeName: spec.nodeName,
+        requestedSize: spec.size,
+        reason: "Resizing component instance breaks internal structure"
       });
+    } else {
+      // Check if this node has an image fill - images need proportional scaling
+      const isImage = hasImageFill(node);
+
+      let targetWidth = spec.size.width;
+      let targetHeight = spec.size.height;
+
+      if (isImage && "width" in node && "height" in node) {
+        // Preserve aspect ratio for images - calculate proportional size
+        const frameNode = node as FrameNode;
+        const originalAspect = frameNode.width / frameNode.height;
+
+        // Use the larger scale factor to determine final size
+        // This ensures the image fits approximately where AI wanted it (cover behavior)
+        const scaleByWidth = spec.size.width / frameNode.width;
+        const scaleByHeight = spec.size.height / frameNode.height;
+        const scale = Math.max(scaleByWidth, scaleByHeight);
+
+        targetWidth = frameNode.width * scale;
+        targetHeight = frameNode.height * scale;
+
+        debugFixLog("Preserving image aspect ratio", {
+          nodeId: spec.nodeId,
+          nodeName: spec.nodeName,
+          original: { w: frameNode.width, h: frameNode.height, aspect: originalAspect },
+          specSize: spec.size,
+          scale,
+          adjusted: { w: targetWidth, h: targetHeight }
+        });
+      }
+
+      try {
+        (node as FrameNode).resize(targetWidth, targetHeight);
+      } catch {
+        // Try resizeWithoutConstraints
+        try {
+          if ("resizeWithoutConstraints" in node) {
+            (node as FrameNode).resizeWithoutConstraints(targetWidth, targetHeight);
+          }
+        } catch (error) {
+          debugFixLog("Failed to resize node", {
+            nodeId: spec.nodeId,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+    }
+  }
+
+  // Apply scale factor (if size not explicitly set) - SKIP for atomic instances
+  if (spec.scaleFactor && spec.scaleFactor !== 1.0 && !spec.size) {
+    if (isAtomicInstance) {
+      debugFixLog("Skipping scale factor for atomic instance", {
+        nodeId: spec.nodeId,
+        nodeName: spec.nodeName,
+        requestedScale: spec.scaleFactor,
+        reason: "Scaling component instance breaks internal structure"
+      });
+    } else {
+      try {
+        if ("width" in node && "height" in node && "resize" in node) {
+          const frameNode = node as FrameNode;
+          const newWidth = frameNode.width * spec.scaleFactor;
+          const newHeight = frameNode.height * spec.scaleFactor;
+          frameNode.resize(newWidth, newHeight);
+        }
+      } catch (error) {
+        debugFixLog("Failed to apply scale factor", {
+          nodeId: spec.nodeId,
+          scaleFactor: spec.scaleFactor,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
     }
   }
 
@@ -627,6 +775,16 @@ function isImportantContent(node: SceneNode): boolean {
     if (fills?.some((f) => f.type === "IMAGE")) return true;
   }
   return false;
+}
+
+/**
+ * Checks if a node contains an image fill that should preserve aspect ratio.
+ * Image nodes should not be arbitrarily stretched - they need proportional scaling.
+ */
+function hasImageFill(node: SceneNode): boolean {
+  if (!("fills" in node)) return false;
+  const fills = node.fills as readonly Paint[] | undefined;
+  return fills?.some((f) => f.type === "IMAGE") ?? false;
 }
 
 // ============================================================================

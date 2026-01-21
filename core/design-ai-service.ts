@@ -15,6 +15,12 @@ import {
   parseStage2Response,
   parseStage3Response
 } from "./design-prompts.js";
+import {
+  USE_STRUCTURED_OUTPUTS,
+  STAGE_1_SCHEMA,
+  STAGE_2_SCHEMA,
+  STAGE_3_SCHEMA
+} from "./design-schemas.js";
 import type { DesignPlan, DesignSpecs, DesignEvaluation, StageResult } from "../types/design-types.js";
 
 // ============================================================================
@@ -78,24 +84,41 @@ interface ChatMessage {
   readonly content: MessageContent;
 }
 
+/** JSON Schema configuration for structured outputs */
+interface JsonSchemaConfig {
+  readonly name: string;
+  readonly strict: boolean;
+  readonly schema: object;
+}
+
 // ============================================================================
 // Core Request Function
 // ============================================================================
 
 /**
  * Makes a design-focused request to OpenAI.
+ *
+ * @param apiKey - OpenAI API key
+ * @param messages - Chat messages to send
+ * @param jsonSchema - Optional JSON Schema for structured outputs (uses json_schema format)
  */
 async function makeDesignAiRequest(
   apiKey: string,
-  messages: readonly ChatMessage[]
+  messages: readonly ChatMessage[],
+  jsonSchema?: JsonSchemaConfig
 ): Promise<{ success: boolean; content?: string; error?: string; durationMs?: number }> {
   const startTime = Date.now();
+
+  // Use structured outputs when schema provided and feature enabled
+  const responseFormat = USE_STRUCTURED_OUTPUTS && jsonSchema
+    ? { type: "json_schema" as const, json_schema: jsonSchema }
+    : { type: "json_object" as const };
 
   const body = {
     model: OPENAI_MODEL,
     temperature: OPENAI_TEMPERATURE,
     max_tokens: OPENAI_MAX_TOKENS,
-    response_format: { type: "json_object" },
+    response_format: responseFormat,
     messages
   };
 
@@ -104,7 +127,9 @@ async function makeDesignAiRequest(
     messageCount: messages.length,
     hasImage: messages.some(
       (m) => Array.isArray(m.content) && m.content.some((p) => p.type === "image_url")
-    )
+    ),
+    responseFormat: responseFormat.type,
+    schemaName: jsonSchema?.name ?? "none"
   });
 
   try {
@@ -221,7 +246,7 @@ export async function requestStage1Analysis(
     userMessageWithImage(imageBase64, buildStage1Prompt(nodeTreeJson))
   ];
 
-  const result = await makeDesignAiRequest(apiKey, messages);
+  const result = await makeDesignAiRequest(apiKey, messages, STAGE_1_SCHEMA);
 
   if (!result.success || !result.content) {
     return {
@@ -274,7 +299,7 @@ export async function requestStage2Specification(
     )
   ];
 
-  const result = await makeDesignAiRequest(apiKey, messages);
+  const result = await makeDesignAiRequest(apiKey, messages, STAGE_2_SCHEMA);
 
   if (!result.success || !result.content) {
     return {
@@ -326,7 +351,7 @@ export async function requestStage3Evaluation(
     )
   ];
 
-  const result = await makeDesignAiRequest(apiKey, messages);
+  const result = await makeDesignAiRequest(apiKey, messages, STAGE_3_SCHEMA);
 
   if (!result.success || !result.content) {
     return {

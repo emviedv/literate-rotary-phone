@@ -153,7 +153,7 @@ async function handleDesignForTikTok(): Promise<void> {
 
     const result = await executeDesignFlow(frame, {
       apiKey,
-      runEvaluation: false, // Skip Stage 3 for speed; can enable later
+      runEvaluation: true, // Enable Stage 3 evaluation to catch positioning issues
       onStatus: (status: DesignStatus) => {
         postToUI({
           type: "design-status",
