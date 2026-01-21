@@ -66,6 +66,29 @@ export const UI_SCRIPT_PART3 = /* js */ `
       refreshAiButton.addEventListener("click", requestAiRefresh);
       copySelectionButton.addEventListener("click", copySelectionJson);
 
+      function requestDesignForTikTok() {
+        if (!selectionReady) {
+          if (designTikTokStatus) {
+            designTikTokStatus.textContent = "Select a frame first.";
+            designTikTokStatus.className = "design-status error";
+          }
+          return;
+        }
+        if (!aiConfigured || aiStatusState === "missing-key") {
+          if (designTikTokStatus) {
+            designTikTokStatus.textContent = "AI key not available. Contact an admin.";
+            designTikTokStatus.className = "design-status error";
+          }
+          return;
+        }
+        setDesigningState(true, "Starting TikTok design...");
+        parent.postMessage({ pluginMessage: { type: "design-for-tiktok" } }, "*");
+      }
+
+      if (designTikTokButton) {
+        designTikTokButton.addEventListener("click", requestDesignForTikTok);
+      }
+
       async function copyDebugLog() {
         if (!debugLogOutput || !debugLogOutput.textContent) {
           statusMessage.textContent = "No debug log to copy.";
@@ -174,6 +197,18 @@ export const UI_SCRIPT_PART3 = /* js */ `
             }
             break;
           }
+          case "design-status": {
+            setDesigningState(true, message.payload.message || "Designing...");
+            break;
+          }
+          case "design-complete": {
+            setDesignSuccess("TikTok design created: " + (message.payload.variantName || "Variant"));
+            break;
+          }
+          case "design-error": {
+            setDesignError(message.payload.message || "Design failed.");
+            break;
+          }
           default:
             console.warn("Unhandled UI message", message);
         }
@@ -182,6 +217,7 @@ export const UI_SCRIPT_PART3 = /* js */ `
       updateSafeAreaValue();
       updateAiStatusDisplay();
       updateDebugControls();
+      updateDesignTikTokButton();
       parent.postMessage({ pluginMessage: { type: "request-initial-state" } }, "*");
     })();
   

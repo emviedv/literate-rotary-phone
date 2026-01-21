@@ -519,6 +519,7 @@ function normalizeEntry(entry: unknown): LayoutAdviceEntry | null {
   const restructure = normalizeRestructure((entry as { restructure?: unknown }).restructure);
   const positioning = normalizePositioning((entry as { positioning?: unknown }).positioning);
   const warnings = normalizeWarnings((entry as { warnings?: unknown }).warnings);
+  const containerOverrides = normalizeContainerOverrides((entry as { containerOverrides?: unknown }).containerOverrides);
 
   // Try to get options array first
   const options = Array.isArray((entry as { options?: unknown[] }).options)
@@ -548,7 +549,11 @@ function normalizeEntry(entry: unknown): LayoutAdviceEntry | null {
     ];
   }
 
-  if (normalizedOptions.length === 0) {
+  // Allow entries without patterns IF they have freestyle positioning
+  // This supports the new Freestyle mode where patterns are optional
+  const hasFreestylePositioning = positioning && Object.keys(positioning).length > 0;
+
+  if (normalizedOptions.length === 0 && !hasFreestylePositioning) {
     return null;
   }
 
@@ -559,13 +564,51 @@ function normalizeEntry(entry: unknown): LayoutAdviceEntry | null {
     backgroundNodeId: typeof backgroundNodeId === "string" ? backgroundNodeId : undefined,
     options: normalizedOptions,
     description: typeof description === "string" ? description : undefined,
-    // New fields for transformation intelligence
     feasibility,
     restructure,
-    // Positioning is required - provide empty object for backwards compatibility with legacy responses
+    containerOverrides,
     positioning: positioning ?? {},
     warnings
   };
+}
+
+/**
+ * Normalizes container overrides from AI response.
+ */
+function normalizeContainerOverrides(raw: unknown): {
+  itemSpacing?: number;
+  padding?: { top?: number; right?: number; bottom?: number; left?: number };
+  primaryAxisAlignItems?: "MIN" | "CENTER" | "MAX" | "SPACE_BETWEEN";
+  counterAxisAlignItems?: "MIN" | "CENTER" | "MAX" | "BASELINE";
+} | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const obj = raw as Record<string, unknown>;
+
+  const result: any = {};
+
+  if (typeof obj.itemSpacing === "number") result.itemSpacing = obj.itemSpacing;
+
+  if (obj.padding && typeof obj.padding === "object") {
+    const pad = obj.padding as Record<string, unknown>;
+    const padding: any = {};
+    if (typeof pad.top === "number") padding.top = pad.top;
+    if (typeof pad.right === "number") padding.right = pad.right;
+    if (typeof pad.bottom === "number") padding.bottom = pad.bottom;
+    if (typeof pad.left === "number") padding.left = pad.left;
+    if (Object.keys(padding).length > 0) result.padding = padding;
+  }
+
+  const validPrimary = ["MIN", "CENTER", "MAX", "SPACE_BETWEEN"];
+  const validCounter = ["MIN", "CENTER", "MAX", "BASELINE"];
+
+  if (validPrimary.includes(obj.primaryAxisAlignItems as string)) {
+    result.primaryAxisAlignItems = obj.primaryAxisAlignItems;
+  }
+  if (validCounter.includes(obj.counterAxisAlignItems as string)) {
+    result.counterAxisAlignItems = obj.counterAxisAlignItems;
+  }
+
+  return Object.keys(result).length > 0 ? result : undefined;
 }
 
 export function normalizeLayoutAdvice(raw: unknown): LayoutAdvice | null {

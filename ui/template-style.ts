@@ -379,5 +379,76 @@ export const UI_STYLE = /* css */ `
       font: inherit;
       color: inherit;
     }
-  
+
+    /* Design for TikTok section */
+    .design-tiktok-section {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 4px;
+    }
+    .design-tiktok-divider {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      color: var(--figma-color-text-tertiary, #98a2b3);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .design-tiktok-divider::before,
+    .design-tiktok-divider::after {
+      content: "";
+      flex: 1;
+      height: 1px;
+      background: var(--figma-color-border, rgba(16, 24, 40, 0.1));
+    }
+    .design-tiktok-button {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      background: linear-gradient(135deg, #25f4ee 0%, #fe2c55 50%, #000000 100%);
+      color: #ffffff;
+      border: none;
+      border-radius: 8px;
+      padding: 12px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.16s ease-in-out, transform 0.1s ease-in-out;
+    }
+    .design-tiktok-button:hover:not([disabled]) {
+      opacity: 0.9;
+      transform: translateY(-1px);
+    }
+    .design-tiktok-button:active:not([disabled]) {
+      transform: translateY(0);
+    }
+    .design-tiktok-button[disabled] {
+      background: var(--figma-color-bg-disabled, #d0d5dd);
+      color: var(--figma-color-text-disabled, #98a2b3);
+      cursor: not-allowed;
+    }
+    .design-tiktok-button.designing {
+      background: linear-gradient(135deg, #25f4ee 0%, #fe2c55 50%, #000000 100%);
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
+    }
+    .design-status {
+      font-size: 12px;
+      color: var(--figma-color-text-secondary, #475467);
+      text-align: center;
+      min-height: 18px;
+    }
+    .design-status.success {
+      color: #166534;
+    }
+    .design-status.error {
+      color: #b42318;
+    }
+
 `;

@@ -8,7 +8,10 @@ export type TelemetryEvent =
   | "AI_ANALYSIS_REQUESTED"
   | "AI_ANALYSIS_COMPLETED"
   | "AI_ANALYSIS_FAILED"
-  | "AI_ANALYSIS_RECOVERED";
+  | "AI_ANALYSIS_RECOVERED"
+  | "DESIGN_FOR_TIKTOK_STARTED"
+  | "DESIGN_FOR_TIKTOK_COMPLETED"
+  | "DESIGN_FOR_TIKTOK_FAILED";
 
 export interface TelemetryProperties {
   readonly [key: string]: string | number | boolean | undefined | null | readonly string[];

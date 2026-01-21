@@ -19,7 +19,7 @@ import { VARIANT_TARGETS } from "../types/targets.js";
 import { normalizeLayoutAdvice } from "./layout-advice.js";
 import { debugFixLog } from "./debug.js";
 import { sanitizeAiSignals } from "./ai-sanitization.js";
-import { summarizeFrame } from "./ai-frame-summary.js";
+import { summarizeFrameEnhanced } from "./ai-frame-summary.js";
 import {
   makeOpenAiRequest,
   systemMessage,
@@ -38,7 +38,7 @@ import {
   buildLayoutUserMessage,
   visionFacesToAiFaces
 } from "./ai-layout-prompt.js";
-import { OPENAI_MODEL } from "./ai-system-prompt.js";
+import { OPENAI_MODEL, buildSystemPrompt } from "./ai-system-prompt.js";
 
 /**
  * Result of the chained AI analysis.
@@ -107,8 +107,8 @@ export async function requestChainedAiInsights(
   }
 
   // Get frame summary for both phases
-  const frameSummary = summarizeFrame(frame);
-  const frameSummaryJson = JSON.stringify({ frame: frameSummary, targets: VARIANT_TARGETS });
+  const frameSummary = summarizeFrameEnhanced(frame);
+  // Note: frameSummary is used by executeLayoutPhase; JSON serialization happens there
 
   // Phase 1: Vision-only analysis
   let visionFacts: VisionFacts | null = null;
@@ -138,7 +138,7 @@ export async function requestChainedAiInsights(
 
   try {
     const layoutResult = await executeLayoutPhase(
-      frameSummaryJson,
+      frameSummary, // Pass raw object for batching
       imageBase64,
       visionFacts,
       apiKey,
@@ -224,65 +224,94 @@ async function executeVisionPhase(
 }
 
 /**
- * Executes Phase 2: Layout analysis.
+ * Executes Phase 2: Layout analysis (Batched).
  *
- * If visionFacts is provided, uses the fact-injected prompt.
- * If visionFacts is null, falls back to the original combined prompt.
+ * Splits the targets into batches to prevent timeouts and token limits.
+ * Runs batches in parallel and merges the results.
  */
 async function executeLayoutPhase(
-  frameSummaryJson: string,
+  frameSummary: any, // Raw summary object, not string
   imageBase64: string,
   visionFacts: VisionFacts | null,
   apiKey: string,
   model: string
 ): Promise<{ signals?: AiSignals; layoutAdvice?: LayoutAdvice }> {
-  let messages: ChatMessage[];
+  const BATCH_SIZE = 6;
+  const targetBatches = [];
 
-  if (visionFacts) {
-    // Use fact-injected prompt (no image needed for layout reasoning)
-    const systemPrompt = buildLayoutPromptWithFacts(visionFacts);
-    const userContent = buildLayoutUserMessage(frameSummaryJson, visionFacts);
-
-    messages = [
-      systemMessage(systemPrompt),
-      userMessage(userContent)
-    ];
-
-    debugFixLog("Using fact-injected layout prompt", {
-      faceCount: visionFacts.faceRegions.length,
-      subjectOccupancy: visionFacts.subjectOccupancy
-    });
-  } else {
-    // Fallback: Use original combined approach with image
-    // Import the original system prompt
-    const { SYSTEM_PROMPT } = await import("./ai-system-prompt.js");
-
-    messages = [
-      systemMessage(SYSTEM_PROMPT),
-      userMessageWithImage(imageBase64, frameSummaryJson)
-    ];
-
-    debugFixLog("Using fallback combined prompt (no vision facts)");
+  for (let i = 0; i < VARIANT_TARGETS.length; i += BATCH_SIZE) {
+    targetBatches.push(VARIANT_TARGETS.slice(i, i + BATCH_SIZE));
   }
 
-  const result = await makeOpenAiRequest({
-    apiKey,
-    messages,
-    model,
-    temperature: 0.1,
-    maxTokens: 8192
+  debugFixLog(`Splitting ${VARIANT_TARGETS.length} targets into ${targetBatches.length} batches`);
+
+  const batchPromises = targetBatches.map(async (batch, index) => {
+    const batchSummaryJson = JSON.stringify({ frame: frameSummary, targets: batch });
+    let messages: ChatMessage[];
+
+    if (visionFacts) {
+      // Use fact-injected prompt
+      const systemPrompt = buildLayoutPromptWithFacts(visionFacts, batch);
+      const userContent = buildLayoutUserMessage(batchSummaryJson, visionFacts, batch.length);
+
+      messages = [
+        systemMessage(systemPrompt),
+        userMessage(userContent)
+      ];
+    } else {
+      // Fallback: Use combined prompt
+      const systemPrompt = buildSystemPrompt(batch);
+      messages = [
+        systemMessage(systemPrompt),
+        userMessageWithImage(imageBase64, batchSummaryJson)
+      ];
+    }
+
+    debugFixLog(`Executing layout batch ${index + 1}/${targetBatches.length}`, {
+      targets: batch.map(t => t.id).join(", ")
+    });
+
+    const result = await makeOpenAiRequest({
+      apiKey,
+      messages,
+      model,
+      temperature: 0.1,
+      maxTokens: 8192
+    });
+
+    if (!result.success || !result.parsed) {
+      debugFixLog(`Batch ${index + 1} failed (non-fatal): ${result.error}`);
+      return null;
+    }
+
+    return {
+      signals: sanitizeAiSignals(result.parsed.signals),
+      layoutAdvice: normalizeLayoutAdvice(result.parsed.layoutAdvice)
+    };
   });
 
-  if (!result.success || !result.parsed) {
-    throw new Error(result.error ?? "Layout phase failed");
+  const resultsRaw = await Promise.all(batchPromises);
+  const results = resultsRaw.filter((r): r is NonNullable<typeof r> => r !== null);
+
+  if (results.length === 0) {
+    throw new Error("All AI batches failed.");
   }
 
-  const signals = sanitizeAiSignals(result.parsed.signals);
-  const layoutAdvice = normalizeLayoutAdvice(result.parsed.layoutAdvice);
+  // Merge results
+  // Signals: Take the first valid one (they should be identical/similar)
+  const signals = results.find(r => r.signals)?.signals;
+
+  // Layout Advice: Flatten all entries
+  const allEntries = results.flatMap(r => r.layoutAdvice?.entries ?? []);
+
+  debugFixLog("Merged layout batches", {
+    totalEntries: allEntries.length,
+    batches: results.length
+  });
 
   return {
-    signals: signals ?? undefined,
-    layoutAdvice: layoutAdvice ?? undefined
+    signals,
+    layoutAdvice: { entries: allEntries }
   };
 }
 

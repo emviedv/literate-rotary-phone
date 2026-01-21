@@ -34,6 +34,7 @@ export const UI_SCRIPT_PART2 = /* js */ `
         renderLayoutAdvice(state.layoutAdvice);
         updateGenerateState();
         updateDebugControls();
+        updateDesignTikTokButton();
       }
 
       // Removing old select event listener

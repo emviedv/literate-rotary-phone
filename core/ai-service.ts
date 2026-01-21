@@ -5,7 +5,7 @@ import { normalizeLayoutAdvice } from "./layout-advice.js";
 import { debugFixLog } from "./debug.js";
 import { FEW_SHOT_MESSAGES } from "./ai-few-shot-examples.js";
 import { sanitizeAiSignals } from "./ai-sanitization.js";
-import { summarizeFrame, summarizeFrameEnhanced, type EnhancedFrameSummary } from "./ai-frame-summary.js";
+import { summarizeFrameEnhanced, type EnhancedFrameSummary } from "./ai-frame-summary.js";
 import { analyzeTypographyHierarchy } from "./ai-hierarchy-detector.js";
 import { detectGridSystem } from "./ai-layout-grid-detector.js";
 import { detectContentRelationships } from "./ai-content-relationships.js";
@@ -21,6 +21,7 @@ import {
   tryExportFrameAsBase64,
   uint8ArrayToBase64 as _uint8ArrayToBase64
 } from "./ai-image-export.js";
+import { requestChainedAiInsights } from "./ai-orchestration.js";
 
 export interface AiServiceResult {
   readonly signals?: AiSignals;
@@ -39,7 +40,8 @@ export interface EnhancedAiServiceResult {
 
 export async function requestAiInsights(frame: FrameNode, apiKey: string): Promise<AiServiceResult | null> {
   const startTotal = Date.now();
-  const summary = summarizeFrame(frame);
+  // 1. Summarize the frame
+  const summary = summarizeFrameEnhanced(frame);
 
   // Export frame as image for vision analysis
   const imageBase64 = await tryExportFrameAsBase64(frame);
@@ -117,82 +119,99 @@ export async function requestEnhancedAiInsights(
   // Export frame as image for vision analysis
   const imageBase64 = await tryExportFrameAsBase64(frame);
 
-  // Build messages for OpenAI request
-  const requestData = JSON.stringify({
-    frame: enhancedSummary,
-    structural: structuralAnalysis,
-    targets: VARIANT_TARGETS
-  });
+  const BATCH_SIZE = 6;
+  const targetBatches = [];
+  for (let i = 0; i < VARIANT_TARGETS.length; i += BATCH_SIZE) {
+    targetBatches.push(VARIANT_TARGETS.slice(i, i + BATCH_SIZE));
+  }
 
-  const messages: ChatMessage[] = [
-    systemMessage(dynamicPrompt),
-    ...FEW_SHOT_MESSAGES as ChatMessage[],
-    createUserMessage(requestData, imageBase64)
-  ];
+  debugFixLog(`Splitting ${VARIANT_TARGETS.length} targets into ${targetBatches.length} batches`);
 
-  // Make OpenAI request using shared client
-  const result = await makeOpenAiRequest({ apiKey, messages });
+  try {
+    const batchPromises = targetBatches.map(async (batch, index) => {
+      // Build messages for OpenAI request
+      const requestData = JSON.stringify({
+        frame: enhancedSummary,
+        structural: structuralAnalysis,
+        targets: batch
+      });
 
-  if (!result.success) {
-    debugFixLog(result.error ?? "Enhanced AI request failed");
+      const messages: ChatMessage[] = [
+        systemMessage(dynamicPrompt),
+        ...FEW_SHOT_MESSAGES as ChatMessage[],
+        createUserMessage(requestData, imageBase64)
+      ];
+
+      // Make OpenAI request using shared client
+      return makeOpenAiRequest({ apiKey, messages });
+    });
+
+    const results = await Promise.all(batchPromises);
+
+    // Check for failures
+    const failedBatch = results.find(r => !r.success);
+    if (failedBatch) {
+      debugFixLog(failedBatch.error ?? "Enhanced AI request batch failed");
+      return {
+        success: false,
+        error: failedBatch.error
+      };
+    }
+
+    // Merge results
+    // Signals: Use the first valid one (should be consistent across batches)
+    const firstValidResult = results.find(r => r.parsed);
+    if (!firstValidResult?.parsed) {
+      debugFixLog("Enhanced AI response missing content in all batches");
+      return null;
+    }
+
+    const rawSignals = firstValidResult.parsed.signals;
+    const allEntries = results.flatMap(r => 
+      (r.parsed?.layoutAdvice as { entries?: unknown[] })?.entries ?? []
+    );
+
+    // Sanitize and enhance signals
+    const signals = sanitizeAiSignals(rawSignals);
+    const layoutAdvice = normalizeLayoutAdvice({ entries: allEntries });
+
+    // Debug: Log after normalization
+    debugFixLog("AI normalized results", {
+      signalsValid: !!signals,
+      layoutAdviceValid: !!layoutAdvice,
+      normalizedEntriesCount: layoutAdvice?.entries?.length ?? 0
+    });
+
+    // Create enhanced AI signals with structural analysis
+    const enhancedSignals: EnhancedAiSignals | undefined = signals ? {
+      ...signals,
+      layoutStructure: structuralAnalysis.layoutStructure,
+      contentRelationships: structuralAnalysis.contentRelationships,
+      colorTheme: structuralAnalysis.colorTheme,
+      analysisDepth: structuralAnalysis.analysisMetadata
+    } : undefined;
+
+    if (!enhancedSignals && !layoutAdvice) {
+      debugFixLog(`ENHANCED_AI_SERVICE_TOTAL took ${Date.now() - startTotal}ms`);
+      return null;
+    }
+
+    debugFixLog(`ENHANCED_AI_SERVICE_TOTAL took ${Date.now() - startTotal}ms`);
+    return {
+      success: true,
+      signals: enhancedSignals,
+      layoutAdvice: layoutAdvice ?? undefined,
+      enhancedSummary
+    };
+
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    debugFixLog(`Enhanced AI batch request error: ${errorMessage}`);
     return {
       success: false,
-      error: result.error
+      error: errorMessage
     };
   }
-
-  if (!result.parsed) {
-    debugFixLog("Enhanced AI response missing content");
-    return null;
-  }
-
-  // Debug: Log raw AI response structure
-  const rawSignals = result.parsed.signals as { roles?: unknown[]; qa?: unknown[] } | undefined;
-  const rawLayoutAdvice = result.parsed.layoutAdvice as { entries?: unknown[] } | undefined;
-  debugFixLog("AI raw response structure", {
-    hasSignals: !!result.parsed.signals,
-    signalsRolesCount: rawSignals?.roles?.length ?? 0,
-    signalsQaCount: rawSignals?.qa?.length ?? 0,
-    hasLayoutAdvice: !!result.parsed.layoutAdvice,
-    layoutAdviceEntriesCount: rawLayoutAdvice?.entries?.length ?? 0,
-    rawLayoutAdviceKeys: result.parsed.layoutAdvice ? Object.keys(result.parsed.layoutAdvice as object) : [],
-    firstEntryPreview: rawLayoutAdvice?.entries?.[0]
-      ? JSON.stringify(rawLayoutAdvice.entries[0]).slice(0, 500)
-      : "no entries"
-  });
-
-  // Sanitize and enhance signals
-  const signals = sanitizeAiSignals(result.parsed.signals);
-  const layoutAdvice = normalizeLayoutAdvice(result.parsed.layoutAdvice);
-
-  // Debug: Log after normalization
-  debugFixLog("AI normalized results", {
-    signalsValid: !!signals,
-    layoutAdviceValid: !!layoutAdvice,
-    normalizedEntriesCount: layoutAdvice?.entries?.length ?? 0
-  });
-
-  // Create enhanced AI signals with structural analysis
-  const enhancedSignals: EnhancedAiSignals | undefined = signals ? {
-    ...signals,
-    layoutStructure: structuralAnalysis.layoutStructure,
-    contentRelationships: structuralAnalysis.contentRelationships,
-    colorTheme: structuralAnalysis.colorTheme,
-    analysisDepth: structuralAnalysis.analysisMetadata
-  } : undefined;
-
-  if (!enhancedSignals && !layoutAdvice) {
-    debugFixLog(`ENHANCED_AI_SERVICE_TOTAL took ${Date.now() - startTotal}ms`);
-    return null;
-  }
-
-  debugFixLog(`ENHANCED_AI_SERVICE_TOTAL took ${Date.now() - startTotal}ms`);
-  return {
-    success: true,
-    signals: enhancedSignals,
-    layoutAdvice: layoutAdvice ?? undefined,
-    enhancedSummary
-  };
 }
 
 /**
@@ -282,6 +301,24 @@ export async function requestAiInsightsWithRecovery(
   targetId?: string
 ): Promise<EnhancedAiServiceResult> {
   try {
+    // 1. Try the new "Chained" (Vision -> Layout) analysis flow FIRST.
+    // This provides the highest quality results with "Fact Injection".
+    const chainedResult = await requestChainedAiInsights(frame, { apiKey });
+
+    if (chainedResult.success) {
+        return {
+            success: true,
+            signals: chainedResult.signals as EnhancedAiSignals,
+            layoutAdvice: chainedResult.layoutAdvice,
+            recoveryMethod: "chained-analysis",
+            confidence: 0.95 // High confidence for full AI analysis
+        };
+    }
+
+    // 2. If Chained Analysis failed, fall back to the robust error recovery system.
+    // This system can try simplified prompts, rule-based heuristics, or legacy methods.
+    debugFixLog(`Chained analysis failed: ${chainedResult.error}. Attempting recovery...`);
+
     // Import error recovery system dynamically to avoid circular dependencies
     const { analyzeFrameWithRecovery } = await import('./ai-error-recovery.js');
 

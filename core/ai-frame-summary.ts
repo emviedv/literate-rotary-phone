@@ -68,6 +68,13 @@ export interface NodeSummary {
   readonly zIndex?: number;
   readonly opacity?: number;
   readonly dominantColor?: string;
+  readonly isDirectChild?: boolean;
+  /** ID of the parent node (for understanding containment hierarchy) */
+  readonly parentId?: string;
+  /** Whether this node has children (FRAME, GROUP, etc.) */
+  readonly hasChildren?: boolean;
+  /** Number of direct children (helps AI understand container complexity) */
+  readonly childCount?: number;
 }
 
 /**
@@ -318,15 +325,16 @@ export function summarizeFrameEnhanced(frame: FrameNode): EnhancedFrameSummary {
   const frameArea = frame.width * frame.height;
 
   // Collect all visible nodes with priority calculation
-  const allNodes: NodePriority[] = [];
-  const queue: Array<{ node: SceneNode; depth: number }> =
-    frame.children.map(child => ({ node: child, depth: 0 }));
+  // Track parent IDs for hierarchy awareness
+  const allNodes: Array<NodePriority & { parentId?: string }> = [];
+  const queue: Array<{ node: SceneNode; depth: number; parentId?: string }> =
+    frame.children.map(child => ({ node: child, depth: 0, parentId: frame.id }));
 
   let maxDepthReached = 0;
   let totalNodesVisited = 0;
 
   while (queue.length > 0) {
-    const { node, depth } = queue.shift()!;
+    const { node, depth, parentId } = queue.shift()!;
     totalNodesVisited++;
 
     if (!node.visible || depth > ENHANCED_ANALYSIS_CONFIG.MAX_DEPTH) {
@@ -337,12 +345,12 @@ export function summarizeFrameEnhanced(frame: FrameNode): EnhancedFrameSummary {
 
     // Calculate priority for this node
     const priorityData = calculateNodePriority(node, frameArea, depth);
-    allNodes.push(priorityData);
+    allNodes.push({ ...priorityData, parentId });
 
     // Add children to queue for deeper analysis
     if ("children" in node && depth < ENHANCED_ANALYSIS_CONFIG.MAX_DEPTH) {
       for (const child of node.children) {
-        queue.push({ node: child, depth: depth + 1 });
+        queue.push({ node: child, depth: depth + 1, parentId: node.id });
       }
     }
   }
@@ -353,14 +361,24 @@ export function summarizeFrameEnhanced(frame: FrameNode): EnhancedFrameSummary {
     : undefined;
 
   // Select top priority nodes for summary
-  const selectedNodes = allNodes
-    .sort((a, b) => b.priority - a.priority)
-    .slice(0, ENHANCED_ANALYSIS_CONFIG.MAX_NODES_TOTAL);
+  const sortedNodes = allNodes.sort((a, b) => b.priority - a.priority);
+  let selectedNodes = sortedNodes.slice(0, ENHANCED_ANALYSIS_CONFIG.MAX_NODES_TOTAL);
+
+  // CRITICAL: Ensure all direct children are included if they aren't already
+  // This prevents the AI from "forgetting" containers that define the layout structure
+  const capturedIds = new Set(selectedNodes.map(n => n.nodeId));
+  
+  for (const nodePriority of allNodes) {
+    if (nodePriority.depth === 0 && !capturedIds.has(nodePriority.nodeId)) {
+      selectedNodes.push(nodePriority);
+      capturedIds.add(nodePriority.nodeId);
+    }
+  }
 
   // Convert to node summaries
   const nodes: NodeSummary[] = selectedNodes
     .map((priorityNode, index) =>
-      describeNode(priorityNode.node, originX, originY, index))
+      describeNode(priorityNode.node, originX, originY, index, priorityNode.depth === 0, priorityNode.parentId))
     .filter((summary): summary is NodeSummary => summary !== null);
 
   const totalPriority = selectedNodes.reduce((sum, node) => sum + node.priority, 0);
@@ -397,21 +415,25 @@ export function summarizeFrame(frame: FrameNode): FrameSummary {
   const originY = frameBounds?.y ?? 0;
 
   const nodes: NodeSummary[] = [];
-  const queue: SceneNode[] = [...frame.children];
+  // Track parent IDs for hierarchy awareness
+  const queue: Array<{ node: SceneNode; parentId: string }> =
+    frame.children.map(child => ({ node: child, parentId: frame.id }));
   let zIndex = 0;
 
   while (queue.length > 0 && nodes.length < MAX_SUMMARY_NODES) {
-    const node = queue.shift();
-    if (!node || !node.visible) {
+    const item = queue.shift();
+    if (!item || !item.node.visible) {
       continue;
     }
-    const description = describeNode(node, originX, originY, zIndex);
+    const { node, parentId } = item;
+    const isDirectChild = node.parent?.id === frame.id;
+    const description = describeNode(node, originX, originY, zIndex, isDirectChild, parentId);
     zIndex++;
     if (description) {
       nodes.push(description);
     }
     if ("children" in node) {
-      queue.push(...node.children);
+      queue.push(...node.children.map(child => ({ node: child, parentId: node.id })));
     }
   }
 
@@ -429,9 +451,17 @@ export function summarizeFrame(frame: FrameNode): FrameSummary {
 
 /**
  * Extracts relevant properties from a Figma node for AI analysis.
- * Captures: position, text content, typography, fills, colors, layout, opacity.
+ * Captures: position, text content, typography, fills, colors, layout, opacity,
+ * and parent-child relationship info (parentId, hasChildren, childCount).
  */
-function describeNode(node: SceneNode, originX: number, originY: number, zIndex: number): NodeSummary | null {
+function describeNode(
+  node: SceneNode,
+  originX: number,
+  originY: number,
+  zIndex: number,
+  isDirectChild: boolean = false,
+  parentId?: string
+): NodeSummary | null {
   if (!("absoluteBoundingBox" in node) || !node.absoluteBoundingBox) {
     return null;
   }
@@ -490,6 +520,10 @@ function describeNode(node: SceneNode, originX: number, originY: number, zIndex:
         }
       : {};
 
+  // Calculate parent-child relationship info
+  const hasChildren = "children" in node && Array.isArray(node.children) && node.children.length > 0;
+  const childCount = hasChildren ? (node as ChildrenMixin).children.length : undefined;
+
   return {
     id: node.id,
     name: node.name || node.type,
@@ -507,6 +541,10 @@ function describeNode(node: SceneNode, originX: number, originY: number, zIndex:
     ...(fillType ? { fillType } : {}),
     ...(dominantColor ? { dominantColor } : {}),
     ...(opacity !== undefined ? { opacity } : {}),
+    ...(isDirectChild ? { isDirectChild: true } : {}),
+    ...(parentId ? { parentId } : {}),
+    ...(hasChildren ? { hasChildren: true } : {}),
+    ...(childCount !== undefined ? { childCount } : {}),
     ...layoutDetails
   };
 }

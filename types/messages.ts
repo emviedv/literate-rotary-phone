@@ -70,6 +70,17 @@ export interface CalibrationStatusPayload {
   readonly message: string; // Human-readable summary
 }
 
+export interface DesignStatusPayload {
+  readonly stage: "analyzing" | "planning" | "specifying" | "executing" | "evaluating";
+  readonly message: string;
+}
+
+export interface DesignCompletePayload {
+  readonly pageId: string;
+  readonly nodeId: string;
+  readonly variantName: string;
+}
+
 export type ToUIMessage =
   | { readonly type: "init"; readonly payload: InitMessage }
   | { readonly type: "selection-update"; readonly payload: SelectionState }
@@ -77,7 +88,10 @@ export type ToUIMessage =
   | { readonly type: "generation-complete"; readonly payload: GenerationCompletePayload }
   | { readonly type: "error"; readonly payload: { readonly message: string } }
   | { readonly type: "debug-log"; readonly payload: { readonly message: string } }
-  | { readonly type: "calibration-status"; readonly payload: CalibrationStatusPayload };
+  | { readonly type: "calibration-status"; readonly payload: CalibrationStatusPayload }
+  | { readonly type: "design-status"; readonly payload: DesignStatusPayload }
+  | { readonly type: "design-complete"; readonly payload: DesignCompletePayload }
+  | { readonly type: "design-error"; readonly payload: { readonly message: string } };
 
 export type ToCoreMessage =
   | { readonly type: "request-initial-state" }
@@ -112,4 +126,7 @@ export type ToCoreMessage =
     }
   | {
       readonly type: "get-calibration-status";
+    }
+  | {
+      readonly type: "design-for-tiktok";
     };

@@ -32,10 +32,13 @@ import {
   prepareCloneForLayout,
   restoreAutoLayoutSettings,
   scaleNodeTree,
+  tagNodeTreeWithSourceIds,
   type AutoLayoutSnapshot
 } from "./variant-scaling.js";
 import { captureLayoutSnapshot } from "./layout-snapshot.js";
 import { convertFrameToAutoLayoutIfBeneficial } from "./auto-layout-converter.js";
+import { executeDesignFlow, validateSourceFrame } from "./design-orchestration.js";
+import type { DesignStatus } from "../types/design-types.js";
 
 export { collectWarnings, combineChildBounds } from "./warnings.js";
 
@@ -77,6 +80,9 @@ figma.ui.onmessage = async (rawMessage: ToCoreMessage) => {
       break;
     case "refresh-ai":
       await handleRefreshAiRequest();
+      break;
+    case "design-for-tiktok":
+      await handleDesignForTikTok();
       break;
     default:
       console.warn("Unhandled message", rawMessage);
@@ -186,6 +192,9 @@ async function handleGenerateRequest(
       variantNode.setPluginData(TARGET_ID_KEY, target.id);
       variantNode.setPluginData(RUN_ID_KEY, runId);
 
+      // Tag all nodes in the variant with their source IDs for AI matching
+      tagNodeTreeWithSourceIds(selectionFrame, variantNode);
+
       runContainer.appendChild(variantNode);
 
       // Apply auto-layout to non-auto-layout frames before scaling
@@ -272,7 +281,7 @@ async function handleGenerateRequest(
 
                   // Apply the adaptation plan for intelligent layout restructuring
                   // Pass adviceEntry to enable AI-driven element hiding for extreme transformations
-                  applyLayoutAdaptation(variantNode, layoutAdaptationPlan, adviceEntry);
+                  await applyLayoutAdaptation(variantNode, layoutAdaptationPlan, adviceEntry);
 
                   // Log feasibility and restructure info if present
                   if (adviceEntry?.feasibility) {
@@ -343,7 +352,11 @@ async function handleGenerateRequest(
               userSelection ??
               (patternSelection && !patternSelection.fallback
                 ? patternSelection.patternId ?? adviceEntry?.selectedId
-                : undefined);      const layoutFallback = !userSelection && (patternSelection?.fallback ?? false);
+                : undefined);
+            // Determine if we fell back to deterministic patterns
+            // BUT: If we have freestyle positioning map, we are NOT falling back, we are just using the new mode.
+            const hasFreestylePositioning = adviceEntry && adviceEntry.positioning && Object.keys(adviceEntry.positioning).length > 0;
+            const layoutFallback = !userSelection && (patternSelection?.fallback ?? false) && !hasFreestylePositioning;
       const patternConfidence =
         chosenPatternId && patternSelection?.patternId === chosenPatternId && !layoutFallback
           ? patternSelection.confidence
@@ -700,6 +713,106 @@ async function handleSetLayoutAdvice(advice: LayoutAdvice): Promise<void> {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to apply layout advice.";
     postToUI({ type: "error", payload: { message } });
+  }
+}
+
+async function handleDesignForTikTok(): Promise<void> {
+  debugFixLog("handleDesignForTikTok invoked");
+
+  await ensureAiKeyLoaded();
+  const frame = getSelectionFrame();
+
+  if (!frame) {
+    postToUI({ type: "design-error", payload: { message: "Select a single frame to design for TikTok." } });
+    return;
+  }
+
+  const apiKey = getCachedAiApiKey();
+  if (!apiKey) {
+    postToUI({ type: "design-error", payload: { message: "AI key is not configured. Contact an admin." } });
+    return;
+  }
+
+  // Validate the source frame
+  const validation = validateSourceFrame(frame);
+  if (!validation.valid) {
+    postToUI({ type: "design-error", payload: { message: validation.error || "Invalid source frame." } });
+    return;
+  }
+
+  // Send initial status
+  postToUI({
+    type: "design-status",
+    payload: { stage: "analyzing", message: "Starting TikTok design..." }
+  });
+
+  try {
+    trackEvent("DESIGN_FOR_TIKTOK_STARTED", {
+      frameId: frame.id,
+      frameName: frame.name,
+      frameDimensions: `${frame.width}x${frame.height}`
+    });
+
+    const result = await executeDesignFlow(frame, {
+      apiKey,
+      runEvaluation: false, // Skip Stage 3 for speed; can enable later
+      onStatus: (status: DesignStatus) => {
+        postToUI({
+          type: "design-status",
+          payload: { stage: status.stage as "analyzing" | "planning" | "specifying" | "executing" | "evaluating", message: status.message }
+        });
+      }
+    });
+
+    if (!result.success) {
+      postToUI({ type: "design-error", payload: { message: result.error || "Design generation failed." } });
+      trackEvent("DESIGN_FOR_TIKTOK_FAILED", {
+        frameId: frame.id,
+        error: result.error
+      });
+      return;
+    }
+
+    if (!result.variant || !result.page) {
+      postToUI({ type: "design-error", payload: { message: "Failed to create variant." } });
+      return;
+    }
+
+    // Send completion message
+    postToUI({
+      type: "design-complete",
+      payload: {
+        pageId: result.page.id,
+        nodeId: result.variant.id,
+        variantName: result.variant.name
+      }
+    });
+
+    figma.notify(`TikTok design created: ${result.variant.name}`);
+
+    trackEvent("DESIGN_FOR_TIKTOK_COMPLETED", {
+      frameId: frame.id,
+      variantId: result.variant.id,
+      totalDurationMs: result.totalDurationMs,
+      stage1DurationMs: result.stageDurations?.stage1,
+      stage2DurationMs: result.stageDurations?.stage2,
+      executionDurationMs: result.stageDurations?.execution,
+      confidence: result.specs?.confidence
+    });
+
+    debugFixLog("Design for TikTok complete", {
+      variantId: result.variant.id,
+      pageId: result.page.id,
+      totalDurationMs: result.totalDurationMs
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unexpected error during design generation.";
+    console.error(`${PLUGIN_NAME} Design for TikTok failed`, error);
+    postToUI({ type: "design-error", payload: { message } });
+    trackEvent("DESIGN_FOR_TIKTOK_FAILED", {
+      frameId: frame.id,
+      error: message
+    });
   }
 }
 

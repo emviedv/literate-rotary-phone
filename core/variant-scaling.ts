@@ -425,6 +425,38 @@ function expandAbsoluteChildren(
 // positionHeroBleedChild moved to child-positioning.ts
 // isBackgroundLike, getElementRole, isDecorativePointer moved to element-classification.ts
 
+/**
+ * Recursively tags all nodes in the cloned tree with their corresponding source node IDs.
+ * This enables AI positioning logic to map source-based instructions to the cloned variant.
+ *
+ * @param source The original node (e.g. selectionFrame)
+ * @param clone The cloned node (e.g. variantNode)
+ */
+export function tagNodeTreeWithSourceIds(source: SceneNode, clone: SceneNode): void {
+  // Set the source ID on the current clone node
+  // Cast to BaseNodeMixin since we know all SceneNodes have setPluginData
+  (clone as BaseNodeMixin).setPluginData("_sourceId", source.id);
+
+  debugFixLog("Tagged node with source ID", {
+    cloneId: clone.id,
+    sourceId: source.id,
+    nodeName: clone.name
+  });
+
+  // Recurse to children if both nodes have children
+  if ("children" in source && "children" in clone) {
+    const sourceChildren = (source as ChildrenMixin).children;
+    const cloneChildren = (clone as ChildrenMixin).children;
+
+    // Iterate children in parallel. Cloning preserves order, so index matching is safe
+    // as long as no structural changes have occurred yet.
+    const count = Math.min(sourceChildren.length, cloneChildren.length);
+    for (let i = 0; i < count; i++) {
+      tagNodeTreeWithSourceIds(sourceChildren[i], cloneChildren[i]);
+    }
+  }
+}
+
 export async function scaleNodeRecursive(
   node: SceneNode,
   scale: number,

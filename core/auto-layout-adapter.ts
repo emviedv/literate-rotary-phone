@@ -1,4 +1,6 @@
 import { debugAutoLayoutLog } from "./debug.js";
+
+declare const figma: PluginAPI;
 import type {
   LayoutAdviceEntry,
   ElementPositioning,
@@ -164,16 +166,25 @@ export function createLayoutAdaptationPlan(
   // FREESTYLE MODE: Child adaptations are now handled by AI positioning map
   // No deterministic child-specific adaptations are created here
 
+  // Apply AI container overrides if available
+  // This allows the AI to force specific alignment/spacing (e.g. Left Align instead of Center)
+  const overrides = options?.layoutAdvice?.containerOverrides;
+
   const plan: LayoutAdaptationPlan = {
     layoutMode: newLayoutMode,
     primaryAxisSizingMode: sizingModes.primary,
     counterAxisSizingMode: sizingModes.counter,
-    primaryAxisAlignItems: alignments.primary,
-    counterAxisAlignItems: alignments.counter,
+    primaryAxisAlignItems: overrides?.primaryAxisAlignItems ?? alignments.primary,
+    counterAxisAlignItems: overrides?.counterAxisAlignItems ?? alignments.counter,
     layoutWrap: wrapBehavior,
-    itemSpacing: spacing.item,
+    itemSpacing: overrides?.itemSpacing ?? spacing.item,
     counterAxisSpacing: spacing.counter,
-    paddingAdjustments: padding
+    paddingAdjustments: overrides?.padding ? {
+      top: overrides.padding.top ?? padding.top,
+      right: overrides.padding.right ?? padding.right,
+      bottom: overrides.padding.bottom ?? padding.bottom,
+      left: overrides.padding.left ?? padding.left
+    } : padding
   };
 
   debugAutoLayoutLog("layout adaptation plan summary (FREESTYLE)", {
@@ -218,11 +229,11 @@ export function createLayoutAdaptationPlan(
  * @param plan The layout adaptation plan
  * @param layoutAdvice Optional AI layout advice containing positioning instructions
  */
-export function applyLayoutAdaptation(
+export async function applyLayoutAdaptation(
   frame: FrameNode,
   plan: LayoutAdaptationPlan,
   layoutAdvice?: LayoutAdviceEntry
-): void {
+): Promise<void> {
   // FIRST: Hide elements that AI recommends dropping (before applying layout)
   if (layoutAdvice?.restructure?.drop?.length) {
     hideDroppedElements(frame, layoutAdvice.restructure.drop);
@@ -260,7 +271,7 @@ export function applyLayoutAdaptation(
       targetId: layoutAdvice.targetId
     });
 
-    applyAiPositioningToChildren(frame, layoutAdvice.positioning);
+    await applyAiPositioningToChildren(frame, layoutAdvice.positioning);
   } else {
     // SCALE-ONLY FALLBACK: No AI positioning available
     // Children retain their source positioning (scaled proportionally)
@@ -285,13 +296,15 @@ export function applyLayoutAdaptation(
  * @param positioning - AI's positioning directive for this node
  * @param frameWidth - Parent frame width for calculating positions
  * @param frameHeight - Parent frame height for calculating positions
+ * @param isDirectChild - Whether this node is a direct child of the root frame
  */
-function applyAiPositioning(
+async function applyAiPositioning(
   child: SceneNode,
   positioning: ElementPositioning,
   frameWidth: number,
-  frameHeight: number
-): void {
+  frameHeight: number,
+  isDirectChild: boolean = true
+): Promise<void> {
   // Handle visibility first
   if (positioning.visible === false && "visible" in child) {
     child.visible = false;
@@ -303,31 +316,49 @@ function applyAiPositioning(
     return; // Don't position hidden nodes
   }
 
+  // Ensure node is visible if explicitly requested (or default)
+  if (positioning.visible === true && "visible" in child) {
+    child.visible = true;
+  }
+
   // Apply anchor-based positioning for ABSOLUTE positioned nodes
-  if ("layoutPositioning" in child && child.layoutPositioning === "ABSOLUTE") {
-    const childWidth = "width" in child ? (child as { width: number }).width : 0;
-    const childHeight = "height" in child ? (child as { height: number }).height : 0;
+  // OR nodes inside a frame with layoutMode: "NONE" (where coordinates always apply)
+  const isParentNone = "layoutMode" in child.parent! && (child.parent as FrameNode).layoutMode === "NONE";
+  const isAbsolute = "layoutPositioning" in child && child.layoutPositioning === "ABSOLUTE";
 
-    const { x, y } = calculatePositionFromAnchor(
-      positioning.anchor,
-      frameWidth,
-      frameHeight,
-      childWidth,
-      childHeight,
-      positioning.offset
-    );
+  if (isAbsolute || isParentNone) {
+    if (isDirectChild) {
+      const childWidth = "width" in child ? (child as { width: number }).width : 0;
+      const childHeight = "height" in child ? (child as { height: number }).height : 0;
 
-    if ("x" in child && "y" in child) {
-      (child as SceneNode & { x: number; y: number }).x = Math.round(x);
-      (child as SceneNode & { y: number }).y = Math.round(y);
+      const { x, y } = calculatePositionFromAnchor(
+        positioning.anchor,
+        frameWidth,
+        frameHeight,
+        childWidth,
+        childHeight,
+        positioning.offset
+      );
 
-      debugAutoLayoutLog("AI positioning: positioned absolute node", {
-        nodeId: child.id,
-        nodeName: child.name,
-        anchor: positioning.anchor,
-        offset: positioning.offset,
-        position: { x: Math.round(x), y: Math.round(y) }
-      });
+      if ("x" in child && "y" in child) {
+        (child as SceneNode & { x: number; y: number }).x = Math.round(x);
+        (child as SceneNode & { y: number }).y = Math.round(y);
+
+        debugAutoLayoutLog("AI positioning: positioned absolute node", {
+          nodeId: child.id,
+          nodeName: child.name,
+          anchor: positioning.anchor,
+          offset: positioning.offset,
+          position: { x: Math.round(x), y: Math.round(y) },
+          context: isParentNone ? "parent-none" : "absolute-toggle"
+        });
+      }
+    } else {
+        // Log that we skipped coords for safety
+        debugAutoLayoutLog("AI positioning: skipped deep absolute positioning", {
+            nodeId: child.id,
+            nodeName: child.name
+        });
     }
   }
 
@@ -341,6 +372,20 @@ function applyAiPositioning(
         nodeName: child.name,
         size: { width: positioning.size.width, height: positioning.size.height }
       });
+    } else if (positioning.size.mode === "fill" && "layoutAlign" in child) {
+      // "Fill" typically implies filling the container width (in vertical) or height (in horizontal).
+      // This maps to STRETCH alignment on the counter axis.
+      (child as SceneNode & { layoutAlign: "INHERIT" | "STRETCH" | "MIN" | "CENTER" | "MAX" }).layoutAlign = "STRETCH";
+      
+      // If it's in an auto-layout frame, we might also want to set layoutGrow
+      if ("layoutGrow" in child) {
+        (child as SceneNode & { layoutGrow: number }).layoutGrow = 1;
+      }
+
+      debugAutoLayoutLog("AI positioning: applied fill sizing", {
+        nodeId: child.id,
+        nodeName: child.name
+      });
     }
   }
 
@@ -349,26 +394,47 @@ function applyAiPositioning(
     const textNode = child as TextNode;
     const textDirective = positioning.text;
 
-    // Apply text alignment if specified
-    if (textDirective.textAlign) {
-      const alignMap: Record<string, "LEFT" | "CENTER" | "RIGHT" | "JUSTIFIED"> = {
-        "left": "LEFT",
-        "center": "CENTER",
-        "right": "RIGHT",
-        "justify": "JUSTIFIED"
-      };
-      if (alignMap[textDirective.textAlign]) {
-        textNode.textAlignHorizontal = alignMap[textDirective.textAlign];
+    try {
+      // Load fonts before making any text changes
+      const fonts = await textNode.getRangeAllFontNames(0, textNode.characters.length);
+      for (const font of fonts) {
+        await figma.loadFontAsync(font);
       }
-    }
 
-    debugAutoLayoutLog("AI positioning: applied text directives", {
-      nodeId: child.id,
-      nodeName: child.name,
-      textAlign: textDirective.textAlign,
-      maxLines: textDirective.maxLines,
-      minFontSize: textDirective.minFontSize
-    });
+      // Apply target font size if provided
+      if (textDirective.targetFontSize) {
+        textNode.fontSize = textDirective.targetFontSize;
+      }
+
+      // Apply text alignment if specified
+      if (textDirective.textAlign) {
+        const alignMap: Record<string, "LEFT" | "CENTER" | "RIGHT" | "JUSTIFIED"> = {
+          "left": "LEFT",
+          "center": "CENTER",
+          "right": "RIGHT",
+          "justify": "JUSTIFIED"
+        };
+        if (alignMap[textDirective.textAlign]) {
+          textNode.textAlignHorizontal = alignMap[textDirective.textAlign];
+        }
+      }
+
+      // Handle truncation/maxLines if possible
+      if (textDirective.maxLines) {
+        textNode.textTruncation = "ENDING";
+        textNode.maxLines = textDirective.maxLines;
+      }
+
+      debugAutoLayoutLog("AI positioning: applied text directives", {
+        nodeId: child.id,
+        nodeName: child.name,
+        fontSize: textDirective.targetFontSize,
+        textAlign: textDirective.textAlign,
+        maxLines: textDirective.maxLines
+      });
+    } catch (err) {
+      console.warn("Failed to apply text directives", err);
+    }
   }
 
   // Apply layout alignment for flow children
@@ -384,9 +450,13 @@ function applyAiPositioning(
       (child as SceneNode & { layoutAlign: "INHERIT" | "STRETCH" | "MIN" | "CENTER" | "MAX" }).layoutAlign = alignMap[positioning.containerAlignment.counter];
     }
 
-    // Apply layout grow
+    // Apply layout grow (weight)
     if ("layoutGrow" in child && positioning.containerAlignment.grow !== undefined) {
       (child as SceneNode & { layoutGrow: number }).layoutGrow = positioning.containerAlignment.grow;
+      debugAutoLayoutLog("AI positioning: applied layoutGrow", {
+        nodeId: child.id,
+        grow: positioning.containerAlignment.grow
+      });
     }
 
     debugAutoLayoutLog("AI positioning: applied container alignment", {
@@ -471,80 +541,160 @@ function calculatePositionFromAnchor(
  * Applies AI positioning to all children of a frame using the positioning map.
  *
  * FREESTYLE MODE: This function is the core of freestyle positioning.
- * It validates coverage and logs warnings when nodes are missing from the map.
+ * It recursively traverses the variant tree to find matching nodes.
  *
- * @param frame - The frame whose children to position
+ * @param frame - The variant root frame
  * @param positioningMap - AI's per-node positioning directives
  */
-function applyAiPositioningToChildren(
+async function applyAiPositioningToChildren(
   frame: FrameNode,
   positioningMap: Record<string, ElementPositioning>
-): void {
-  const visibleChildren = frame.children.filter(c => "visible" in c && c.visible);
-  const positionedCount = { found: 0, missing: 0 };
-  const missingChildren: string[] = [];
-
-  debugAutoLayoutLog("AI positioning: applying positioning map to children (FREESTYLE)", {
-    frameId: frame.id,
-    frameName: frame.name,
-    positioningEntries: Object.keys(positioningMap).length,
-    visibleChildCount: visibleChildren.length,
-    totalChildCount: frame.children.length
-  });
-
-  for (const child of frame.children) {
-    // Skip hidden children - they don't need positioning
-    if ("visible" in child && !child.visible) {
-      continue;
+): Promise<void> {
+  // 1. Collect all nodes in the tree (flattened)
+  const allNodes: SceneNode[] = [];
+  
+  function traverse(node: SceneNode) {
+    allNodes.push(node);
+    if ("children" in node) {
+      for (const child of node.children) {
+        traverse(child);
+      }
     }
-
-    // Try to find positioning by ID first, then by name, then lowercase name
-    let positioning = positioningMap[child.id];
-    if (!positioning) {
-      positioning = positioningMap[child.name];
-    }
-    if (!positioning) {
-      positioning = positioningMap[child.name.toLowerCase()];
-    }
-
-    if (positioning) {
-      applyAiPositioning(child, positioning, frame.width, frame.height);
-      positionedCount.found++;
-    } else {
-      positionedCount.missing++;
-      missingChildren.push(child.name || child.id);
-      debugAutoLayoutLog("AI positioning: no directive found for child (FREESTYLE FALLBACK)", {
-        nodeId: child.id,
-        nodeName: child.name,
-        childType: child.type,
-        availableKeys: Object.keys(positioningMap).slice(0, 10)
-      });
+  }
+  
+  // Don't include the root frame itself in the search list (it's the container)
+  if ("children" in frame) {
+    for (const child of frame.children) {
+      traverse(child);
     }
   }
 
-  // Log positioning coverage summary
-  const coveragePercent = visibleChildren.length > 0
-    ? Math.round((positionedCount.found / visibleChildren.length) * 100)
-    : 100;
+  const positionedCount = { found: 0, missing: 0 };
+  const missingChildren: string[] = [];
+  
+  // Track which IDs from the map were actually used
+  const usedMapKeys = new Set<string>();
+
+  debugAutoLayoutLog("AI positioning: applying positioning map recursively (FREESTYLE)", {
+    frameId: frame.id,
+    frameName: frame.name,
+    positioningEntries: Object.keys(positioningMap).length,
+    totalNodesInTree: allNodes.length
+  });
+
+  // 2. Iterate through all nodes and try to find a directive
+  for (const node of allNodes) {
+    // Skip hidden nodes if they weren't explicitly targeted (optimization)
+    // But if the AI targeted them (to show them?), we should process them.
+    // For now, we process everything to allow "show" operations.
+
+    // Try to find positioning by ID first, then by name, then lowercase name
+    // CRITICAL: Use the mapped source ID if available (because clone IDs don't match AI output)
+    let positioning: ElementPositioning | undefined;
+    let matchedKey: string = node.id;
+
+    const sourceId = "getPluginData" in node ? (node as BaseNodeMixin).getPluginData("_sourceId") : null;
+    if (sourceId && positioningMap[sourceId]) {
+      positioning = positioningMap[sourceId];
+      matchedKey = `source:${sourceId}`;
+    } else if (sourceId) {
+        // Log mismatch for debugging
+        debugAutoLayoutLog("AI positioning: source ID mismatch", {
+            nodeId: node.id,
+            nodeName: node.name,
+            sourceId,
+            inMap: !!positioningMap[sourceId]
+        });
+    }
+
+    if (!positioning && positioningMap[node.id]) {
+      positioning = positioningMap[node.id];
+      matchedKey = node.id;
+    }
+
+    if (!positioning) {
+      positioning = positioningMap[node.name];
+      matchedKey = node.name;
+    }
+    if (!positioning) {
+      positioning = positioningMap[node.name.toLowerCase()];
+      matchedKey = node.name.toLowerCase();
+    }
+
+    if (positioning) {
+      // Determine if this is a direct child of the root (for coordinate safety)
+      const isDirectChild = node.parent?.id === frame.id;
+
+      // We pass `isDirectChild` to `applyAiPositioning` to enforce this safety check.
+      await applyAiPositioning(node, positioning, frame.width, frame.height, isDirectChild);
+      
+      positionedCount.found++;
+      usedMapKeys.add(matchedKey);
+    } else {
+      const isDirectChild = node.parent?.id === frame.id;
+
+      // HEURISTIC FALLBACK 1: Background Safety Net
+      const bgRegex = /background|bg\b|pattern|gradient|fill/i;
+      
+      // HEURISTIC FALLBACK 2: Direct Child Container Safety Net
+      // If a top-level container is ignored, it usually breaks the layout (stays fixed width).
+      // We force it to fill the space.
+      const isIgnoredContainer = isDirectChild && node.type === "FRAME" && !isComponentLikeFrame(node as FrameNode);
+
+      if (bgRegex.test(node.name) || isIgnoredContainer) {
+        debugAutoLayoutLog("AI positioning: applying heuristic fallback", {
+          nodeId: node.id,
+          nodeName: node.name,
+          type: isIgnoredContainer ? "container" : "background"
+        });
+
+        if ("layoutPositioning" in node && node.layoutPositioning === "ABSOLUTE") {
+           // Absolute: Stretch to fit parent
+           const absNode = node as SceneNode & { x: number; y: number; resize: (w: number, h: number) => void; constraints: Constraints };
+           absNode.x = 0;
+           absNode.y = 0;
+           absNode.resize(frame.width, frame.height);
+           absNode.constraints = { horizontal: "SCALE", vertical: "SCALE" };
+        } else {
+           // Auto-layout: Fill container
+           if ("layoutAlign" in node) {
+             (node as SceneNode & { layoutAlign: string }).layoutAlign = "STRETCH";
+           }
+           if ("layoutGrow" in node) {
+             (node as SceneNode & { layoutGrow: number }).layoutGrow = 1;
+           }
+        }
+      }
+    }
+  }
+
+  // 3. Calculate "missing" based on the MAP, not the tree.
+  // (We care if the AI wanted to position something but we couldn't find it)
+  // Actually, standard practice is checking if important tree nodes were covered.
+  // But since we can't easily know what's "important", let's stick to the previous logic:
+  // "Did we find directives for the nodes we traversed?"
+  // But since we traverse everything (including vector paths), 'missing' count will be huge.
+  // Let's only log missing for DIRECT children of the root to keep noise down.
+  
+  for (const child of frame.children) {
+     let hasDirective = 
+        positioningMap[child.id] || 
+        positioningMap[child.name] || 
+        positioningMap[child.name.toLowerCase()];
+        
+     if (!hasDirective) {
+        positionedCount.missing++;
+        missingChildren.push(child.name || child.id);
+     }
+  }
 
   debugAutoLayoutLog("AI positioning: coverage summary (FREESTYLE)", {
     frameId: frame.id,
     frameName: frame.name,
-    coverage: `${coveragePercent}%`,
-    positioned: positionedCount.found,
-    missing: positionedCount.missing,
+    nodesUpdated: positionedCount.found,
+    directChildrenMissing: positionedCount.missing,
     missingNodes: missingChildren.length > 0 ? missingChildren.slice(0, 5) : "none"
   });
-
-  // Warn if coverage is incomplete
-  if (positionedCount.missing > 0) {
-    debugAutoLayoutLog("AI positioning: INCOMPLETE COVERAGE WARNING", {
-      frameId: frame.id,
-      missingCount: positionedCount.missing,
-      missingNodes: missingChildren,
-      recommendation: "Missing nodes will retain scaled source positioning"
-    });
-  }
 }
 
 // ============================================================================
@@ -716,4 +866,3 @@ function isStructuralContainer(node: FrameNode, targetWidth: number): boolean {
   
   return false;
 }
-

@@ -33,6 +33,8 @@ export const UI_SCRIPT_PART1 = /* js */ `
       const debugSection = document.getElementById("debugSection");
       const debugLogOutput = document.getElementById("debugLogOutput");
       const copyDebugLogButton = document.getElementById("copyDebugLogButton");
+      const designTikTokButton = document.getElementById("designTikTokButton");
+      const designTikTokStatus = document.getElementById("designTikTokStatus");
 
       const LAYOUT_CONFIDENCE_THRESHOLD = 0.65;
       const QA_CONFIDENCE_THRESHOLD = 0.35;
@@ -46,6 +48,7 @@ export const UI_SCRIPT_PART1 = /* js */ `
       let aiErrorMessage = "";
       let aiUsingDefaultKey = false;
       let latestSelectionState = null;
+      let isDesigning = false;
 
       if (!(targetList instanceof HTMLElement)) {
         throw new Error("Target list element missing.");
@@ -322,5 +325,50 @@ export const UI_SCRIPT_PART1 = /* js */ `
 
       function updateDebugControls() {
         copySelectionButton.disabled = isBusy || !selectionReady || !latestSelectionState;
+      }
+
+      function updateDesignTikTokButton() {
+        if (!designTikTokButton) return;
+        designTikTokButton.disabled = isBusy || !selectionReady || !aiConfigured || aiStatusState === "missing-key" || isDesigning;
+        if (isDesigning) {
+          designTikTokButton.textContent = "Designing...";
+          designTikTokButton.classList.add("designing");
+        } else {
+          designTikTokButton.innerHTML = \`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M9 12C9 13.3807 7.88071 14.5 6.5 14.5C5.11929 14.5 4 13.3807 4 12C4 10.6193 5.11929 9.5 6.5 9.5C7.88071 9.5 9 10.6193 9 12Z" fill="currentColor"/>
+            <path d="M16 8.5V15.5C16 17.9853 13.9853 20 11.5 20C9.01472 20 7 17.9853 7 15.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <path d="M16 8.5C17.933 8.5 19.5 6.933 19.5 5C19.5 5 19.5 5 19.5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <path d="M16 8.5V4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+          Design for TikTok\`;
+          designTikTokButton.classList.remove("designing");
+        }
+      }
+
+      function setDesigningState(active, message) {
+        isDesigning = active;
+        updateDesignTikTokButton();
+        if (designTikTokStatus) {
+          designTikTokStatus.textContent = message || "";
+          designTikTokStatus.className = "design-status";
+        }
+      }
+
+      function setDesignSuccess(message) {
+        isDesigning = false;
+        updateDesignTikTokButton();
+        if (designTikTokStatus) {
+          designTikTokStatus.textContent = message || "TikTok design created!";
+          designTikTokStatus.className = "design-status success";
+        }
+      }
+
+      function setDesignError(message) {
+        isDesigning = false;
+        updateDesignTikTokButton();
+        if (designTikTokStatus) {
+          designTikTokStatus.textContent = message || "Design failed.";
+          designTikTokStatus.className = "design-status error";
+        }
       }
 `;

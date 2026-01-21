@@ -70,6 +70,23 @@ export const UI_MARKUP = /* html */ `
     </section>
 
     <button id="generateButton" disabled>Generate variants</button>
+
+    <div class="design-tiktok-section">
+      <div class="design-tiktok-divider">
+        <span>or try AI-powered design</span>
+      </div>
+      <button id="designTikTokButton" class="design-tiktok-button" disabled>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M9 12C9 13.3807 7.88071 14.5 6.5 14.5C5.11929 14.5 4 13.3807 4 12C4 10.6193 5.11929 9.5 6.5 9.5C7.88071 9.5 9 10.6193 9 12Z" fill="currentColor"/>
+          <path d="M16 8.5V15.5C16 17.9853 13.9853 20 11.5 20C9.01472 20 7 17.9853 7 15.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <path d="M16 8.5C17.933 8.5 19.5 6.933 19.5 5C19.5 5 19.5 5 19.5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <path d="M16 8.5V4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        Design for TikTok
+      </button>
+      <p id="designTikTokStatus" class="design-status"></p>
+    </div>
+
     <p id="statusMessage" class="status">Select a single frame to begin.</p>
 
     <section class="section last-run" id="lastRunSection" hidden>

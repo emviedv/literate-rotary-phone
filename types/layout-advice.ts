@@ -283,6 +283,22 @@ export interface LayoutAdviceEntry {
 
   /** Explicit warnings about this transformation */
   readonly warnings?: readonly LayoutWarning[];
+
+  /**
+   * Overrides for the container's layout properties.
+   * Allows the AI to explicitly control alignment and spacing of the root frame.
+   */
+  readonly containerOverrides?: {
+    readonly itemSpacing?: number;
+    readonly padding?: {
+      readonly top?: number;
+      readonly right?: number;
+      readonly bottom?: number;
+      readonly left?: number;
+    };
+    readonly primaryAxisAlignItems?: "MIN" | "CENTER" | "MAX" | "SPACE_BETWEEN";
+    readonly counterAxisAlignItems?: "MIN" | "CENTER" | "MAX" | "BASELINE";
+  };
 }
 
 export interface LayoutAdvice {
