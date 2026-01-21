@@ -9,7 +9,7 @@ import { debugFixLog } from "./debug.js";
 import { tryExportFrameAsBase64 } from "./ai-image-export.js";
 import { summarizeFrameEnhanced, type EnhancedFrameSummary } from "./ai-frame-summary.js";
 import { requestFullDesignSpecs, requestStage3Evaluation } from "./design-ai-service.js";
-import { createDesignVariant } from "./design-executor.js";
+import { createDesignVariant, applyEvaluationAdjustments } from "./design-executor.js";
 import {
   ensureDesignPage,
   createDesignContainer,
@@ -201,8 +201,18 @@ export async function executeDesignFlow(
           debugFixLog("Applying evaluation adjustments", {
             adjustmentCount: evaluation.adjustments.length
           });
-          // Note: Could re-run createDesignVariant with adjusted specs
-          // For now, we log but don't auto-fix
+
+          const adjustmentResult = await applyEvaluationAdjustments(
+            variant,
+            evaluation.adjustments,
+            fontCache
+          );
+
+          debugFixLog("Evaluation adjustments applied", {
+            applied: adjustmentResult.applied,
+            skipped: adjustmentResult.skipped,
+            errors: adjustmentResult.errors
+          });
         }
       }
     }

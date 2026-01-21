@@ -95,6 +95,37 @@ If you want to reorganize content from a container:
 - Check \`parentId\` to see what children are inside each container
 - If a node's \`parentId\` matches a container you're hiding, that node will be hidden too!
 
+## CRITICAL: Component Instances (type: "INSTANCE")
+In the node tree, any node with \`type: "INSTANCE"\` is a **Figma component instance**.
+
+**Component instances are ALWAYS atomic units:**
+- They were intentionally created/used by the designer as reusable elements
+- Examples: buttons, cards, icons, mockups, badges, avatars, navigation items
+- Their children are locked by design - they move together as one piece
+
+**Rules for component instances:**
+1. **Position the INSTANCE node only** - children move with it automatically
+2. **NEVER provide separate specs for children of INSTANCE nodes**
+3. **Check parentId** - if a node's parentId points to an INSTANCE, skip it entirely
+4. This applies to ALL instances, not just mockups - buttons, cards, icons, everything
+
+**How to identify INSTANCE children:**
+- Look for \`isComponentInstance: true\` flag on any node
+- Check any node's \`parentId\` - if that parent has \`type: "INSTANCE"\`, skip the node
+- Nodes inside component instances should NOT appear in your output specs
+
+**Example - WRONG:**
+\`\`\`json
+{ "nodeId": "123:456", "nodeName": "Button", "type": "INSTANCE", "position": {...} }
+{ "nodeId": "123:457", "nodeName": "Button Text", "parentId": "123:456", "position": {...} }  // ❌ Parent is INSTANCE!
+\`\`\`
+
+**Example - CORRECT:**
+\`\`\`json
+{ "nodeId": "123:456", "nodeName": "Button", "type": "INSTANCE", "position": {...} }
+// Children of Button instance are OMITTED - they stay in their relative positions
+\`\`\`
+
 You must:
 - Keep ALL text visible and legible (minimum ${TIKTOK_CONSTRAINTS.MIN_TEXT_SIZE}px)
 - Preserve the complete marketing message
@@ -296,6 +327,13 @@ For each node in the tree, specify how it should be handled. **Only include posi
 - Remember: Bottom 35% is danger zone (y > ${Math.round(TIKTOK_CONSTRAINTS.HEIGHT * 0.65)})
 - Remember: Top 15% is caution zone (y < ${Math.round(TIKTOK_CONSTRAINTS.HEIGHT * 0.15)})
 - Center horizontally when appropriate (x = ${Math.round((TIKTOK_CONSTRAINTS.WIDTH - 100) / 2)} for 100px-wide element)
+
+### CRITICAL: Skip Children of Component Instances
+Before generating a spec for any node, check its \`parentId\`:
+- Find the parent node in the tree
+- If the parent has \`type: "INSTANCE"\` or \`isComponentInstance: true\`, **DO NOT include a spec for this node**
+- Component instance children must not be repositioned independently - they move with their parent
+- Only position the INSTANCE node itself, never its internal children
 
 ### Output Schema
 Respond with JSON matching this exact structure:
@@ -641,6 +679,47 @@ export function parseStage2Response(
               "[Design AI] Forced dangerous containers to visible. Fixed:",
               hiddenContainersWithChildren.map((s: { nodeName?: string }) => s.nodeName)
             );
+          }
+
+          // CRITICAL: Filter out specs for children of INSTANCE nodes
+          // Component instances are atomic - their children should not be repositioned independently
+          const instanceIds = new Set(
+            nodeTree.nodes
+              .filter((n: { type?: string; isComponentInstance?: boolean }) =>
+                n.type === "INSTANCE" || n.isComponentInstance === true
+              )
+              .map((n: { id: string }) => n.id)
+          );
+
+          if (instanceIds.size > 0) {
+            // Find specs targeting children of INSTANCE nodes
+            const filteredSpecs: typeof parsed.nodes = [];
+            const removedSpecs: string[] = [];
+
+            for (const spec of parsed.nodes) {
+              // Find this node in the tree to check its parentId
+              const treeNode = nodeTree.nodes.find(
+                (n: { id?: string }) => n.id === spec.nodeId
+              );
+
+              // If the node's parent is an INSTANCE, filter it out
+              if (treeNode?.parentId && instanceIds.has(treeNode.parentId)) {
+                removedSpecs.push(spec.nodeName || spec.nodeId);
+              } else {
+                filteredSpecs.push(spec);
+              }
+            }
+
+            if (removedSpecs.length > 0) {
+              console.warn(
+                `[Design AI] Filtering ${removedSpecs.length} specs for INSTANCE children:`,
+                removedSpecs
+              );
+              warnings.push(
+                `Filtered ${removedSpecs.length} specs for component instance children: ${removedSpecs.slice(0, 5).join(", ")}${removedSpecs.length > 5 ? "..." : ""}`
+              );
+              parsed.nodes = filteredSpecs;
+            }
           }
         }
       } catch (parseError) {

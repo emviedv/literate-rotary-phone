@@ -25,7 +25,7 @@ const OPENAI_ENDPOINT = "https://api.openai.com/v1/chat/completions";
 const OPENAI_MODEL = "gpt-4o";
 const OPENAI_TEMPERATURE = 0.2; // Slightly higher for creative decisions
 const OPENAI_MAX_TOKENS = 8192; // Larger for detailed specs
-const OPENAI_TIMEOUT_MS = 90000; // 90 seconds for complex analysis
+const OPENAI_TIMEOUT_MS = 120000; // 120 seconds for complex analysis
 
 // ============================================================================
 // Types

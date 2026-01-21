@@ -37,8 +37,12 @@ const ATOMIC_GROUP_NAME_PATTERN = /\b(illustration|mockup|device|phone|iphone|an
  * @returns true if the group should be scaled as an atomic unit
  */
 export function isAtomicGroup(node: SceneNode): boolean {
-  // Support both GROUP and FRAME types for mockups
-  if (node.type !== "GROUP" && node.type !== "FRAME") return false;
+  // Support GROUP, FRAME, and INSTANCE types for mockups
+  if (node.type !== "GROUP" && node.type !== "FRAME" && node.type !== "INSTANCE") return false;
+
+  // Component instances are inherently atomic - they're intentionally grouped by the designer
+  // We detect this BEFORE detachment so the component boundary is preserved
+  if (node.type === "INSTANCE") return true;
 
   // Must have children to analyze
   if (!("children" in node) || node.children.length === 0) return false;

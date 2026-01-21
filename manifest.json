@@ -4,6 +4,12 @@
   "api": "1.0.0",
   "main": "dist/main.js",
   "editorType": ["figma"],
+  "networkAccess": {
+    "allowedDomains": [
+      "https://api.openai.com"
+    ],
+    "reasoning": "Required for AI-powered design analysis and variant generation using OpenAI's GPT-4o vision model"
+  },
   "relaunchButtons": [
     {
       "command": "generate",

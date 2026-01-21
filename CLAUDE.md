@@ -394,6 +394,7 @@ ScaleResizer/
 ## Key Insights for Development
 
 **★ Insight ─────────────────────────────────────**
+- **Universal Approach:** Always design solutions that work universally across all content types. Prefer type-based rules (e.g., `type: "INSTANCE"`) over name-based patterns. Solutions should handle buttons, cards, icons, mockups, and future component types without modification.
 - **Two-Phase AI Architecture:** The prompt chaining approach separates visual perception (faces, subjects) from layout reasoning, preventing the AI from letting layout preferences bias its visual detection.
 - **Plugin Data as State Store:** ScaleResizer uses Figma's `pluginData` API extensively for persistent state, enabling per-frame customization and caching of expensive AI results directly on nodes.
 - **Aspect-Driven Architecture:** The entire scaling system pivots on aspect ratio classification - understanding whether a target is vertical/horizontal/square determines layout adaptation strategy.

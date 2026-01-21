@@ -75,7 +75,38 @@ export interface NodeSummary {
   readonly hasChildren?: boolean;
   /** Number of direct children (helps AI understand container complexity) */
   readonly childCount?: number;
+  /**
+   * Inferred semantic role based on position, size, fills, and content.
+   * Helps AI identify nodes even when names are generic ("Frame 82930").
+   */
+  readonly inferredRole?: InferredRole;
+  /**
+   * True if this node is a Figma component instance (type: "INSTANCE").
+   * Component instances are atomic units - their children should NOT be
+   * repositioned independently.
+   */
+  readonly isComponentInstance?: boolean;
 }
+
+/**
+ * Semantic roles inferred from node properties.
+ * Used to help AI identify nodes with generic names.
+ */
+export type InferredRole =
+  | "hero-image"      // Large image dominating the frame
+  | "background"      // Full-bleed or near-full background element
+  | "logo"            // Small element in corners, likely branding
+  | "headline"        // Large, prominent text
+  | "subheadline"     // Medium text, secondary to headline
+  | "body-text"       // Smaller text, paragraph content
+  | "cta-button"      // Interactive element, likely a button
+  | "icon"            // Small decorative or functional element
+  | "card"            // Container with mixed content
+  | "container"       // Layout wrapper grouping elements
+  | "decorative"      // Background shapes, dividers, accents
+  | "photo"           // Image content (not hero-sized)
+  | "mockup"          // Device frame or product display
+  | "unknown";        // Cannot determine role
 
 /**
  * Node priority calculation for intelligent analysis selection.
@@ -362,7 +393,7 @@ export function summarizeFrameEnhanced(frame: FrameNode): EnhancedFrameSummary {
 
   // Select top priority nodes for summary
   const sortedNodes = allNodes.sort((a, b) => b.priority - a.priority);
-  let selectedNodes = sortedNodes.slice(0, ENHANCED_ANALYSIS_CONFIG.MAX_NODES_TOTAL);
+  const selectedNodes = sortedNodes.slice(0, ENHANCED_ANALYSIS_CONFIG.MAX_NODES_TOTAL);
 
   // CRITICAL: Ensure all direct children are included if they aren't already
   // This prevents the AI from "forgetting" containers that define the layout structure
@@ -378,7 +409,7 @@ export function summarizeFrameEnhanced(frame: FrameNode): EnhancedFrameSummary {
   // Convert to node summaries
   const nodes: NodeSummary[] = selectedNodes
     .map((priorityNode, index) =>
-      describeNode(priorityNode.node, originX, originY, index, priorityNode.depth === 0, priorityNode.parentId))
+      describeNode(priorityNode.node, originX, originY, index, priorityNode.depth === 0, priorityNode.parentId, frame.width, frame.height))
     .filter((summary): summary is NodeSummary => summary !== null);
 
   const totalPriority = selectedNodes.reduce((sum, node) => sum + node.priority, 0);
@@ -427,7 +458,7 @@ export function summarizeFrame(frame: FrameNode): FrameSummary {
     }
     const { node, parentId } = item;
     const isDirectChild = node.parent?.id === frame.id;
-    const description = describeNode(node, originX, originY, zIndex, isDirectChild, parentId);
+    const description = describeNode(node, originX, originY, zIndex, isDirectChild, parentId, frame.width, frame.height);
     zIndex++;
     if (description) {
       nodes.push(description);
@@ -450,6 +481,159 @@ export function summarizeFrame(frame: FrameNode): FrameSummary {
 }
 
 /**
+ * Infers a semantic role for a node based on its properties.
+ * Uses position, size, fill type, text content, and structural signals.
+ *
+ * This helps the AI identify nodes even when they have generic names
+ * like "Frame 82930" or "Rectangle 1".
+ */
+function inferRole(
+  node: SceneNode,
+  bounds: { x: number; y: number; width: number; height: number },
+  frameWidth: number,
+  frameHeight: number,
+  hasImageFill: boolean,
+  hasSolidFill: boolean
+): InferredRole {
+  const nodeArea = bounds.width * bounds.height;
+  const frameArea = frameWidth * frameHeight;
+  const areaRatio = nodeArea / frameArea;
+
+  // Normalized position (0-1 range)
+  const centerX = (bounds.x + bounds.width / 2) / frameWidth;
+  const centerY = (bounds.y + bounds.height / 2) / frameHeight;
+
+  // Check name for hints (even generic names sometimes have clues)
+  const nameLower = node.name.toLowerCase();
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // TEXT NODES - classify by size and position
+  // ─────────────────────────────────────────────────────────────────────────
+  if (node.type === "TEXT") {
+    const textNode = node as TextNode;
+    const fontSize = typeof textNode.fontSize === "number" ? textNode.fontSize : 16;
+
+    if (fontSize >= 32 || (fontSize >= 24 && centerY < 0.4)) {
+      return "headline";
+    }
+    if (fontSize >= 18 && fontSize < 32) {
+      return "subheadline";
+    }
+    return "body-text";
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // NAME-BASED HINTS (explicit naming overrides heuristics)
+  // ─────────────────────────────────────────────────────────────────────────
+  if (nameLower.includes("logo") || nameLower.includes("brand")) {
+    return "logo";
+  }
+  if (nameLower.includes("button") || nameLower.includes("cta")) {
+    return "cta-button";
+  }
+  if (nameLower.includes("hero")) {
+    return "hero-image";
+  }
+  if (nameLower.includes("background") || nameLower.includes("bg")) {
+    return "background";
+  }
+  if (nameLower.includes("mockup") || nameLower.includes("device") ||
+      nameLower.includes("iphone") || nameLower.includes("phone")) {
+    return "mockup";
+  }
+  if (nameLower.includes("icon")) {
+    return "icon";
+  }
+  if (nameLower.includes("card")) {
+    return "card";
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // IMAGE FILLS - classify by size and position
+  // ─────────────────────────────────────────────────────────────────────────
+  if (hasImageFill) {
+    // Large image covering significant area = hero
+    if (areaRatio > 0.4) {
+      return "hero-image";
+    }
+    // Medium-sized image
+    if (areaRatio > 0.1) {
+      return "photo";
+    }
+    // Small image in corner = likely logo
+    if (areaRatio < 0.05 && (centerY < 0.2 || centerY > 0.8) &&
+        (centerX < 0.25 || centerX > 0.75)) {
+      return "logo";
+    }
+    return "photo";
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // SOLID FILLS - classify by size and position
+  // ─────────────────────────────────────────────────────────────────────────
+  if (hasSolidFill) {
+    // Full-bleed or near-full = background
+    if (areaRatio > 0.8) {
+      return "background";
+    }
+    // Small, centered horizontally, in bottom half = likely CTA button
+    if (areaRatio < 0.1 && centerX > 0.3 && centerX < 0.7 && centerY > 0.5) {
+      // Check if it has children (text inside = button)
+      if ("children" in node && (node as FrameNode).children.length > 0) {
+        const hasTextChild = (node as FrameNode).children.some(c => c.type === "TEXT");
+        if (hasTextChild) {
+          return "cta-button";
+        }
+      }
+    }
+    // Small element = decorative or icon
+    if (areaRatio < 0.02) {
+      return bounds.width < 50 && bounds.height < 50 ? "icon" : "decorative";
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // CONTAINERS - frames/groups with children
+  // ─────────────────────────────────────────────────────────────────────────
+  if ("children" in node) {
+    const children = (node as FrameNode | GroupNode).children;
+
+    if (children.length === 0) {
+      return areaRatio > 0.5 ? "background" : "decorative";
+    }
+
+    // Has mixed content (text + images) = card
+    const hasText = children.some(c => c.type === "TEXT");
+    const hasImage = children.some(c =>
+      "fills" in c && Array.isArray(c.fills) &&
+      (c.fills as readonly Paint[]).some(f => f.type === "IMAGE")
+    );
+
+    if (hasText && hasImage && areaRatio < 0.5) {
+      return "card";
+    }
+
+    // Large container with children = layout container
+    if (areaRatio > 0.3) {
+      return "container";
+    }
+
+    // Small container = card or component
+    return children.length > 2 ? "card" : "container";
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // FALLBACK - pure shapes
+  // ─────────────────────────────────────────────────────────────────────────
+  if (node.type === "RECTANGLE" || node.type === "ELLIPSE") {
+    if (areaRatio > 0.5) return "background";
+    if (areaRatio < 0.02) return "decorative";
+  }
+
+  return "unknown";
+}
+
+/**
  * Extracts relevant properties from a Figma node for AI analysis.
  * Captures: position, text content, typography, fills, colors, layout, opacity,
  * and parent-child relationship info (parentId, hasChildren, childCount).
@@ -460,7 +644,9 @@ function describeNode(
   originY: number,
   zIndex: number,
   isDirectChild: boolean = false,
-  parentId?: string
+  parentId?: string,
+  frameWidth: number = 1920,
+  frameHeight: number = 1080
 ): NodeSummary | null {
   if (!("absoluteBoundingBox" in node) || !node.absoluteBoundingBox) {
     return null;
@@ -524,6 +710,22 @@ function describeNode(
   const hasChildren = "children" in node && Array.isArray(node.children) && node.children.length > 0;
   const childCount = hasChildren ? (node as ChildrenMixin).children.length : undefined;
 
+  // Infer semantic role from node properties
+  const relBounds = {
+    x: bounds.x - originX,
+    y: bounds.y - originY,
+    width: bounds.width,
+    height: bounds.height
+  };
+  const inferredRole = inferRole(
+    node,
+    relBounds,
+    frameWidth,
+    frameHeight,
+    fillType === "IMAGE",
+    fillType === "SOLID"
+  );
+
   return {
     id: node.id,
     name: node.name || node.type,
@@ -545,6 +747,8 @@ function describeNode(
     ...(parentId ? { parentId } : {}),
     ...(hasChildren ? { hasChildren: true } : {}),
     ...(childCount !== undefined ? { childCount } : {}),
+    ...(inferredRole !== "unknown" ? { inferredRole } : {}),
+    ...(node.type === "INSTANCE" ? { isComponentInstance: true } : {}),
     ...layoutDetails
   };
 }

@@ -1,5 +1,14 @@
 # Agent Notes
 
+## Core Principle: Universal Approach
+
+**Always design solutions that work universally across all content types, rather than special-casing individual scenarios.**
+
+- Prefer type-based rules (e.g., `type: "INSTANCE"`) over name-based patterns (e.g., "mockup", "device")
+- Solutions should handle buttons, cards, icons, mockups, and any future component types without modification
+- Avoid hardcoding specific names, categories, or content assumptions
+- When adding rules or constraints, ask: "Does this apply to ALL nodes of this type/structure?"
+
 - ES2017 is the default TypeScript target for this plugin; adjust `tsconfig.json` only if a different baseline is required.
 - Vertical target variants must reflow horizontal auto layout frames into top-aligned stacks so the content hugs the safe area (see `resolveVerticalAlignItems` in `core/layout-profile.ts`).
 - Preserve safe-area QA overlays by configuring them with `configureQaOverlay` using `parentLayoutMode`; use `DEBUG_FIX=1` traces to verify placement. Overlays remain unlocked for user accessibility.

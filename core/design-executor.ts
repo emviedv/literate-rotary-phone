@@ -65,10 +65,20 @@ export async function createDesignVariant(
     variant.layoutMode = "NONE";
   }
 
-  // Detach all instances to allow repositioning of their children
-  const detachCount = detachAllInstances(variant);
+  // CRITICAL: Identify atomic instances BEFORE detachment
+  // This preserves component boundaries for mockups, illustrations, device frames
+  const atomicInstanceIds = collectAtomicInstanceIds(variant);
+  if (atomicInstanceIds.size > 0) {
+    debugFixLog("Atomic instances identified (will preserve)", {
+      count: atomicInstanceIds.size
+    });
+  }
+
+  // Detach non-atomic instances to allow repositioning of their children
+  // Atomic instances (mockups, etc.) are preserved to keep their structure
+  const detachCount = detachAllInstances(variant, atomicInstanceIds);
   if (detachCount > 0) {
-    debugFixLog("Detached instances for repositioning", { detachCount });
+    debugFixLog("Detached non-atomic instances for repositioning", { detachCount });
   }
 
   // Build node map for fast lookup
@@ -80,6 +90,7 @@ export async function createDesignVariant(
 
   // Identify children of atomic groups (mockups, illustrations, etc.)
   // These should NOT be repositioned independently - they move with their parent
+  // Now includes both preserved instances AND frame-based atomic groups
   const atomicGroupChildIds = collectAtomicGroupChildren(variant);
   if (atomicGroupChildIds.size > 0) {
     debugFixLog("Atomic group children identified (will skip repositioning)", {
@@ -125,7 +136,8 @@ export async function createDesignVariant(
   }
 
   // Reorder children based on zIndex values from specs
-  reorderChildrenByZIndex(variant, nodeMap, specs.nodes);
+  // Pass atomicGroupChildIds so we skip reordering atomic children (preserve their z-order)
+  reorderChildrenByZIndex(variant, nodeMap, specs.nodes, atomicGroupChildIds);
 
   // Apply safe area enforcement
   enforceSafeAreas(variant);
@@ -144,6 +156,127 @@ export async function createDesignVariant(
     skippedSpecs,
     errors
   };
+}
+
+// ============================================================================
+// Evaluation Adjustment Application
+// ============================================================================
+
+/**
+ * Result from applying evaluation adjustments.
+ */
+export interface AdjustmentResult {
+  readonly applied: number;
+  readonly skipped: number;
+  readonly errors: readonly string[];
+}
+
+/**
+ * Applies evaluation adjustments directly to an existing variant.
+ *
+ * This is called after Stage 3 evaluation identifies issues.
+ * Unlike createDesignVariant which clones and transforms, this
+ * modifies nodes in-place based on adjustment specs.
+ *
+ * @param variant - The TikTok variant frame to adjust
+ * @param adjustments - NodeSpec array with corrective changes
+ * @param fontCache - Font cache for text modifications
+ * @returns Result with counts of applied/skipped adjustments
+ */
+export async function applyEvaluationAdjustments(
+  variant: FrameNode,
+  adjustments: readonly NodeSpec[],
+  fontCache: Set<string>
+): Promise<AdjustmentResult> {
+  const errors: string[] = [];
+  let applied = 0;
+  let skipped = 0;
+
+  if (adjustments.length === 0) {
+    return { applied: 0, skipped: 0, errors: [] };
+  }
+
+  debugFixLog("Applying evaluation adjustments", {
+    variantId: variant.id,
+    adjustmentCount: adjustments.length
+  });
+
+  // Build a map of all nodes in the variant by ID
+  const variantNodeMap = buildVariantNodeMap(variant);
+
+  // Load fonts in case text changes are needed
+  await loadFontsForFrame(variant, fontCache);
+
+  // Identify atomic group children (should not be repositioned)
+  const atomicGroupChildIds = collectAtomicGroupChildren(variant);
+
+  for (const adjustment of adjustments) {
+    try {
+      // Find node in variant - adjustments reference variant node IDs
+      let targetNode = variantNodeMap.get(adjustment.nodeId);
+
+      // Fallback to name search if ID not found
+      if (!targetNode) {
+        targetNode = findNodeByName(variant, adjustment.nodeName) ?? undefined;
+      }
+
+      if (!targetNode) {
+        debugFixLog("Node not found for adjustment", {
+          nodeId: adjustment.nodeId,
+          nodeName: adjustment.nodeName
+        });
+        skipped++;
+        continue;
+      }
+
+      // Check if this is a child of an atomic group
+      const isAtomicChild = atomicGroupChildIds.has(targetNode.id);
+
+      // Apply the adjustment spec
+      applyNodeSpec(targetNode, adjustment, isAtomicChild);
+      applied++;
+
+      debugFixLog("Adjustment applied", {
+        nodeId: adjustment.nodeId,
+        nodeName: adjustment.nodeName,
+        visible: adjustment.visible,
+        position: adjustment.position,
+        size: adjustment.size
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      errors.push(`Failed to apply adjustment for ${adjustment.nodeName}: ${message}`);
+      skipped++;
+    }
+  }
+
+  debugFixLog("Evaluation adjustments complete", {
+    applied,
+    skipped,
+    errorCount: errors.length
+  });
+
+  return { applied, skipped, errors };
+}
+
+/**
+ * Builds a map of all nodes in a variant frame by their IDs.
+ * Unlike buildNodeMap which maps source→clone, this maps variant IDs→nodes.
+ */
+function buildVariantNodeMap(frame: FrameNode): Map<string, SceneNode> {
+  const map = new Map<string, SceneNode>();
+  const queue: SceneNode[] = [frame];
+
+  while (queue.length > 0) {
+    const node = queue.shift()!;
+    map.set(node.id, node);
+
+    if ("children" in node) {
+      queue.push(...(node as FrameNode | GroupNode).children);
+    }
+  }
+
+  return map;
 }
 
 // ============================================================================
@@ -228,27 +361,29 @@ function shouldBreakAutoLayout(
  *
  * @param node - The Figma node to modify
  * @param spec - The specification from AI
- * @param isAtomicChild - If true, skip repositioning (child of atomic group like iPhone mockup)
+ * @param isAtomicChild - If true, skip ALL modifications (child of atomic group like iPhone mockup)
  */
 function applyNodeSpec(node: SceneNode, spec: NodeSpec, isAtomicChild: boolean = false): void {
-  // Handle visibility
+  // CRITICAL: Skip ALL modifications for atomic group children
+  // They must maintain their exact state relative to parent - including visibility,
+  // size, scale, and position. Modifying any of these breaks component integrity
+  // (e.g., separating phone bezel from screen, changing z-order of mockup parts)
+  if (isAtomicChild) {
+    debugFixLog("Skipping ALL spec application for atomic group child", {
+      nodeId: spec.nodeId,
+      nodeName: spec.nodeName,
+      reason: "Child of atomic group - preserving complete state"
+    });
+    return; // Early exit - no changes at all
+  }
+
+  // Handle visibility (only for non-atomic children now)
   if (!spec.visible) {
     node.visible = false;
     return;
   }
 
   node.visible = true;
-
-  // Skip repositioning for children of atomic groups (mockups, illustrations)
-  // These elements must stay in their relative positions within the parent
-  if (isAtomicChild && spec.position) {
-    debugFixLog("Skipping repositioning for atomic group child", {
-      nodeId: spec.nodeId,
-      nodeName: spec.nodeName,
-      reason: "Child of atomic group (mockup/illustration) - preserving relative position"
-    });
-    // Still allow size/scale changes, just not repositioning
-  }
 
   // Apply position - only break auto-layout if position change is significant
   // AND this is not a child of an atomic group
@@ -360,15 +495,35 @@ function applyTextTruncation(textNode: TextNode, maxLines: number): void {
  * This function collects all visible nodes that have zIndex values,
  * sorts them by zIndex (ascending), then uses insertChild to reorder
  * them within the parent frame.
+ *
+ * @param variant - The variant frame whose children will be reordered
+ * @param nodeMap - Map from source node IDs to cloned nodes in variant
+ * @param specs - Array of node specifications with optional zIndex values
+ * @param atomicGroupChildIds - Set of node IDs that are children of atomic groups (skip reordering)
  */
 function reorderChildrenByZIndex(
   variant: FrameNode,
   nodeMap: NodeMap,
-  specs: readonly NodeSpec[]
+  specs: readonly NodeSpec[],
+  atomicGroupChildIds: Set<string>
 ): void {
-  // Get specs with zIndex, filter to visible nodes only
+  // Get specs with zIndex, filter to visible nodes only, and skip atomic group children
+  // Atomic children must not be reordered - they must maintain their z-order within
+  // the atomic group (e.g., phone bezel must stay in front of screen content)
   const specsWithZIndex = specs
     .filter((s) => s.visible !== false && s.zIndex !== undefined)
+    .filter((s) => {
+      const node = nodeMap[s.nodeId];
+      if (node && atomicGroupChildIds.has(node.id)) {
+        debugFixLog("Skipping z-index reorder for atomic group child", {
+          nodeId: s.nodeId,
+          nodeName: s.nodeName,
+          reason: "Child of atomic group - preserving layer order"
+        });
+        return false;
+      }
+      return true;
+    })
     .sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0));
 
   if (specsWithZIndex.length === 0) return;
@@ -517,14 +672,19 @@ async function loadFontsForFrame(frame: FrameNode, cache: Set<string>): Promise<
 // ============================================================================
 
 /**
- * Recursively detaches all component instances in a frame tree.
- * This converts instances to regular frames, allowing their children
+ * Recursively detaches component instances in a frame tree, EXCEPT for
+ * instances identified as atomic groups (mockups, illustrations, device frames).
+ *
+ * This converts non-atomic instances to regular frames, allowing their children
  * to be repositioned freely (Figma locks instance children by default).
  *
+ * Atomic instances are preserved intact to maintain their component boundaries.
+ *
  * @param frame - The frame to process
+ * @param atomicInstanceIds - Set of instance IDs to skip (detected atomic groups)
  * @returns Number of instances detached
  */
-function detachAllInstances(frame: FrameNode): number {
+function detachAllInstances(frame: FrameNode, atomicInstanceIds: Set<string> = new Set()): number {
   let detachCount = 0;
 
   // Process children in reverse order since detachment may affect indices
@@ -536,6 +696,21 @@ function detachAllInstances(frame: FrameNode): number {
 
     // Check if this is an instance that can be detached
     if (node.type === "INSTANCE") {
+      // Skip detaching if this instance is an atomic group (mockup, illustration, etc.)
+      // This preserves the component boundary so children stay together
+      if (atomicInstanceIds.has(node.id)) {
+        debugFixLog("Preserving atomic instance (not detaching)", {
+          nodeId: node.id,
+          nodeName: node.name,
+          reason: "Component instance is atomic group - preserving structure"
+        });
+        // Still process children of atomic instances in case there are nested non-atomic instances
+        if ("children" in node) {
+          nodesToProcess.push(...(node as InstanceNode).children);
+        }
+        continue;
+      }
+
       try {
         const instance = node as InstanceNode;
         // detachInstance() converts the instance to a FrameNode in place
@@ -565,6 +740,43 @@ function detachAllInstances(frame: FrameNode): number {
 // ============================================================================
 // Atomic Group Detection
 // ============================================================================
+
+/**
+ * Collects IDs of all atomic instances (INSTANCE nodes that are atomic groups).
+ * This must run BEFORE detachAllInstances() so we know which instances to preserve.
+ *
+ * @param frame - The root frame to scan
+ * @returns Set of instance node IDs that should NOT be detached
+ */
+function collectAtomicInstanceIds(frame: FrameNode): Set<string> {
+  const atomicIds = new Set<string>();
+
+  function scanForAtomicInstances(node: SceneNode): void {
+    // Check if this instance is an atomic group (mockup, device, illustration)
+    if (node.type === "INSTANCE" && isAtomicGroup(node)) {
+      atomicIds.add(node.id);
+      debugFixLog("Found atomic instance (will preserve)", {
+        nodeId: node.id,
+        nodeName: node.name
+      });
+      // Don't recurse into atomic instances - they're fully protected
+      return;
+    }
+
+    // Recurse into containers
+    if ("children" in node) {
+      for (const child of (node as FrameNode | GroupNode | InstanceNode).children) {
+        scanForAtomicInstances(child);
+      }
+    }
+  }
+
+  for (const child of frame.children) {
+    scanForAtomicInstances(child);
+  }
+
+  return atomicIds;
+}
 
 /**
  * Collects all node IDs that are children of atomic groups.
