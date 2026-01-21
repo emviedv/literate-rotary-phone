@@ -118,33 +118,37 @@ testCase("sanitizeAiSignals normalizes casing, confidence, and QA codes", () => 
   }
 
   assertEqual(sanitized.roles.length, 2, "Should discard unsupported roles.");
-  const [title, hero] = sanitized.roles;
-  assertEqual(title.role, "title", "Title role should normalize casing.");
-  assertEqual(Math.round(title.confidence * 100), 84, "Title confidence should scale 84->0.84.");
-  assertEqual(hero.role, "hero_image", "Hero role should expand camelCase to underscores.");
+  const [titleNode, heroNode] = sanitized.roles;
+  // With universal taxonomy: "Title" → "title" → "typography", "HeroImage" → "hero_image" → "subject"
+  assertEqual(titleNode.role, "typography", "Title role should normalize and map to typography.");
+  assertEqual(Math.round(titleNode.confidence * 100), 84, "Title confidence should scale 84->0.84.");
+  assertEqual(heroNode.role, "subject", "Hero role should normalize to subject.");
 
-  assertEqual(sanitized.focalPoints.length, 1, "Should keep only valid focal points.");
-  const [focal] = sanitized.focalPoints;
+  assertEqual(sanitized.focalPoints?.length ?? 0, 1, "Should keep only valid focal points.");
+  const focal = sanitized.focalPoints?.[0];
+  if (!focal) throw new Error("Focal point missing");
   assertEqual(focal.x, 1, "Focal x should clamp to 1 when above bounds.");
   assertEqual(focal.y, 0, "Focal y should clamp to 0 when below bounds.");
   assertEqual(Math.round(focal.confidence * 100), 76, "Focal confidence should parse percent strings.");
 
-  assertEqual(sanitized.qa.length, 4, "Should keep QA entries with valid codes including new ones.");
-  const lowContrast = sanitized.qa.find(q => q.code === "LOW_CONTRAST");
-  if (!lowContrast) throw new Error("LOW_CONTRAST QA missing");
-  assertEqual(lowContrast.severity, "error", "Severity should preserve 'error' when provided.");
-  assertEqual(Math.round((lowContrast.confidence ?? 0) * 100), 100, "Confidence should clamp values over 1.");
+  // After consolidation: low_contrast → CONTRAST_ISSUE (deduped with other contrast codes)
+  // 4 input codes remain after filtering unknown_code, but low_contrast is consolidated
+  assertEqual(sanitized.qa?.length ?? 0, 4, "Should keep QA entries with valid codes including new ones.");
+  const contrastIssue = sanitized.qa?.find(q => q.code === "CONTRAST_ISSUE");
+  if (!contrastIssue) throw new Error("CONTRAST_ISSUE QA missing (consolidated from LOW_CONTRAST)");
+  assertEqual(contrastIssue.severity, "error", "Severity should preserve 'error' when provided.");
+  assertEqual(Math.round((contrastIssue.confidence ?? 0) * 100), 100, "Confidence should clamp values over 1.");
 
   // Verify new QA codes are accepted
-  const excessiveText = sanitized.qa.find(q => q.code === "EXCESSIVE_TEXT");
+  const excessiveText = sanitized.qa?.find(q => q.code === "EXCESSIVE_TEXT");
   if (!excessiveText) throw new Error("EXCESSIVE_TEXT QA missing");
   assertEqual(excessiveText.code, "EXCESSIVE_TEXT", "Should accept EXCESSIVE_TEXT code.");
 
-  const missingCta = sanitized.qa.find(q => q.code === "MISSING_CTA");
+  const missingCta = sanitized.qa?.find(q => q.code === "MISSING_CTA");
   if (!missingCta) throw new Error("MISSING_CTA QA missing");
   assertEqual(missingCta.code, "MISSING_CTA", "Should accept MISSING_CTA code.");
 
-  const aspectMismatch = sanitized.qa.find(q => q.code === "ASPECT_MISMATCH");
+  const aspectMismatch = sanitized.qa?.find(q => q.code === "ASPECT_MISMATCH");
   if (!aspectMismatch) throw new Error("ASPECT_MISMATCH QA missing");
   assertEqual(aspectMismatch.code, "ASPECT_MISMATCH", "Should accept ASPECT_MISMATCH code.");
 });

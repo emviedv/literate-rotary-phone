@@ -108,13 +108,16 @@ export async function scaleTextNode(
 
   // STEP 3: Scale text box dimensions FIRST (before font scaling)
   // This ensures the text box is large enough to accommodate scaled text
-  const scaledWidth = Math.max(1, node.width * scale);
-  const scaledHeight = Math.max(1, node.height * scale);
+  // CRITICAL FIX: Ensure clean integer dimensions for text boxes
+  const scaledWidth = Math.max(1, Math.round(node.width * scale));
+  const scaledHeight = Math.max(1, Math.round(node.height * scale));
   node.resize(scaledWidth, scaledHeight);
 
   if (characters.length === 0) {
     if (node.fontSize !== figma.mixed && typeof node.fontSize === "number") {
-      node.fontSize = Math.max(node.fontSize * scale, minLegibleSize);
+      // Use half-pixel rounding for font size
+      const rawSize = node.fontSize * scale;
+      node.fontSize = Math.max(Math.round(rawSize * 2) / 2, minLegibleSize);
     }
     // Restore auto-resize for empty text nodes
     restoreTextAutoResize(node, originalAutoResize);
@@ -138,25 +141,31 @@ export async function scaleTextNode(
     // Scale font size with minimum legibility floor
     const fontSize = node.getRangeFontSize(i, nextIndex);
     if (fontSize !== figma.mixed && typeof fontSize === "number") {
-      const newFontSize = Math.max(fontSize * scale, minLegibleSize);
+      // Use half-pixel rounding for better sub-pixel legibility while avoiding long decimals
+      const rawSize = fontSize * scale;
+      const newFontSize = Math.max(Math.round(rawSize * 2) / 2, minLegibleSize);
       node.setRangeFontSize(i, nextIndex, newFontSize);
     }
 
     // Scale line height (only pixel values, percentage stays relative)
     const lineHeight = node.getRangeLineHeight(i, nextIndex);
     if (lineHeight !== figma.mixed && lineHeight.unit === "PIXELS") {
+      // Half-pixel rounding for line height
+      const newValue = Math.round(lineHeight.value * scale * 2) / 2;
       node.setRangeLineHeight(i, nextIndex, {
         unit: "PIXELS",
-        value: lineHeight.value * scale
+        value: newValue
       });
     }
 
     // Scale letter spacing (only pixel values)
     const letterSpacing = node.getRangeLetterSpacing(i, nextIndex);
     if (letterSpacing !== figma.mixed && letterSpacing.unit === "PIXELS") {
+      // Round letter spacing to 2 decimal places (standard for typography)
+      const newValue = Math.round(letterSpacing.value * scale * 100) / 100;
       node.setRangeLetterSpacing(i, nextIndex, {
         unit: "PIXELS",
-        value: letterSpacing.value * scale
+        value: newValue
       });
     }
   }

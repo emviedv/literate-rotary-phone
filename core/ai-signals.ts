@@ -136,11 +136,15 @@ export function findNodeRole(
 }
 
 /**
- * Checks if a node has the hero_bleed role (intentionally bleeds beyond frame bounds).
+ * Checks if a node has a role that may bleed beyond frame bounds.
+ * With the simplified 7-role taxonomy, this includes both:
+ * - Legacy "hero_bleed" role (for backwards compatibility)
+ * - New "subject" role (primary focal elements like people, products)
  */
 export function isHeroBleedNode(signals: AiSignals | null | undefined, nodeId: string): boolean {
   const roleInfo = findNodeRole(signals, nodeId);
-  return roleInfo?.role === "hero_bleed";
+  // Both legacy hero_bleed and new subject role can bleed
+  return roleInfo?.role === "hero_bleed" || roleInfo?.role === "subject";
 }
 
 /**

@@ -1,35 +1,29 @@
+/**
+ * Universal 7-role taxonomy for compositional layout analysis.
+ * Designed to handle diverse content: people, mockups, charts, lists, and mixed media.
+ */
 export type AiRole =
-  // Visual hierarchy
-  | "logo"              // Brand mark, <10% area, corner positioned
-  | "hero_image"        // Primary visual, >40% area, largest IMAGE
-  | "hero_bleed"        // Product/device shot that intentionally extends beyond frame bounds
-  | "secondary_image"   // Supporting visual
-  | "background"        // Full-bleed background layer, >90% coverage
+  // Primary focal element
+  | "subject"           // The primary focal point: person, device mockup, chart/graph, large product image
 
-  // Typography hierarchy
-  | "title"             // Primary headline, largest fontSize
-  | "subtitle"          // Secondary headline, near title
-  | "body"              // Paragraph text, fontSize 14-18px
-  | "caption"           // Small text near images, <14px
+  // Branding
+  | "branding"          // Logos and brand marks
 
-  // Interactive/Action
-  | "cta"               // Primary call-to-action button
-  | "cta_secondary"     // Secondary action button (outline style)
+  // Typography
+  | "typography"        // Headings, body text, captions - all text content
 
-  // Content elements
-  | "badge"             // Overlay chip/tag
-  | "icon"              // Small symbolic image, <64px
-  | "list"              // Repeated similar elements
-  | "feature_item"      // Single feature in a list
-  | "testimonial"       // Quote/review block
-  | "price"             // Pricing information (contains $)
-  | "rating"            // Star ratings, scores
+  // Interactive
+  | "action"            // Buttons (CTAs) and interactive elements
 
   // Structural
-  | "divider"           // Visual separator
-  | "container"         // Grouping frame
-  | "decorative"        // Non-semantic shapes/gradients
-  | "unknown";
+  | "container"         // Background boxes, cards, shapes that group other elements
+  | "component"         // Complex groups: testimonial stars, avatar grids, chart legends
+
+  // Background
+  | "environment"       // Background colors, gradients, full-bleed imagery
+
+  // Catch-all
+  | "unknown";          // Genuinely unclassifiable nodes
 
 export interface AiRoleEvidence {
   readonly nodeId: string;
@@ -86,8 +80,49 @@ export type AiQaCode =
   | "BRAND_CONSISTENCY_WEAK"       // Inconsistent brand colors, logo usage, or style
   | "CONTENT_HIERARCHY_FLAT";      // No clear information hierarchy or visual flow
 
+/**
+ * Consolidated QA codes for downstream processing.
+ * Maps 28 granular AI-generated codes to 15 distinct actionable signals.
+ *
+ * Consolidation Map:
+ * - CONTRAST_ISSUE ← LOW_CONTRAST, COLOR_CONTRAST_INSUFFICIENT, COLOR_HARMONY_POOR
+ * - TEXT_SIZE_ISSUE ← TEXT_TOO_SMALL_FOR_TARGET, TEXT_TOO_SMALL_ACCESSIBLE, THUMBNAIL_LEGIBILITY
+ * - HIERARCHY_ISSUE ← HIERARCHY_UNCLEAR, CONTENT_HIERARCHY_FLAT, HEADING_HIERARCHY_BROKEN, POOR_READING_ORDER
+ * - OVERFLOW_RISK ← VERTICAL_OVERFLOW_RISK, HORIZONTAL_OVERFLOW_RISK
+ */
+export type ConsolidatedQaCode =
+  // Consolidated signals (4 new)
+  | "CONTRAST_ISSUE"      // All contrast and color harmony issues
+  | "TEXT_SIZE_ISSUE"     // All text sizing and legibility issues
+  | "HIERARCHY_ISSUE"     // All hierarchy and reading order issues
+  | "OVERFLOW_RISK"       // Both vertical and horizontal overflow
+
+  // Preserved distinct signals (11)
+  | "LOGO_TOO_SMALL"
+  | "TEXT_OVERLAP"
+  | "UNCERTAIN_ROLES"
+  | "SALIENCE_MISALIGNED"
+  | "SAFE_AREA_RISK"
+  | "GENERIC"
+  | "EXCESSIVE_TEXT"
+  | "MISSING_CTA"
+  | "ASPECT_MISMATCH"
+  | "CONTENT_DENSITY_MISMATCH"
+  | "OVERLAY_CONFLICT"
+  | "CTA_PLACEMENT_RISK"
+  | "PATTERN_MISMATCH"
+  | "INSUFFICIENT_TOUCH_TARGETS"
+  | "POOR_FOCUS_INDICATORS"
+  | "MOTION_SENSITIVITY_RISK"
+  | "MISSING_ALT_EQUIVALENT"
+  | "TYPOGRAPHY_INCONSISTENCY"
+  | "SPACING_INCONSISTENCY"
+  | "VISUAL_WEIGHT_IMBALANCED"
+  | "BRAND_CONSISTENCY_WEAK";
+
 export interface AiQaSignal {
-  readonly code: AiQaCode;
+  // After sanitization, code may be the original AiQaCode or a ConsolidatedQaCode
+  readonly code: AiQaCode | ConsolidatedQaCode;
   readonly severity: "info" | "warn" | "error";
   readonly message?: string;
   readonly confidence?: number;
@@ -106,11 +141,43 @@ export interface AiFaceRegion {
   readonly confidence: number;
 }
 
+/**
+ * Collision zone representing a rectangular area where typography should not be placed.
+ * Used by the Binary Rule spatial geometry system (VERSION 8).
+ */
+export interface AiCollisionZone {
+  readonly x: number;        // Left edge (0-1 normalized)
+  readonly y: number;        // Top edge (0-1 normalized)
+  readonly w: number;        // Width (0-1 normalized)
+  readonly h: number;        // Height (0-1 normalized)
+}
+
+/**
+ * Subject occupancy zone for the Repulsion Law (VERSION 9+).
+ * Indicates which horizontal zone the subject occupies.
+ */
+export type AiSubjectOccupancy = "left" | "right" | "center";
+
+/**
+ * Compositional intent classification for the frame.
+ */
+export type AiIntent = "Subject-Dominant" | "Information-Dominant" | "Grid-Repeat";
+
 export interface AiSignals {
+  /** Per-node role classifications with confidence scores */
   readonly roles: readonly AiRoleEvidence[];
-  readonly focalPoints: readonly AiFocalPoint[];
-  readonly qa: readonly AiQaSignal[];
+  /** Primary focal points for cropping/composition (optional in VERSION 8+) */
+  readonly focalPoints?: readonly AiFocalPoint[];
+  /** Quality assurance warnings (optional in VERSION 8+) */
+  readonly qa?: readonly AiQaSignal[];
+  /** Detected face regions for text exclusion zones */
   readonly faceRegions?: readonly AiFaceRegion[];
+  /** Compositional intent classification (VERSION 8+) */
+  readonly intent?: AiIntent;
+  /** Collision zones where typography is forbidden (VERSION 8) */
+  readonly collisionZones?: readonly AiCollisionZone[];
+  /** Subject occupancy zone for Repulsion Law (VERSION 9+) */
+  readonly subjectOccupancy?: AiSubjectOccupancy;
 }
 
 /**
@@ -289,11 +356,29 @@ export interface AnalysisDepth {
 
 /**
  * Enhanced AI signals with structural analysis capabilities.
+ *
+ * NOTE: Several fields are generated but never consumed in the pipeline.
+ * These are marked @deprecated and may be removed in future versions.
  */
 export interface EnhancedAiSignals extends AiSignals {
+  /**
+   * @deprecated Generated but never consumed in the layout pipeline.
+   * Retained for potential future use. May be removed to reduce AI token usage.
+   */
   readonly layoutStructure?: LayoutStructureAnalysis;
+
+  /**
+   * @deprecated Generated but never consumed in the layout pipeline.
+   * Retained for potential future use. May be removed to reduce AI token usage.
+   */
   readonly contentRelationships?: readonly ContentRelationship[];
+
+  /**
+   * @deprecated Generated but never consumed in the layout pipeline.
+   * Retained for potential future use. May be removed to reduce AI token usage.
+   */
   readonly colorTheme?: ColorThemeAnalysis;
+
   readonly enhancedPatterns?: EnhancedPatternDetection;
   readonly analysisDepth?: AnalysisDepth;
 }

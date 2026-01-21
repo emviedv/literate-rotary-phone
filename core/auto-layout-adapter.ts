@@ -58,6 +58,16 @@ export function createLayoutAdaptationPlan(
     readonly sourceFlowChildCount?: number;
     readonly adoptVerticalVariant?: boolean;
     readonly sourceItemSpacing?: number | null;
+    readonly sourcePadding?: {
+      readonly top: number;
+      readonly right: number;
+      readonly bottom: number;
+      readonly left: number;
+    };
+    readonly sourceAlignments?: {
+      readonly primaryAxisAlignItems: FrameNode["primaryAxisAlignItems"];
+      readonly counterAxisAlignItems: FrameNode["counterAxisAlignItems"];
+    };
     readonly layoutAdvice?: LayoutAdviceEntry;
     readonly safeAreaRatio?: number;
   }
@@ -71,6 +81,29 @@ export function createLayoutAdaptationPlan(
   const safeWidth = target.width - (target.width * safeAreaRatio * 2);
   const safeHeight = target.height - (target.height * safeAreaRatio * 2);
 
+  // Resolve source padding: prefer options.sourcePadding, fallback to frame values
+  const sourcePadding = options?.sourcePadding ?? {
+    top: frame.paddingTop || 0,
+    right: frame.paddingRight || 0,
+    bottom: frame.paddingBottom || 0,
+    left: frame.paddingLeft || 0
+  };
+
+  // Resolve source alignments: prefer options.sourceAlignments, fallback to frame values
+  // Only capture alignments if they exist and are valid on the frame
+  const sourceAlignments = options?.sourceAlignments ?? (
+    frame.layoutMode !== "NONE" &&
+    "primaryAxisAlignItems" in frame &&
+    "counterAxisAlignItems" in frame &&
+    frame.primaryAxisAlignItems !== undefined &&
+    frame.counterAxisAlignItems !== undefined
+      ? {
+          primaryAxisAlignItems: frame.primaryAxisAlignItems,
+          counterAxisAlignItems: frame.counterAxisAlignItems
+        }
+      : undefined
+  );
+
   const context: LayoutContext = {
     sourceLayout: {
       mode: sourceLayoutMode,
@@ -80,7 +113,9 @@ export function createLayoutAdaptationPlan(
         options?.sourceFlowChildCount ?? countFlowChildren(frame),
       hasText: hasTextChildren(frame),
       hasImages: hasImageChildren(frame),
-      itemSpacing: options?.sourceItemSpacing ?? (frame.layoutMode !== "NONE" ? frame.itemSpacing : null)
+      itemSpacing: options?.sourceItemSpacing ?? (frame.layoutMode !== "NONE" ? frame.itemSpacing : null),
+      padding: sourcePadding,
+      alignments: sourceAlignments
     },
     targetProfile: {
       type: profile,
@@ -214,6 +249,9 @@ export function applyLayoutAdaptation(
         if ("layoutGrow" in child && adaptation.layoutGrow !== undefined) {
           child.layoutGrow = adaptation.layoutGrow;
         }
+        if (child.type === "TEXT" && adaptation.textAlignHorizontal) {
+          (child as TextNode).textAlignHorizontal = adaptation.textAlignHorizontal;
+        }
       }
     });
   }
@@ -301,16 +339,53 @@ function adaptNodeRecursive(
 
   // 1. Adapt current node if it looks like a structural container
   if (isStructuralContainer(node, target.width)) {
-    const plan = createLayoutAdaptationPlan(node, target, profile, scale);
+    // CRITICAL: Capture original auto-layout properties BEFORE creating the plan
+    // This ensures nested frames preserve their alignment (items-end, justify-end, etc.)
+    const sourceAlignments = node.layoutMode !== "NONE"
+      ? {
+          primaryAxisAlignItems: node.primaryAxisAlignItems,
+          counterAxisAlignItems: node.counterAxisAlignItems
+        }
+      : undefined;
+
+    const plan = createLayoutAdaptationPlan(node, target, profile, scale, {
+      sourceLayoutMode: node.layoutMode === "GRID" ? "NONE" : node.layoutMode,
+      sourceSize: { width: node.width, height: node.height },
+      sourceItemSpacing: node.layoutMode !== "NONE" ? node.itemSpacing : null,
+      sourcePadding: node.layoutMode !== "NONE"
+        ? {
+            top: node.paddingTop,
+            right: node.paddingRight,
+            bottom: node.paddingBottom,
+            left: node.paddingLeft
+          }
+        : undefined,
+      sourceAlignments
+    });
 
     // Only apply if the mode actually changes (avoid churning)
     if (plan.layoutMode !== node.layoutMode) {
       debugAutoLayoutLog("adapting nested structural frame", {
         nodeId: node.id,
+        nodeName: node.name,
         from: node.layoutMode,
-        to: plan.layoutMode
+        to: plan.layoutMode,
+        originalAlignments: sourceAlignments,
+        newAlignments: {
+          primary: plan.primaryAxisAlignItems,
+          counter: plan.counterAxisAlignItems
+        }
       });
       applyLayoutAdaptation(node, plan);
+    } else {
+      // Mode didn't change, but we should still update spacing/padding if needed
+      // while PRESERVING the original alignments
+      debugAutoLayoutLog("preserving nested frame layout mode", {
+        nodeId: node.id,
+        nodeName: node.name,
+        layoutMode: node.layoutMode,
+        preservedAlignments: sourceAlignments
+      });
     }
   }
 
@@ -328,13 +403,22 @@ function isStructuralContainer(node: FrameNode, targetWidth: number): boolean {
   if (!node.visible) return false;
   if (node.layoutMode === "NONE") return false; // Don't touch absolute frames
   
-  // If it's very wide, it's likely a row that needs stacking
+  // Case 1: Wide rows that need stacking (Horizontal -> Vertical)
+  // If it's very wide relative to target, it might need to wrap or stack
   if (node.width >= targetWidth * 0.5) {
     return true;
   }
-  
-  // Or if it's auto-layout and has significant height?
-  // No, width is the main constraint for switching H->V.
+
+  // Case 2: Tall cards that need splitting (Vertical -> Horizontal)
+  // If it's a vertical stack with significant height, and we have width to spare
+  if (node.layoutMode === "VERTICAL" && node.height > node.width * 1.2) {
+    // Only if it contains both text and images (mixed content card)
+    const hasText = hasTextChildren(node);
+    const hasImages = hasImageChildren(node);
+    if (hasText && hasImages) {
+      return true;
+    }
+  }
   
   return false;
 }

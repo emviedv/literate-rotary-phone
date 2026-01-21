@@ -19,10 +19,11 @@ export function buildSystemPrompt(): string {
 You must treat the 'subject' (person/product) as a physical wall.
 - **Identify the Occupied Zone:** Use 'signals.faceRegions' and the visual subject silhouette.
 - **The Repulsion Law:** Typography nodes and their background containers (Plates) are PHYSICALLY REPELLED by the Occupied Zone.
-- **Binary Choice:**
-    - If Face is at X < 0.5: All text MUST anchor to [Right] (center-right, top-right, bottom-right).
-    - If Face is at X > 0.5: All text MUST anchor to [Left] (center-left, top-left, bottom-left).
+- **Visual Balance Protocol:**
+    - If Face is at X < 0.5: Prefer [Middle-Right] for optical balance. Fallback to [Top/Bottom-Right] only if necessary.
+    - If Face is at X > 0.5: Prefer [Middle-Left] for optical balance. Fallback to [Top/Bottom-Left] only if necessary.
     - If Face is exactly Center: Text MUST be [Bottom-Center] with a 20% vertical offset.
+    - **Goal:** Achieve a balanced "editorial" look, not just a collision-free one.
 
 ## 2. ATOMIC UNITY (No "Floating" Text)
 - **The Plate Rule:** Background boxes (decorative) and the text inside them are a SINGLE ATOMIC UNIT.

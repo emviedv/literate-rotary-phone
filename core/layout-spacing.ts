@@ -28,11 +28,8 @@ export function calculateSpacing(
   }
 
   const baseSpacingRaw =
-    context.sourceLayout.itemSpacing != null
-      ? context.sourceLayout.itemSpacing
-      : frame.layoutMode !== "NONE"
-        ? frame.itemSpacing
-        : 16;
+    context.sourceLayout.itemSpacing ??
+    (frame.layoutMode !== "NONE" ? frame.itemSpacing : 16);
   const scaledSpacing = baseSpacingRaw === 0 ? 0 : Math.max(baseSpacingRaw * context.scale, 1);
 
   // Content-aware distribution ratio based on child count
@@ -51,7 +48,7 @@ export function calculateSpacing(
 
   // Boost distribution for extreme aspect ratios
   const aspectRatio = context.targetProfile.aspectRatio;
-  if (aspectRatio < ASPECT_RATIOS.STRETCH_VERTICAL || aspectRatio > ASPECT_RATIOS.STRETCH_HORIZONTAL_EXTREME) {
+  if (aspectRatio < ASPECT_RATIOS.EDGE_SIZING_VERTICAL || aspectRatio > ASPECT_RATIOS.EXTREME_HORIZONTAL) {
     distributionRatio = Math.min(distributionRatio * 1.3, 0.5);
   }
 
@@ -124,13 +121,19 @@ export function calculateSpacing(
 /**
  * Calculates padding adjustments for the adapted layout.
  * Scales padding proportionally and clamps negative values to zero.
+ *
+ * IMPORTANT: Uses context.sourceLayout.padding (from snapshot) rather than
+ * reading frame padding directly. This is because prepareCloneForLayout
+ * zeros frame padding before this function is called.
  */
 export function calculatePaddingAdjustments(
   frame: FrameNode,
   newLayoutMode: "HORIZONTAL" | "VERTICAL" | "NONE",
   context: LayoutContext
 ): { top: number; right: number; bottom: number; left: number } {
-  const basePadding = {
+  // Use padding from context (sourced from snapshot) rather than frame
+  // Frame padding may have been zeroed by prepareCloneForLayout
+  const basePadding = context.sourceLayout.padding ?? {
     top: frame.paddingTop || 0,
     right: frame.paddingRight || 0,
     bottom: frame.paddingBottom || 0,

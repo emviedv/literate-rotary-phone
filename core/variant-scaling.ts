@@ -25,7 +25,6 @@ import { scaleEffect, scalePaint } from "./effect-scaling.js";
 import {
   getElementRole,
   isBackgroundLike,
-  isDecorativePointer,
   ensureFillModeForImages,
   isAtomicGroup
 } from "./element-classification.js";
@@ -503,8 +502,10 @@ export async function scaleNodeRecursive(
   }
 
   if ("width" in node && "height" in node && typeof node.width === "number" && typeof node.height === "number") {
-    let newWidth = node.width * scale;
-    let newHeight = node.height * scale;
+    // CRITICAL FIX: Ensure all dimensions are rounded to clean integers
+    // Fractional pixels cause brittle code generation in MCP tools
+    let newWidth = Math.round(node.width * scale);
+    let newHeight = Math.round(node.height * scale);
 
     // Collect and scale constraints using dedicated module
     const scaledConstraints = collectAndScaleConstraints(node, scale);
@@ -518,58 +519,24 @@ export async function scaleNodeRecursive(
     }
 
     // Enforce minimum sizes for logos, icons, badges, and buttons
-    // This prevents small UI elements from becoming microscopic on extreme aspect ratio targets
     if (!isBackground) {
       const elementRole = getElementRole(node);
       if (elementRole && MIN_ELEMENT_SIZES[elementRole]) {
         const minSize = MIN_ELEMENT_SIZES[elementRole];
 
         if (newWidth < minSize.width || newHeight < minSize.height) {
-          // Calculate the scale needed to meet minimum size while preserving aspect ratio
           const minScaleW = minSize.width / node.width;
           const minScaleH = minSize.height / node.height;
           const preserveScale = Math.max(minScaleW, minScaleH, scale);
 
-          newWidth = Math.max(newWidth, node.width * preserveScale);
-          newHeight = Math.max(newHeight, node.height * preserveScale);
-
-          debugFixLog("enforced minimum size for element", {
-            nodeId: node.id,
-            nodeName: node.name,
-            role: elementRole,
-            originalScale: scale,
-            preservedScale: preserveScale,
-            originalSize: { width: node.width, height: node.height },
-            newSize: { width: newWidth, height: newHeight }
-          });
-        }
-      }
-
-      // Handle decorative pointers - preserve aspect ratio to prevent stretching
-      if (isDecorativePointer(node)) {
-        const originalAspect = node.width / node.height;
-        const currentAspect = newWidth / newHeight;
-
-        // If aspect ratio has changed significantly, restore it
-        if (Math.abs(originalAspect - currentAspect) > 0.1) {
-          // Scale to fit within current bounds while preserving aspect ratio
-          const fitWidth = Math.min(newWidth, newHeight * originalAspect);
-          const fitHeight = fitWidth / originalAspect;
-          newWidth = fitWidth;
-          newHeight = fitHeight;
-
-          debugFixLog("preserved decorative pointer aspect ratio", {
-            nodeId: node.id,
-            nodeName: node.name,
-            originalAspect,
-            preservedSize: { width: newWidth, height: newHeight }
-          });
+          newWidth = Math.round(node.width * preserveScale);
+          newHeight = Math.round(node.height * preserveScale);
         }
       }
     }
 
-    const safeWidth = Math.max(1, Math.round(newWidth));
-    const safeHeight = Math.max(1, Math.round(newHeight));
+    const safeWidth = Math.max(1, newWidth);
+    const safeHeight = Math.max(1, newHeight);
 
     // Validate and apply constraints using dedicated module
     const validatedConstraints = validateConstraints(scaledConstraints, safeWidth, safeHeight);

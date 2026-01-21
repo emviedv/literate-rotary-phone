@@ -231,7 +231,7 @@ function determineScalingStrategy(params: {
 
   // For text-heavy content, prefer reflow for extreme aspect changes
   if (hasText && !hasImages) {
-    if (aspectRatio > ASPECT_RATIOS.STRETCH_HORIZONTAL || aspectRatio < ASPECT_RATIOS.STRETCH_VERTICAL) {
+    if (aspectRatio > ASPECT_RATIOS.EDGE_SIZING_HORIZONTAL || aspectRatio < ASPECT_RATIOS.EDGE_SIZING_VERTICAL) {
       return "reflow";
     }
     return "adaptive";
@@ -270,7 +270,8 @@ export function calculateOptimalScale(
   switch (analysis.recommendedStrategy) {
     case "fill":
       // Aggressively fill the space
-      scale = Math.max(widthScale, heightScale) * 0.95;
+      // Was: 0.95 -> Now: 1.0 (Fill completely)
+      scale = Math.max(widthScale, heightScale) * 1.0;
       break;
 
     case "fit":
@@ -281,11 +282,11 @@ export function calculateOptimalScale(
     case "stretch":
       // Allow some distortion for better fill
       if (profile === "vertical") {
-        scale = heightScale * 0.9;
+        scale = heightScale * 0.95;
       } else if (profile === "horizontal") {
-        scale = widthScale * 0.9;
+        scale = widthScale * 0.95;
       } else {
-        scale = (widthScale + heightScale) / 2 * 0.9;
+        scale = (widthScale + heightScale) / 2 * 0.95;
       }
       break;
 
@@ -293,13 +294,13 @@ export function calculateOptimalScale(
       // For reflow, prioritize the primary axis
       if (profile === "vertical") {
         // For vertical targets, maximize height utilization
-        scale = Math.min(heightScale * 0.85, widthScale);
+        scale = Math.min(heightScale * 0.9, widthScale * 1.1);
       } else if (profile === "horizontal") {
         // For horizontal targets, maximize width utilization
-        scale = Math.min(widthScale * 0.85, heightScale);
+        scale = Math.min(widthScale * 0.9, heightScale * 1.1);
       } else {
         // For square, balanced approach
-        scale = (Math.min(widthScale, heightScale) + Math.max(widthScale, heightScale)) / 2 * 0.9;
+        scale = (Math.min(widthScale, heightScale) + Math.max(widthScale, heightScale)) / 2;
       }
       break;
 
@@ -308,28 +309,24 @@ export function calculateOptimalScale(
       // Smart adaptive scaling based on profile
       if (profile === "vertical") {
         // Vertical: prioritize height but ensure width fits
-        if (heightScale <= widthScale) {
-          scale = heightScale * 0.95;
+        // Relaxed logic: Allow width to overshoot slightly (1.1x) if it means filling height better
+        if (heightScale <= widthScale * 1.1) {
+          scale = heightScale * 0.98;
         } else {
-          const heightFirst = heightScale * 0.9;
-          // Allow minimal horizontal overshoot (5%) to unlock vertical fill
-          const widthAllowance = widthScale * 1.05;
-          scale = Math.min(heightFirst, widthAllowance);
+          scale = widthScale * 1.0;
         }
       } else if (profile === "horizontal") {
         // Horizontal: prioritize width but ensure height fits
-        if (widthScale <= heightScale) {
-          scale = widthScale * 0.95;
+        if (widthScale <= heightScale * 1.1) {
+          scale = widthScale * 0.98;
         } else {
-          // Blend with heavy weight toward filling width, constrained by height
-          const blend = widthScale * 0.8 + heightScale * 0.2;
-          scale = Math.min(heightScale * 1.05, blend);
+          scale = heightScale * 1.0;
         }
       } else {
         // Square: balanced fill
         const avgScale = (widthScale + heightScale) / 2;
         const minScale = Math.min(widthScale, heightScale);
-        scale = minScale * 0.6 + avgScale * 0.4;
+        scale = minScale * 0.4 + avgScale * 0.6; // Weighted more towards average (fuller)
       }
       break;
   }
@@ -343,9 +340,10 @@ export function calculateOptimalScale(
   // Calculate safe area bounds - strict constraint to prevent content overflow
   const maxSafeScale = Math.min(widthScale, heightScale);
 
-  // Strictly constrain scale to safe bounds to prevent content from exceeding frame
-  // Previous 10% overshoot allowance caused content clipping on tall/complex designs
-  const constrainedScale = Math.min(scale, maxSafeScale);
+  // Relaxed Constraint: Allow 5% overshoot beyond strict safe area
+  // This prevents tiny pixel gaps and allows "bleed" designs to look correct
+  const overshootAllowance = 1.05;
+  const constrainedScale = Math.min(scale, maxSafeScale * overshootAllowance);
 
   return Math.max(MIN_SCALE, Math.min(MAX_SCALE, constrainedScale));
 }

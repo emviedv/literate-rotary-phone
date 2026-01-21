@@ -1,7 +1,6 @@
-import { VARIANT_TARGETS, getTargetById, type VariantTarget, type TargetId } from "../types/targets.js";
+import { VARIANT_TARGETS, getTargetById, type VariantTarget } from "../types/targets.js";
 import type { ToCoreMessage, ToUIMessage, VariantResult } from "../types/messages.js";
 import type { LayoutAdvice } from "../types/layout-advice.js";
-import type { LayoutPatternId } from "../types/layout-patterns.js";
 import type { AiSignals } from "../types/ai-signals.js";
 import { UI_TEMPLATE } from "../ui/template.js";
 import { configureQaOverlay, createQaOverlay } from "./qa-overlay.js";
@@ -11,7 +10,6 @@ import { readAiSignals, resolvePrimaryFocalPoint } from "./ai-signals.js";
 import { autoSelectLayoutPattern, normalizeLayoutAdvice, readLayoutAdvice, resolvePatternLabel } from "./layout-advice.js";
 import { requestAiInsightsWithRecovery } from "./ai-service.js";
 import { trackEvent } from "./telemetry.js";
-import { recordPatternSelection, getCalibrationStatus } from "./ai-confidence-calibration.js";
 import { debugFixLog, setLogHandler, isDebugFixEnabled } from "./debug.js";
 import { ensureAiKeyLoaded, getCachedAiApiKey, persistApiKey, resetAiStatus, setAiStatus } from "./ai-state.js";
 import { createSelectionState, getSelectionFrame } from "./selection.js";
@@ -28,6 +26,7 @@ import {
   TARGET_ID_KEY
 } from "./plugin-constants.js";
 import { collectWarnings } from "./warnings.js";
+import { applyLeaderboardKillSwitch } from "./leaderboard-kill-switch.js";
 import { propagateRolesToNodes } from "./node-roles.js";
 import {
   prepareCloneForLayout,
@@ -78,9 +77,6 @@ figma.ui.onmessage = async (rawMessage: ToCoreMessage) => {
       break;
     case "refresh-ai":
       await handleRefreshAiRequest();
-      break;
-    case "get-calibration-status":
-      await handleGetCalibrationStatus();
       break;
     default:
       console.warn("Unhandled message", rawMessage);
@@ -198,9 +194,29 @@ async function handleGenerateRequest(
         convertFrameToAutoLayoutIfBeneficial(variantNode);
       }
 
+      // Diagnostic: Log frame structure before processing
+      debugFixLog("Frame structure before processing", {
+        frameId: variantNode.id,
+        frameName: variantNode.name,
+        layoutMode: variantNode.layoutMode,
+        childCount: variantNode.children.length,
+        children: variantNode.children.slice(0, 10).map(c => ({
+          name: c.name,
+          type: c.type,
+          layoutPositioning: "layoutPositioning" in c ? c.layoutPositioning : "N/A"
+        }))
+      });
+
       const autoLayoutSnapshots = new Map<string, AutoLayoutSnapshot>();
       await prepareCloneForLayout(variantNode, autoLayoutSnapshots);
       const rootSnapshot = autoLayoutSnapshots.get(variantNode.id) ?? null;
+
+      debugFixLog("Snapshot captured", {
+        hasSnapshot: !!rootSnapshot,
+        snapshotLayoutMode: rootSnapshot?.layoutMode ?? "none captured",
+        flowChildCount: rootSnapshot?.flowChildCount ?? 0,
+        absoluteChildCount: rootSnapshot?.absoluteChildCount ?? 0
+      });
       const safeAreaMetrics = await scaleNodeTree(
         variantNode,
         target,
@@ -228,6 +244,14 @@ async function handleGenerateRequest(
                     : undefined,
                 sourceFlowChildCount: rootSnapshot?.flowChildCount ?? undefined,
                 sourceItemSpacing: rootSnapshot?.itemSpacing ?? null,
+                sourcePadding: rootSnapshot
+                  ? {
+                      top: rootSnapshot.paddingTop,
+                      right: rootSnapshot.paddingRight,
+                      bottom: rootSnapshot.paddingBottom,
+                      left: rootSnapshot.paddingLeft
+                    }
+                  : undefined,
                 adoptVerticalVariant: safeAreaMetrics.adoptVerticalVariant,
                 layoutAdvice: adviceEntry,
                 safeAreaRatio
@@ -238,7 +262,12 @@ async function handleGenerateRequest(
               targetId: target.id,
               originalMode: rootSnapshot?.layoutMode ?? "NONE",
               newMode: layoutAdaptationPlan.layoutMode,
-              profile: layoutProfile
+              profile: layoutProfile,
+              hasSnapshot: !!rootSnapshot,
+              snapshotFlowChildren: rootSnapshot?.flowChildCount ?? 0,
+              snapshotAbsoluteChildren: rootSnapshot?.absoluteChildCount ?? 0,
+              variantLayoutMode: variantNode.layoutMode,
+              childCount: variantNode.children.length
             });
 
                   // Apply the adaptation plan for intelligent layout restructuring
@@ -260,6 +289,18 @@ async function handleGenerateRequest(
                       targetId: target.id,
                       dropped: adviceEntry.restructure.drop,
                       kept: adviceEntry.restructure.keepRequired
+                    });
+                  }
+
+                  // Apply kill-switch for small targets (e.g., 728x90 leaderboards)
+                  // This hides subject/hero elements that become unrecognizable at small sizes
+                  const killSwitchResult = applyLeaderboardKillSwitch(variantNode, target, aiSignals);
+                  if (killSwitchResult.activated) {
+                    debugFixLog("Kill-switch activated for small target", {
+                      targetId: target.id,
+                      hiddenCount: killSwitchResult.hiddenNodeIds.length,
+                      targetHeight: killSwitchResult.targetHeight,
+                      threshold: killSwitchResult.threshold
                     });
                   }
 
@@ -308,30 +349,6 @@ async function handleGenerateRequest(
           ? patternSelection.confidence
           : undefined;
       const layoutSnapshot = captureLayoutSnapshot(variantNode);
-
-      // Record pattern selection feedback for adaptive confidence system
-      if (patternSelection?.patternId && chosenPatternId) {
-        try {
-          await recordPatternSelection(
-            target.id as TargetId,
-            patternSelection.patternId as LayoutPatternId,
-            chosenPatternId as LayoutPatternId,
-            patternSelection.confidence ?? 0
-          );
-
-          debugFixLog("Pattern feedback recorded", {
-            targetId: target.id,
-            aiRecommended: patternSelection.patternId,
-            userSelected: chosenPatternId,
-            wasCorrect: patternSelection.patternId === chosenPatternId,
-            confidence: patternSelection.confidence
-          });
-        } catch (error) {
-          debugFixLog("Failed to record pattern feedback", {
-            error: error instanceof Error ? error.message : String(error)
-          });
-        }
-      }
 
       if (chosenPatternId) {
         variantNode.setPluginData(LAYOUT_PATTERN_KEY, chosenPatternId);
@@ -639,7 +656,7 @@ async function maybeRequestAiForFrame(frame: FrameNode, options?: { readonly for
     trackEvent("AI_ANALYSIS_COMPLETED", {
       frameId: targetFrame.id,
       roleCount: result.signals?.roles.length ?? 0,
-      qaCount: result.signals?.qa.length ?? 0,
+      qaCount: result.signals?.qa?.length ?? 0,
       layoutEntries: result.layoutAdvice?.entries.length ?? 0
     });
   } catch (error) {
@@ -686,33 +703,3 @@ async function handleSetLayoutAdvice(advice: LayoutAdvice): Promise<void> {
   }
 }
 
-async function handleGetCalibrationStatus(): Promise<void> {
-  try {
-    const status = await getCalibrationStatus();
-
-    debugFixLog("Calibration status requested", {
-      learningPhase: status.learningPhase,
-      totalRecommendations: status.totalRecommendations,
-      userOverrideRate: status.userOverrideRate.toFixed(2),
-      topPatterns: status.topPatterns.length,
-      topWeights: status.topTargetWeights.length
-    });
-
-    // Send back to UI for display (could be used for debugging/analytics panel)
-    postToUI({
-      type: "calibration-status",
-      payload: {
-        learningPhase: status.learningPhase as "initial" | "adapting" | "stable",
-        totalRecommendations: status.totalRecommendations,
-        userAcceptanceRate: Math.round((1 - status.userOverrideRate) * 100),
-        topPatterns: status.topPatterns,
-        topWeights: status.topTargetWeights,
-        message: `Adaptive AI: ${status.learningPhase} phase, ${status.totalRecommendations} recommendations, ${Math.round((1 - status.userOverrideRate) * 100)}% acceptance rate`
-      }
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to get calibration status.";
-    postToUI({ type: "error", payload: { message } });
-    debugFixLog("Failed to get calibration status", { error: message });
-  }
-}

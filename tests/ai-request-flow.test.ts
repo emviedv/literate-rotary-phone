@@ -64,7 +64,7 @@ function installImmediateFetch(): void {
             message: {
               content: JSON.stringify({
                 signals: {
-                  roles: [{ nodeId: "test-node", role: "title", confidence: 0.9 }],
+                  roles: [{ nodeId: "test-node", role: "typography", confidence: 0.9 }],
                   focalPoints: [{ nodeId: "test-node", x: 0.5, y: 0.5, confidence: 0.8 }],
                   qa: []
                 },
@@ -95,7 +95,7 @@ function installDeferredFetch(): void {
                 message: {
                   content: JSON.stringify({
                     signals: {
-                      roles: [{ nodeId: "test-node", role: "title", confidence: 0.9 }],
+                      roles: [{ nodeId: "test-node", role: "typography", confidence: 0.9 }],
                       focalPoints: [{ nodeId: "test-node", x: 0.5, y: 0.5, confidence: 0.8 }],
                       qa: []
                     },

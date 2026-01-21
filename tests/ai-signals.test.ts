@@ -33,7 +33,7 @@ testCase("readAiSignals returns null for missing or invalid data", () => {
     throw new Error("Expected null when plugin data cannot be parsed");
   }
   const parsed = readAiSignals(validNode);
-  if (!parsed || parsed.qa.length !== 0) {
+  if (!parsed || (parsed.qa?.length ?? 0) !== 0) {
     throw new Error("Expected parsed signals with empty QA entries");
   }
 });

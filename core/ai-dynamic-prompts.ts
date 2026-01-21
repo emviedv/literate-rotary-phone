@@ -171,9 +171,9 @@ function generateGridContext(gridSystem: GridDetectionResult): string {
 ## GRID CONTEXT
 This design uses a **${gridSystem.gridType}** with ${gridSystem.columnCount} columns and ${gridSystem.gutterWidth}px gutters. Elements are ${gridSystem.alignment}-aligned with ${(gridSystem.confidence * 100).toFixed(0)}% confidence.
 
-**Grid-Aware Analysis:**
-- Consider column spans when assessing element relationships
-- Respect grid alignment for layout pattern recommendations
+**Grid-Aware Directives:**
+- **MUST** respect the ${gridSystem.columnCount}-column structure for main content.
+- **MUST** align key elements (Logo, CTA) to the detected grid lines.
 - Note gutter consistency: ${gridSystem.gutterWidth > 0 ? `${gridSystem.gutterWidth}px gaps detected` : 'irregular spacing'}
 - Grid confidence: ${gridSystem.confidence >= 0.8 ? 'HIGH - strong grid structure' : gridSystem.confidence >= 0.6 ? 'MEDIUM - some grid patterns' : 'LOW - weak grid structure'}
 
@@ -213,10 +213,10 @@ function generateTypographyContext(typography: TypographyHierarchy): string {
 ## TYPOGRAPHY CONTEXT
 Uses **${scaleDescription}** with base size ${typography.baseSize}px. Hierarchy levels: ${hierarchyLevels}.
 
-**Typography-Aware Analysis:**
-- Maintain established hierarchy relationships during scaling
-- ${typography.levels.length >= 4 ? 'Rich typography hierarchy - good for complex layouts' : 'Limited hierarchy - may need simplification for small targets'}
-- Base size ${typography.baseSize}px suggests ${typography.baseSize >= 16 ? 'web/desktop focus' : 'compact/mobile focus'}
+**Typography Directives:**
+- **MUST MATCH** the established hierarchy roles (H1, H2, Body) in all variants.
+- **DO NOT** invent new font sizes unless scaling proportionally.
+- **MAINTAIN** weight consistency: H1 is ${typography.levels.find(l => l.role === 'h1')?.fontWeight || 'variable'}.
 - Scale consistency: ${typography.scale !== "custom" ? `Strong ${typography.scale} progression` : 'Custom scale - analyze for gaps'}${problemWarnings}
 
 **Scaling Recommendations:**
@@ -243,10 +243,10 @@ function generateRelationshipContext(relationships: readonly ContentRelationship
 ## CONTENT RELATIONSHIPS
 Detected ${relationships.length} content groupings: ${relationshipSummary}.
 
-**Relationship-Aware Analysis:**
-${textImagePairs > 0 ? `- **${textImagePairs} Text-Image Pairs**: Preserve spatial relationships during layout adaptation` : ''}
-${featureGroups > 0 ? `- **${featureGroups} Feature Groups**: Maintain consistent spacing and alignment` : ''}
-${ctaGroups > 0 ? `- **${ctaGroups} CTA Groups**: Keep action buttons grouped for user flow` : ''}
+**Relationship Directives:**
+${textImagePairs > 0 ? `- **${textImagePairs} Text-Image Pairs**: MUST preserve spatial proximity. Do not separate image from its caption/heading.` : ''}
+${featureGroups > 0 ? `- **${featureGroups} Feature Groups**: MUST maintain consistent spacing and alignment as a unit.` : ''}
+${ctaGroups > 0 ? `- **${ctaGroups} CTA Groups**: **CRITICAL** - Keep action buttons grouped with their labels. Do not split.` : ''}
 
 **Layout Pattern Implications:**
 ${textImagePairs > 0 ? '- Text-image pairs favor "split-left/right" or "hero-first" patterns' : ''}

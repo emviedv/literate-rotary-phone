@@ -343,4 +343,99 @@ testCase("zero padding remains zero after scaling", () => {
   assertEqual(plan.paddingAdjustments.left, 0, "zero padding should stay zero");
 });
 
+// ============================================================================
+// Source Padding Pass-Through Tests (simulates prepareCloneForLayout flow)
+// ============================================================================
+
+testCase("sourcePadding option overrides zeroed frame padding", () => {
+  // Simulate the real flow: frame padding has been zeroed by prepareCloneForLayout
+  // but original values are available in the snapshot
+  const frame = createFrame({
+    paddingTop: 0,    // Zeroed by prepareCloneForLayout
+    paddingRight: 0,
+    paddingBottom: 0,
+    paddingLeft: 0
+  });
+
+  // Original padding from snapshot
+  const sourcePadding = {
+    top: 24,
+    right: 32,
+    bottom: 24,
+    left: 32
+  };
+
+  const plan = createLayoutAdaptationPlan(
+    frame,
+    { width: 1920, height: 960 },
+    "horizontal",
+    1,
+    { sourcePadding }
+  );
+
+  // Padding should come from sourcePadding, not from zeroed frame
+  assertEqual(plan.paddingAdjustments.top, 24, "should use sourcePadding.top, not frame.paddingTop");
+  assertEqual(plan.paddingAdjustments.right, 32, "should use sourcePadding.right, not frame.paddingRight");
+  assertEqual(plan.paddingAdjustments.bottom, 24, "should use sourcePadding.bottom, not frame.paddingBottom");
+  assertEqual(plan.paddingAdjustments.left, 32, "should use sourcePadding.left, not frame.paddingLeft");
+});
+
+testCase("sourcePadding scales with scale factor", () => {
+  const frame = createFrame({
+    paddingTop: 0,
+    paddingRight: 0,
+    paddingBottom: 0,
+    paddingLeft: 0
+  });
+
+  const sourcePadding = {
+    top: 16,
+    right: 16,
+    bottom: 16,
+    left: 16
+  };
+
+  const plan = createLayoutAdaptationPlan(
+    frame,
+    { width: 1600, height: 1200 },
+    "horizontal",
+    2,
+    { sourcePadding }
+  );
+
+  assertEqual(plan.paddingAdjustments.top, 32, "sourcePadding should scale with scale factor");
+  assertEqual(plan.paddingAdjustments.right, 32, "sourcePadding should scale with scale factor");
+  assertEqual(plan.paddingAdjustments.bottom, 32, "sourcePadding should scale with scale factor");
+  assertEqual(plan.paddingAdjustments.left, 32, "sourcePadding should scale with scale factor");
+});
+
+testCase("sourcePadding with asymmetric values preserved", () => {
+  const frame = createFrame({
+    paddingTop: 0,
+    paddingRight: 0,
+    paddingBottom: 0,
+    paddingLeft: 0
+  });
+
+  const sourcePadding = {
+    top: 10,
+    right: 20,
+    bottom: 30,
+    left: 40
+  };
+
+  const plan = createLayoutAdaptationPlan(
+    frame,
+    { width: 1000, height: 800 },
+    "square",
+    1,
+    { sourcePadding }
+  );
+
+  assertEqual(plan.paddingAdjustments.top, 10, "asymmetric top padding preserved");
+  assertEqual(plan.paddingAdjustments.right, 20, "asymmetric right padding preserved");
+  assertEqual(plan.paddingAdjustments.bottom, 30, "asymmetric bottom padding preserved");
+  assertEqual(plan.paddingAdjustments.left, 40, "asymmetric left padding preserved");
+});
+
 console.log("\n✅ All spacing calculation tests passed\n");

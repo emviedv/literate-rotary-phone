@@ -361,37 +361,15 @@ function generateStructuralRoleEvidence(
 ): AiRoleEvidence[] {
   const evidence: AiRoleEvidence[] = [];
 
-  // Use typography hierarchy for role assignment
+  // Use typography hierarchy for role assignment - all text becomes "typography"
   if (typographyHierarchy.levels.length > 0) {
     for (const level of typographyHierarchy.levels) {
       for (const nodeId of level.usage) {
-        let role: AiRoleEvidence["role"];
-        let confidence = 0.7; // Base structural confidence
-
-        switch (level.role) {
-          case "display":
-          case "h1":
-            role = "title";
-            confidence = 0.8;
-            break;
-          case "h2":
-            role = "subtitle";
-            confidence = 0.7;
-            break;
-          case "body":
-            role = "body";
-            confidence = 0.6;
-            break;
-          case "caption":
-            role = "caption";
-            confidence = 0.6;
-            break;
-          default:
-            role = "body";
-            confidence = 0.5;
-        }
-
-        evidence.push({ nodeId, role, confidence });
+        evidence.push({
+          nodeId,
+          role: "typography",
+          confidence: 0.85
+        });
       }
     }
   }
@@ -466,29 +444,15 @@ function generateRuleBasedRoles(nodes: SceneNode[], frame: FrameNode): AiRoleEvi
   for (const node of nodes) {
     if (node.type === "TEXT") {
       const textNode = node as TextNode;
-      let role: AiRoleEvidence["role"] = "body";
-      let confidence = 0.6; // Conservative rule-based confidence
+      let role: AiRoleEvidence["role"] = "typography";
+      let confidence = 0.85;
 
-      // Size-based role inference
-      const fontSize = textNode.fontSize === figma.mixed ? 16 : textNode.fontSize as number;
-
-      if (fontSize >= 32) {
-        role = "title";
-        confidence = 0.7;
-      } else if (fontSize >= 24) {
-        role = "subtitle";
-        confidence = 0.6;
-      } else if (fontSize <= 12) {
-        role = "caption";
-        confidence = 0.6;
-      }
-
-      // Check for CTA-like characteristics
+      // Check for CTA-like characteristics - becomes "action"
       if (textNode.characters.toLowerCase().includes("buy") ||
           textNode.characters.toLowerCase().includes("get") ||
           textNode.characters.toLowerCase().includes("start")) {
-        role = "cta";
-        confidence = 0.5; // Lower confidence for heuristic detection
+        role = "action";
+        confidence = 0.85;
       }
 
       evidence.push({ nodeId: textNode.id, role, confidence });
@@ -501,15 +465,19 @@ function generateRuleBasedRoles(nodes: SceneNode[], frame: FrameNode): AiRoleEvi
         const nodeArea = node.width * node.height;
         const areaRatio = nodeArea / frameArea;
 
-        let role: AiRoleEvidence["role"] = "secondary_image";
-        let confidence = 0.5;
+        let role: AiRoleEvidence["role"] = "subject";
+        let confidence = 0.85;
 
-        if (areaRatio > 0.4) {
-          role = "hero_image";
-          confidence = 0.6;
+        // Large images are subjects, very small are components
+        if (areaRatio > 0.3) {
+          role = "subject";
+          confidence = 0.90;
+        } else if (areaRatio > 0.9) {
+          role = "environment";
+          confidence = 0.90;
         } else if (areaRatio < 0.05) {
-          role = "icon";
-          confidence = 0.6;
+          role = "component";
+          confidence = 0.85;
         }
 
         evidence.push({ nodeId: node.id, role, confidence });

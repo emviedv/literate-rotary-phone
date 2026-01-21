@@ -49,7 +49,7 @@ type ChildArrangement = "horizontal" | "vertical" | "mixed" | "chaotic";
 // Constants
 // ============================================================================
 
-const CONVERSION_CONFIDENCE_THRESHOLD = 0.6;
+const CONVERSION_CONFIDENCE_THRESHOLD = 0.45;
 const ALIGNMENT_THRESHOLD = 0.65;
 const MIN_CHILDREN_FOR_CONVERSION = 2;
 const MAX_REASONABLE_GAP = 200;

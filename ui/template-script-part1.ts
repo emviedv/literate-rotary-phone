@@ -32,6 +32,7 @@ export const UI_SCRIPT_PART1 = /* js */ `
 
       const debugSection = document.getElementById("debugSection");
       const debugLogOutput = document.getElementById("debugLogOutput");
+      const copyDebugLogButton = document.getElementById("copyDebugLogButton");
 
       const LAYOUT_CONFIDENCE_THRESHOLD = 0.65;
       const QA_CONFIDENCE_THRESHOLD = 0.35;

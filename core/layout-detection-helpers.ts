@@ -5,6 +5,8 @@
  * in Figma frames. Used by auto-layout-adapter for intelligent layout decisions.
  */
 
+import { DETECTION_THRESHOLDS } from "./layout-constants.js";
+
 /**
  * Checks if a frame contains any text children (recursively).
  */
@@ -72,8 +74,8 @@ export function isBackgroundLike(
   const nodeArea = (node as any).width * (node as any).height;
   const rootArea = rootWidth * rootHeight;
 
-  // Signal 1: Area coverage (≥90% for better detection)
-  const coversFrame = rootArea > 0 && nodeArea >= rootArea * 0.90;
+  // Signal 1: Area coverage (uses unified threshold from layout-constants.ts)
+  const coversFrame = rootArea > 0 && nodeArea >= rootArea * DETECTION_THRESHOLDS.BACKGROUND_AREA_COVERAGE;
 
   if (!coversFrame) {
     return false;

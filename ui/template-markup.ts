@@ -83,7 +83,10 @@ export const UI_MARKUP = /* html */ `
     </section>
 
     <section class="section" id="debugSection" hidden>
-      <h2>Debug Log</h2>
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+        <h2 style="margin: 0;">Debug Log</h2>
+        <button id="copyDebugLogButton" class="secondary" style="padding: 4px 8px; font-size: 11px;">Copy Log</button>
+      </div>
       <pre id="debugLogOutput" style="max-height: 200px; overflow-y: auto; background: var(--figma-color-bg-tertiary, #eee); color: var(--figma-color-text-secondary, #333); padding: 8px; border-radius: 4px; white-space: pre-wrap; word-wrap: break-word;"></pre>
     </section>
   </main>

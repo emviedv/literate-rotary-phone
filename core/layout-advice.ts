@@ -5,46 +5,28 @@ import type {
   TransformationFeasibility,
   RestructurePlan,
   ElementPositioning,
-  LayoutWarning
+  LayoutWarning,
+  AnchorRegion,
+  ConstraintBehavior,
+  EdgeOffset,
+  SizeSpec,
+  TextDirective,
+  ImageDirective,
+  ContainerAlignment,
+  SpacingSpec,
+  NodeWarning,
+  PositioningMap
 } from "../types/layout-advice.js";
-import type { LayoutPatternId } from "../types/layout-patterns.js";
-import { isPatternPreferredForTarget } from "../types/layout-patterns.js";
 import { debugFixLog } from "./debug.js";
 import { LAYOUT_ADVICE_KEY, LEGACY_LAYOUT_ADVICE_KEY } from "./plugin-constants.js";
-import { getCalibratedAffinityWeight } from "./ai-confidence-calibration.js";
-import type { TargetId } from "../types/targets.js";
 
 type PluginDataNode = Pick<FrameNode, "getPluginData">;
-
-/**
- * Tiered confidence thresholds for layout pattern selection.
- * These tiers determine how AI suggestions are applied.
- */
-export const CONFIDENCE_TIERS = {
-  /** High confidence: auto-apply pattern with full confidence */
-  HIGH: 0.85,
-  /** Medium confidence: auto-apply but flag for potential review */
-  MEDIUM: 0.65,
-  /** Low confidence: use as hint but blend with deterministic fallback */
-  LOW: 0.45,
-  /** Reject threshold: below this, ignore AI suggestion entirely */
-  REJECT: 0.45
-} as const;
-
-/** Confidence boost when AI pattern matches target's preferred patterns */
-const AFFINITY_BOOST = 0.1;
 
 export interface AutoSelectedPattern {
   readonly patternId?: string;
   readonly patternLabel?: string;
   readonly confidence?: number;
   readonly fallback: boolean;
-  /** True when confidence is in MEDIUM tier - suggestion applied but may need review */
-  readonly lowConfidence?: boolean;
-  /** True when AI hint was used but blended with deterministic approach */
-  readonly aiHint?: boolean;
-  /** Confidence tier classification */
-  readonly tier?: "high" | "medium" | "low" | "reject";
 }
 
 const toNumber = (value: unknown): number | undefined => {
@@ -154,35 +136,337 @@ function normalizeRestructure(raw: unknown): RestructurePlan | undefined {
   };
 }
 
+// ============================================================================
+// Positioning Normalization (Comprehensive Schema)
+// ============================================================================
+
+const VALID_ANCHORS: readonly AnchorRegion[] = [
+  "top-left", "top-center", "top-right",
+  "center-left", "center", "center-right",
+  "bottom-left", "bottom-center", "bottom-right",
+  "fill"
+];
+
+const LEGACY_REGION_TO_ANCHOR: Record<string, AnchorRegion> = {
+  "left": "center-left",
+  "center": "center",
+  "right": "center-right",
+  "top": "top-center",
+  "bottom": "bottom-center",
+  "fill": "fill"
+};
+
+/**
+ * Normalizes constraint behavior from AI response.
+ */
+function normalizeConstraints(raw: unknown): ConstraintBehavior | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const obj = raw as Record<string, unknown>;
+
+  const validHorizontal = ["left", "right", "center", "stretch", "scale"];
+  const validVertical = ["top", "bottom", "center", "stretch", "scale"];
+
+  const horizontal = validHorizontal.includes(obj.horizontal as string)
+    ? obj.horizontal as ConstraintBehavior["horizontal"]
+    : "center";
+  const vertical = validVertical.includes(obj.vertical as string)
+    ? obj.vertical as ConstraintBehavior["vertical"]
+    : "center";
+
+  return { horizontal, vertical };
+}
+
+/**
+ * Normalizes edge offset from AI response.
+ */
+function normalizeOffset(raw: unknown): EdgeOffset | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const obj = raw as Record<string, unknown>;
+
+  const result: EdgeOffset = {};
+  if (typeof obj.left === "number") (result as { left?: number }).left = obj.left;
+  if (typeof obj.right === "number") (result as { right?: number }).right = obj.right;
+  if (typeof obj.top === "number") (result as { top?: number }).top = obj.top;
+  if (typeof obj.bottom === "number") (result as { bottom?: number }).bottom = obj.bottom;
+  if (typeof obj.fromSafeArea === "boolean") (result as { fromSafeArea?: boolean }).fromSafeArea = obj.fromSafeArea;
+
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+/**
+ * Normalizes size specification from AI response.
+ */
+function normalizeSizeSpec(raw: unknown): SizeSpec | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const obj = raw as Record<string, unknown>;
+
+  // Handle legacy string format
+  if (typeof raw === "string") {
+    const mode = raw === "auto" || raw === "fixed" || raw === "fill" ? raw : "auto";
+    return { mode };
+  }
+
+  const validModes = ["auto", "fixed", "fill", "hug", "scale-proportional"];
+  const mode = validModes.includes(obj.mode as string)
+    ? obj.mode as SizeSpec["mode"]
+    : "auto";
+
+  const result: SizeSpec = { mode };
+
+  if (typeof obj.width === "number" && obj.width > 0) (result as { width?: number }).width = obj.width;
+  if (typeof obj.height === "number" && obj.height > 0) (result as { height?: number }).height = obj.height;
+  if (typeof obj.minWidth === "number" && obj.minWidth > 0) (result as { minWidth?: number }).minWidth = obj.minWidth;
+  if (typeof obj.maxWidth === "number" && obj.maxWidth > 0) (result as { maxWidth?: number }).maxWidth = obj.maxWidth;
+  if (typeof obj.minHeight === "number" && obj.minHeight > 0) (result as { minHeight?: number }).minHeight = obj.minHeight;
+  if (typeof obj.maxHeight === "number" && obj.maxHeight > 0) (result as { maxHeight?: number }).maxHeight = obj.maxHeight;
+  if (typeof obj.scaleFactor === "number" && obj.scaleFactor > 0 && obj.scaleFactor <= 10) {
+    (result as { scaleFactor?: number }).scaleFactor = obj.scaleFactor;
+  }
+
+  return result;
+}
+
+/**
+ * Normalizes text directive from AI response.
+ */
+function normalizeTextDirective(raw: unknown): TextDirective | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const obj = raw as Record<string, unknown>;
+
+  const result: TextDirective = {};
+
+  if (typeof obj.maxLines === "number" && obj.maxLines > 0) {
+    (result as { maxLines?: number }).maxLines = Math.floor(obj.maxLines);
+  }
+  if (typeof obj.maxChars === "number" && obj.maxChars > 0) {
+    (result as { maxChars?: number }).maxChars = Math.floor(obj.maxChars);
+  }
+  if (obj.truncation === "ellipsis" || obj.truncation === "clip" || obj.truncation === "fade") {
+    (result as { truncation?: TextDirective["truncation"] }).truncation = obj.truncation;
+  }
+  if (typeof obj.minFontSize === "number" && obj.minFontSize > 0) {
+    (result as { minFontSize?: number }).minFontSize = obj.minFontSize;
+  }
+  if (typeof obj.targetFontSize === "number" && obj.targetFontSize > 0) {
+    (result as { targetFontSize?: number }).targetFontSize = obj.targetFontSize;
+  }
+  if (typeof obj.lineHeight === "number" && obj.lineHeight > 0) {
+    (result as { lineHeight?: number }).lineHeight = obj.lineHeight;
+  }
+  if (obj.textAlign === "left" || obj.textAlign === "center" || obj.textAlign === "right" || obj.textAlign === "justify") {
+    (result as { textAlign?: TextDirective["textAlign"] }).textAlign = obj.textAlign;
+  }
+  if (typeof obj.alternateText === "string" && obj.alternateText.length > 0) {
+    (result as { alternateText?: string }).alternateText = obj.alternateText;
+  }
+
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+/**
+ * Normalizes image directive from AI response.
+ */
+function normalizeImageDirective(raw: unknown): ImageDirective | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const obj = raw as Record<string, unknown>;
+
+  const validFits = ["cover", "contain", "fill", "none"];
+  const fit = validFits.includes(obj.fit as string)
+    ? obj.fit as ImageDirective["fit"]
+    : "cover";
+
+  const result: ImageDirective = { fit };
+
+  // Crop focus
+  if (obj.cropFocus && typeof obj.cropFocus === "object") {
+    const cf = obj.cropFocus as Record<string, unknown>;
+    if (typeof cf.x === "number" && typeof cf.y === "number") {
+      (result as { cropFocus?: { x: number; y: number } }).cropFocus = {
+        x: Math.max(0, Math.min(1, cf.x)),
+        y: Math.max(0, Math.min(1, cf.y))
+      };
+    }
+  }
+
+  if (typeof obj.allowBleed === "boolean") {
+    (result as { allowBleed?: boolean }).allowBleed = obj.allowBleed;
+  }
+
+  const validBleedAnchors = ["left", "right", "top", "bottom"];
+  if (validBleedAnchors.includes(obj.bleedAnchor as string)) {
+    (result as { bleedAnchor?: ImageDirective["bleedAnchor"] }).bleedAnchor = obj.bleedAnchor as ImageDirective["bleedAnchor"];
+  }
+
+  return result;
+}
+
+/**
+ * Normalizes container alignment from AI response.
+ */
+function normalizeContainerAlignment(raw: unknown): ContainerAlignment | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const obj = raw as Record<string, unknown>;
+
+  const result: ContainerAlignment = {};
+
+  const validPrimary = ["start", "center", "end", "space-between", "space-around"];
+  const validCounter = ["start", "center", "end", "stretch", "baseline"];
+
+  if (validPrimary.includes(obj.primary as string)) {
+    (result as { primary?: ContainerAlignment["primary"] }).primary = obj.primary as ContainerAlignment["primary"];
+  }
+  if (validCounter.includes(obj.counter as string)) {
+    (result as { counter?: ContainerAlignment["counter"] }).counter = obj.counter as ContainerAlignment["counter"];
+  }
+  if (typeof obj.grow === "number" && obj.grow >= 0) {
+    (result as { grow?: number }).grow = obj.grow;
+  }
+
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+/**
+ * Normalizes spacing specification from AI response.
+ */
+function normalizeSpacingSpec(raw: unknown): SpacingSpec | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const obj = raw as Record<string, unknown>;
+
+  const result: SpacingSpec = {};
+
+  if (typeof obj.before === "number") (result as { before?: number }).before = obj.before;
+  if (typeof obj.after === "number") (result as { after?: number }).after = obj.after;
+
+  if (obj.padding && typeof obj.padding === "object") {
+    const pad = obj.padding as Record<string, unknown>;
+    const padding: SpacingSpec["padding"] = {};
+    if (typeof pad.top === "number") (padding as { top?: number }).top = pad.top;
+    if (typeof pad.right === "number") (padding as { right?: number }).right = pad.right;
+    if (typeof pad.bottom === "number") (padding as { bottom?: number }).bottom = pad.bottom;
+    if (typeof pad.left === "number") (padding as { left?: number }).left = pad.left;
+    if (Object.keys(padding).length > 0) {
+      (result as { padding?: SpacingSpec["padding"] }).padding = padding;
+    }
+  }
+
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+/**
+ * Normalizes node-specific warnings from AI response.
+ */
+function normalizeNodeWarnings(raw: unknown): readonly NodeWarning[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+
+  const warnings: NodeWarning[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const obj = item as Record<string, unknown>;
+
+    if (typeof obj.code !== "string" || typeof obj.message !== "string") continue;
+    const severity = obj.severity === "info" || obj.severity === "warn" || obj.severity === "error"
+      ? obj.severity
+      : "info";
+
+    warnings.push({ code: obj.code, message: obj.message, severity });
+  }
+
+  return warnings.length > 0 ? warnings : undefined;
+}
+
+/**
+ * Normalizes a single element positioning from AI response.
+ * Handles both new comprehensive schema and legacy schema.
+ */
+function normalizeElementPositioning(raw: unknown): ElementPositioning | null {
+  if (!raw || typeof raw !== "object") return null;
+  const pos = raw as Record<string, unknown>;
+
+  // Determine anchor - handle both new 'anchor' and legacy 'region' fields
+  let anchor: AnchorRegion;
+
+  if (typeof pos.anchor === "string" && VALID_ANCHORS.includes(pos.anchor as AnchorRegion)) {
+    anchor = pos.anchor as AnchorRegion;
+  } else if (typeof pos.region === "string" && pos.region in LEGACY_REGION_TO_ANCHOR) {
+    // Convert legacy region to new anchor format
+    anchor = LEGACY_REGION_TO_ANCHOR[pos.region];
+  } else {
+    // Default anchor
+    anchor = "center";
+  }
+
+  // Build the positioning object
+  const result: ElementPositioning = { anchor };
+
+  // Visibility and priority
+  if (typeof pos.visible === "boolean") {
+    (result as { visible?: boolean }).visible = pos.visible;
+  }
+  if (typeof pos.priority === "number" && pos.priority > 0) {
+    (result as { priority?: number }).priority = Math.floor(pos.priority);
+  }
+
+  // Constraints
+  const constraints = normalizeConstraints(pos.constraints);
+  if (constraints) (result as { constraints?: ConstraintBehavior }).constraints = constraints;
+
+  // Offset
+  const offset = normalizeOffset(pos.offset);
+  if (offset) (result as { offset?: EdgeOffset }).offset = offset;
+
+  // Size - handle both new object format and legacy string format
+  const sizeSpec = normalizeSizeSpec(pos.size);
+  if (sizeSpec) (result as { size?: SizeSpec }).size = sizeSpec;
+
+  // Container alignment
+  const containerAlignment = normalizeContainerAlignment(pos.containerAlignment);
+  if (containerAlignment) (result as { containerAlignment?: ContainerAlignment }).containerAlignment = containerAlignment;
+
+  // Spacing
+  const spacing = normalizeSpacingSpec(pos.spacing);
+  if (spacing) (result as { spacing?: SpacingSpec }).spacing = spacing;
+
+  // Text directive - handle both nested 'text' object and legacy 'maxLines' at root
+  let textDirective = normalizeTextDirective(pos.text);
+  if (!textDirective && typeof pos.maxLines === "number" && pos.maxLines > 0) {
+    // Legacy maxLines at root level
+    textDirective = { maxLines: Math.floor(pos.maxLines) };
+  }
+  if (textDirective) (result as { text?: TextDirective }).text = textDirective;
+
+  // Image directive
+  const imageDirective = normalizeImageDirective(pos.image);
+  if (imageDirective) (result as { image?: ImageDirective }).image = imageDirective;
+
+  // Node-specific warnings
+  const nodeWarnings = normalizeNodeWarnings(pos.warnings);
+  if (nodeWarnings) (result as { warnings?: readonly NodeWarning[] }).warnings = nodeWarnings;
+
+  // Rationale
+  if (typeof pos.rationale === "string" && pos.rationale.length > 0) {
+    (result as { rationale?: string }).rationale = pos.rationale;
+  }
+
+  return result;
+}
+
 /**
  * Normalizes the positioning map from AI response.
+ * Supports both new comprehensive schema and legacy schema.
  */
-function normalizePositioning(raw: unknown): Readonly<Record<string, ElementPositioning>> | undefined {
+function normalizePositioning(raw: unknown): PositioningMap | undefined {
   if (!raw || typeof raw !== "object") {
     return undefined;
   }
+
   const result: Record<string, ElementPositioning> = {};
   const obj = raw as Record<string, unknown>;
 
   for (const [nodeId, posRaw] of Object.entries(obj)) {
-    if (!posRaw || typeof posRaw !== "object") continue;
-    const pos = posRaw as Record<string, unknown>;
-
-    const region = pos.region;
-    if (region !== "left" && region !== "center" && region !== "right" &&
-        region !== "top" && region !== "bottom" && region !== "fill") {
-      continue;
+    const normalized = normalizeElementPositioning(posRaw);
+    if (normalized) {
+      result[nodeId] = normalized;
     }
-
-    const size = pos.size === "auto" || pos.size === "fixed" || pos.size === "fill"
-      ? pos.size
-      : undefined;
-
-    const maxLines = typeof pos.maxLines === "number" && pos.maxLines > 0
-      ? Math.floor(pos.maxLines)
-      : undefined;
-
-    result[nodeId] = { region, size, maxLines };
   }
 
   return Object.keys(result).length > 0 ? result : undefined;
@@ -278,7 +562,8 @@ function normalizeEntry(entry: unknown): LayoutAdviceEntry | null {
     // New fields for transformation intelligence
     feasibility,
     restructure,
-    positioning,
+    // Positioning is required - provide empty object for backwards compatibility with legacy responses
+    positioning: positioning ?? {},
     warnings
   };
 }
@@ -345,84 +630,15 @@ export function resolvePatternLabel(
 }
 
 /**
- * Computes effective confidence with adaptive pattern affinity adjustment.
- * Uses machine learning to adjust confidence based on historical user feedback.
- */
-async function computeEffectiveConfidence(
-  baseConfidence: number,
-  patternId: string | undefined,
-  targetId: string
-): Promise<number> {
-  if (!patternId) {
-    return baseConfidence;
-  }
-
-  try {
-    // Get calibrated affinity weight based on historical user feedback
-    const calibratedWeight = await getCalibratedAffinityWeight(
-      targetId as TargetId,
-      patternId as LayoutPatternId
-    );
-
-    // Apply calibrated weight instead of fixed boost
-    const adjustedConfidence = baseConfidence + calibratedWeight;
-
-    // Also apply traditional preferred pattern boost for fallback
-    if (isPatternPreferredForTarget(patternId as LayoutPatternId, targetId)) {
-      const traditionalBoost = Math.max(0, AFFINITY_BOOST - Math.abs(calibratedWeight));
-      return Math.min(adjustedConfidence + traditionalBoost, 1.0);
-    }
-
-    return Math.max(0, Math.min(adjustedConfidence, 1.0));
-  } catch (error) {
-    debugFixLog("Failed to get calibrated affinity weight, using fallback", {
-      error: error instanceof Error ? error.message : String(error),
-      patternId,
-      targetId
-    });
-
-    // Fallback to original logic if calibration fails
-    if (isPatternPreferredForTarget(patternId as LayoutPatternId, targetId)) {
-      return Math.min(baseConfidence + AFFINITY_BOOST, 1.0);
-    }
-    return baseConfidence;
-  }
-}
-
-/**
- * Determines the confidence tier for a given confidence value.
- */
-function getConfidenceTier(confidence: number): "high" | "medium" | "low" | "reject" {
-  if (confidence >= CONFIDENCE_TIERS.HIGH) {
-    return "high";
-  }
-  if (confidence >= CONFIDENCE_TIERS.MEDIUM) {
-    return "medium";
-  }
-  if (confidence >= CONFIDENCE_TIERS.LOW) {
-    return "low";
-  }
-  return "reject";
-}
-
-/**
- * Picks the highest-confidence layout pattern for a target using tiered confidence.
- *
- * Confidence tiers:
- * - HIGH (≥0.85): Auto-apply with full confidence
- * - MEDIUM (≥0.65): Auto-apply but flag for potential review
- * - LOW (≥0.45): Use as hint but blend with deterministic fallback
- * - REJECT (<0.45): Ignore AI suggestion entirely
- *
- * Pattern affinity boosting: When AI suggests a pattern that's in the target's
- * preferred list (from PATTERN_AFFINITY), confidence is boosted by 0.1.
+ * Picks the highest-confidence layout pattern for a target.
+ * Simply trusts the AI's score.
  */
 export async function autoSelectLayoutPattern(
   advice: LayoutAdvice | null,
   targetId: string,
-  options?: { minConfidence?: number; preferAI?: boolean }
+  options?: { minConfidence?: number }
 ): Promise<AutoSelectedPattern | null> {
-  const minConfidence = options?.minConfidence ?? CONFIDENCE_TIERS.MEDIUM;
+  const minConfidence = options?.minConfidence ?? 0.5;
 
   if (!advice) {
     return null;
@@ -430,7 +646,7 @@ export async function autoSelectLayoutPattern(
   const entry = advice.entries.find((item) => item.targetId === targetId);
   if (!entry || !Array.isArray(entry.options) || entry.options.length === 0) {
     debugFixLog("auto layout selection missing options", { targetId });
-    return { fallback: true, tier: "reject" };
+    return { fallback: true };
   }
 
   const sorted = [...entry.options].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
@@ -440,83 +656,39 @@ export async function autoSelectLayoutPattern(
     : null;
 
   const candidate = highest ?? fromSelected ?? null;
-  const baseConfidence = candidate?.score ?? 0;
+  const confidence = candidate?.score ?? 0;
 
-  // Apply adaptive affinity adjustment based on user feedback
-  const effectiveConfidence = await computeEffectiveConfidence(baseConfidence, candidate?.id, targetId);
-  const tier = getConfidenceTier(effectiveConfidence);
-
-  debugFixLog("auto layout selection confidence analysis", {
+  debugFixLog("auto layout selection analysis", {
     targetId,
     patternId: candidate?.id,
-    baseConfidence,
-    effectiveConfidence,
-    tier,
-    affinityBoosted: effectiveConfidence > baseConfidence
+    confidence,
+    minConfidence
   });
 
-  // Handle each tier
-  if (tier === "reject" || !candidate) {
+  if (!candidate || confidence < minConfidence) {
     debugFixLog("auto layout selection rejected - confidence too low", {
       targetId,
-      effectiveConfidence,
+      confidence,
       minConfidence
     });
     return {
       patternId: undefined,
       patternLabel: undefined,
-      confidence: effectiveConfidence,
-      fallback: true,
-      tier: "reject"
+      confidence,
+      fallback: true
     };
   }
 
-  if (tier === "low") {
-    // Use AI as hint but signal that deterministic blending is recommended
-    debugFixLog("auto layout selection using AI hint with fallback blend", {
-      targetId,
-      patternId: candidate.id,
-      effectiveConfidence
-    });
-    return {
-      patternId: candidate.id,
-      patternLabel: candidate.label,
-      confidence: effectiveConfidence,
-      fallback: true,
-      aiHint: true,
-      tier: "low"
-    };
-  }
-
-  if (tier === "medium") {
-    // Apply but flag for potential review
-    debugFixLog("auto layout selection succeeded with medium confidence", {
-      targetId,
-      patternId: candidate.id,
-      effectiveConfidence
-    });
-    return {
-      patternId: candidate.id,
-      patternLabel: candidate.label,
-      confidence: effectiveConfidence,
-      fallback: false,
-      lowConfidence: true,
-      tier: "medium"
-    };
-  }
-
-  // High confidence - apply with full confidence
-  debugFixLog("auto layout selection succeeded with high confidence", {
+  debugFixLog("auto layout selection succeeded", {
     targetId,
     patternId: candidate.id,
-    effectiveConfidence
+    confidence
   });
 
   return {
     patternId: candidate.id,
     patternLabel: candidate.label,
-    confidence: effectiveConfidence,
-    fallback: false,
-    tier: "high"
+    confidence,
+    fallback: false
   };
 }

@@ -52,7 +52,9 @@ testCase("falls back to edge padding when auto layout lacks reflow capacity", ()
   });
 
   assertAlmostEqual(plan.interior, 0, "without flow children there is no spacing to inflate");
-  assertAlmostEqual(plan.start + plan.end, 400, "all extra width stays on the edges");
+  // Single-child layouts use minimum edge padding (safe area only) to allow child to grow
+  // With safeInset=60 and gaps exceeding it, edges get the safe area minimum (60 each = 120)
+  assertAlmostEqual(plan.start + plan.end, 120, "edges get safe area minimum for single-child layouts");
 });
 
 testCase("respects asymmetric safe insets while keeping interior expansion", () => {

@@ -23,5 +23,9 @@
     "knip": "^5.64.0",
     "ts-jest": "^29.2.5",
     "typescript": "^5.4.5"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.25.3",
+    "eventsource": "^4.1.0"
   }
 }

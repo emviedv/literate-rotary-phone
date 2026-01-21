@@ -147,21 +147,25 @@ export function determineOptimalLayoutMode(context: LayoutContext): "HORIZONTAL"
   const hasSignificantText = sourceLayout.hasText && sourceLayout.childCount >= 3;
   const isImageDominant = sourceLayout.hasImages && !sourceLayout.hasText;
 
-  // If source has no auto layout, determine best mode for target
+    // If source has no auto layout, determine best mode for target
   if (sourceLayout.mode === "NONE") {
     // Consider source-target aspect delta for major reorientation
     const aspectDelta = Math.abs(sourceAspect - aspectRatio);
 
-    if (isExtremeVertical && aspectDelta > 1.0) {
-      debugAutoLayoutLog("determining optimal layout: source is NONE, major reorientation to vertical", { context, aspectDelta });
-      return "VERTICAL";
+    // CRITICAL FIX: Prefer switching to directional layout to enable reflow/fill behavior.
+    // Only preserve NONE if the aspect ratio is very similar (preventing jarring shifts).
+    if (aspectDelta > 0.2) {
+      const bestMode = targetProfile.type === "vertical" ? "VERTICAL" : "HORIZONTAL";
+      debugAutoLayoutLog("determining optimal layout: source is NONE, switching to directional for reflow", { 
+        context, 
+        aspectDelta,
+        bestMode 
+      });
+      return bestMode;
     }
-    if (isExtremeHorizontal && aspectDelta > 1.0) {
-      debugAutoLayoutLog("determining optimal layout: source is NONE, major reorientation to horizontal", { context, aspectDelta });
-      return "HORIZONTAL";
-    }
-    // Preserve original positioning for moderate changes
-    debugAutoLayoutLog("determining optimal layout: source is NONE, preserving for moderate change", { context, aspectDelta });
+    
+    // Preserve original positioning ONLY for very similar aspect ratios
+    debugAutoLayoutLog("determining optimal layout: source is NONE, preserving for similar aspect ratio", { context, aspectDelta });
     return "NONE";
   }
 
@@ -228,7 +232,7 @@ export function determineSizingModes(
   }
 
   // For extreme aspect ratios, always use FIXED to fill space
-  if (context.targetProfile.aspectRatio < ASPECT_RATIOS.STRETCH_VERTICAL || context.targetProfile.aspectRatio > ASPECT_RATIOS.STRETCH_HORIZONTAL) {
+  if (context.targetProfile.aspectRatio < ASPECT_RATIOS.EDGE_SIZING_VERTICAL || context.targetProfile.aspectRatio > ASPECT_RATIOS.EDGE_SIZING_HORIZONTAL) {
     return { primary: "FIXED", counter: "FIXED" };
   }
 

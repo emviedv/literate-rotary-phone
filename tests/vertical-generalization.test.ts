@@ -65,14 +65,15 @@ testCase("Vertical Generalization: Generic vertical target gets STRETCH constrai
 testCase("Vertical Generalization: Generic vertical target gets correct label", () => {
     // We inspect the name of the child rectangle (Safe Area visual)
     const overlay = createQaOverlay(GENERIC_VERTICAL_TARGET, 0.1);
-    
+
     // @ts-ignore - mock structure
-    const safeAreaRect = overlay.children?.[0] as any; 
-    
+    const safeAreaRect = overlay.children?.[0] as any;
+
     // Currently defaults to "Safe Area"
     // We want "Content Safe Zone" or similar for all vertical video formats
+    // Name now includes compact spec suffix like "[T:192 B:192 L:108 R:108]"
     assert(
-        safeAreaRect?.name === "Content Safe Zone", 
-        `Expected 'Content Safe Zone' label, got '${safeAreaRect?.name}'`
+        safeAreaRect?.name?.startsWith("Content Safe Zone"),
+        `Expected name starting with 'Content Safe Zone', got '${safeAreaRect?.name}'`
     );
 });

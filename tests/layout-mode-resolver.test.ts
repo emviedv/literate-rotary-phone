@@ -348,4 +348,210 @@ testCase("horizontal layout with few children does not wrap", () => {
   assert(plan.layoutWrap === "NO_WRAP", "horizontal with 3 children should not wrap");
 });
 
+// ============================================================================
+// NONE-layout pattern preservation tests
+// ============================================================================
+
+testCase("AI pattern with NONE preserves source auto-layout to prevent overlaps", () => {
+  // Source frame has HORIZONTAL auto-layout
+  const frame = createFrame({
+    layoutMode: "HORIZONTAL",
+    width: 800,
+    height: 600
+  });
+
+  // AI selects "layered-hero" which has layoutMode: "NONE"
+  const layoutAdvice: LayoutAdviceEntry = {
+    targetId: "figma-cover",
+    selectedId: "layered-hero", // This pattern has layoutMode: "NONE"
+    options: []
+  };
+
+  const plan = createLayoutAdaptationPlan(
+    frame,
+    { width: 1920, height: 960 },
+    "horizontal",
+    1,
+    {
+      sourceLayoutMode: "HORIZONTAL",
+      layoutAdvice
+    }
+  );
+
+  // Should preserve HORIZONTAL, not apply NONE (which would cause overlaps)
+  assert(
+    plan.layoutMode === "HORIZONTAL",
+    `Should preserve HORIZONTAL layout when AI selects NONE-layout pattern, got ${plan.layoutMode}`
+  );
+});
+
+testCase("AI pattern with NONE is applied when source is also NONE", () => {
+  // Source frame has no auto-layout
+  const frame = createFrame({
+    layoutMode: "NONE",
+    width: 800,
+    height: 600
+  });
+
+  // AI selects "layered-hero" which has layoutMode: "NONE"
+  const layoutAdvice: LayoutAdviceEntry = {
+    targetId: "figma-cover",
+    selectedId: "layered-hero",
+    options: []
+  };
+
+  const plan = createLayoutAdaptationPlan(
+    frame,
+    { width: 1920, height: 960 },
+    "horizontal",
+    1,
+    {
+      sourceLayoutMode: "NONE",
+      layoutAdvice
+    }
+  );
+
+  // NONE is fine when source was also NONE
+  assert(
+    plan.layoutMode === "NONE",
+    `Should apply NONE layout when source was also NONE, got ${plan.layoutMode}`
+  );
+});
+
+testCase("AI pattern with VERTICAL is applied even when source is HORIZONTAL", () => {
+  // Source frame has HORIZONTAL auto-layout
+  const frame = createFrame({
+    layoutMode: "HORIZONTAL",
+    width: 800,
+    height: 600
+  });
+
+  // AI selects "vertical-stack" which has layoutMode: "VERTICAL"
+  const layoutAdvice: LayoutAdviceEntry = {
+    targetId: "tiktok-vertical",
+    selectedId: "vertical-stack",
+    options: []
+  };
+
+  const plan = createLayoutAdaptationPlan(
+    frame,
+    { width: 1080, height: 1920 },
+    "vertical",
+    1,
+    {
+      sourceLayoutMode: "HORIZONTAL",
+      layoutAdvice
+    }
+  );
+
+  // VERTICAL should be applied (it's a valid layout mode, just different orientation)
+  assert(
+    plan.layoutMode === "VERTICAL",
+    `Should apply VERTICAL layout from AI pattern, got ${plan.layoutMode}`
+  );
+});
+
+// ============================================================================
+// Alignment Preservation Tests (fixes overlapping nested frames)
+// ============================================================================
+
+testCase("sourceAlignments preserves items-end for horizontal layouts", () => {
+  // Bar chart row with items-end (bottom alignment)
+  const frame = createFrame({
+    layoutMode: "HORIZONTAL",
+    width: 1040,
+    height: 503
+  });
+
+  // Simulate a nested frame that has items-end alignment
+  const plan = createLayoutAdaptationPlan(
+    frame,
+    { width: 1920, height: 960 },
+    "horizontal",
+    1,
+    {
+      sourceLayoutMode: "HORIZONTAL",
+      sourceAlignments: {
+        primaryAxisAlignItems: "MIN",
+        counterAxisAlignItems: "MAX"  // items-end in Tailwind
+      }
+    }
+  );
+
+  // Layout mode stays HORIZONTAL, so alignments should be preserved
+  assert(
+    plan.counterAxisAlignItems === "MAX",
+    `Should preserve counterAxisAlignItems=MAX (items-end), got ${plan.counterAxisAlignItems}`
+  );
+});
+
+testCase("sourceAlignments preserves justify-end for vertical layouts", () => {
+  // Column with justify-end (push content to bottom)
+  const frame = createFrame({
+    layoutMode: "VERTICAL",
+    width: 248,
+    height: 327
+  });
+
+  const plan = createLayoutAdaptationPlan(
+    frame,
+    { width: 248, height: 400 },
+    "vertical",
+    1,
+    {
+      sourceLayoutMode: "VERTICAL",
+      sourceAlignments: {
+        primaryAxisAlignItems: "MAX",  // justify-end in Tailwind
+        counterAxisAlignItems: "MIN"
+      }
+    }
+  );
+
+  // Layout mode stays VERTICAL, so alignments should be preserved
+  assert(
+    plan.primaryAxisAlignItems === "MAX",
+    `Should preserve primaryAxisAlignItems=MAX (justify-end), got ${plan.primaryAxisAlignItems}`
+  );
+});
+
+testCase("sourceAlignments preserved when nested frame layout mode unchanged", () => {
+  // Simulate the bar chart row scenario: HORIZONTAL with items-end
+  const frame = createFrame({
+    layoutMode: "HORIZONTAL",
+    width: 1040,
+    height: 503,
+    children: [
+      createChild({ id: "q1-col" }),
+      createChild({ id: "q2-col" }),
+      createChild({ id: "q3-col" }),
+      createChild({ id: "q4-col" })
+    ]
+  });
+
+  // For a horizontal target, HORIZONTAL layout should be preserved
+  const plan = createLayoutAdaptationPlan(
+    frame,
+    { width: 2560, height: 1440 },
+    "horizontal",
+    1,
+    {
+      sourceLayoutMode: "HORIZONTAL",
+      sourceAlignments: {
+        primaryAxisAlignItems: "MIN",
+        counterAxisAlignItems: "MAX"  // Critical: items-end for bar chart
+      }
+    }
+  );
+
+  // Both mode and alignment should be preserved
+  assert(
+    plan.layoutMode === "HORIZONTAL",
+    `Layout mode should stay HORIZONTAL, got ${plan.layoutMode}`
+  );
+  assert(
+    plan.counterAxisAlignItems === "MAX",
+    `counterAxisAlignItems should be preserved as MAX (items-end), got ${plan.counterAxisAlignItems}`
+  );
+});
+
 console.log("\n✅ All layout mode resolver tests passed\n");

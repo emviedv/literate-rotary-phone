@@ -56,5 +56,10 @@ export function enforceTargetSafeArea(
   const x = Math.max(minX, Math.min(bounds.x, maxX - width));
   const y = Math.max(minY, Math.min(bounds.y, maxY - height));
 
-  return { x, y, width, height };
+  return { 
+    x: Math.round(x), 
+    y: Math.round(y), 
+    width: Math.round(width), 
+    height: Math.round(height) 
+  };
 }

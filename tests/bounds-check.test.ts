@@ -87,7 +87,7 @@ testCase("combineChildBounds excludes nodes with ignored roles (even if small)",
   
   const aiSignals: AiSignals = {
     roles: [
-      { nodeId: "deco", role: "decorative", confidence: 0.9 }
+      { nodeId: "deco", role: "container", confidence: 0.9 }
     ],
     focalPoints: [],
     qa: []

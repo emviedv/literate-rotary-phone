@@ -66,6 +66,30 @@ export const UI_SCRIPT_PART3 = /* js */ `
       refreshAiButton.addEventListener("click", requestAiRefresh);
       copySelectionButton.addEventListener("click", copySelectionJson);
 
+      async function copyDebugLog() {
+        if (!debugLogOutput || !debugLogOutput.textContent) {
+          statusMessage.textContent = "No debug log to copy.";
+          return;
+        }
+        try {
+          const result = await copyTextToClipboard(debugLogOutput.textContent);
+          if (result.ok) {
+            statusMessage.textContent = result.method === "clipboard"
+              ? "Debug log copied to clipboard."
+              : "Debug log copied (fallback).";
+          } else {
+            statusMessage.textContent = "Copy failed. Clipboard is blocked.";
+          }
+        } catch (error) {
+          console.error("Copy debug log failed", error);
+          statusMessage.textContent = "Copy failed. See console.";
+        }
+      }
+
+      if (copyDebugLogButton) {
+        copyDebugLogButton.addEventListener("click", copyDebugLog);
+      }
+
       async function copySelectionJson() {
         if (!selectionReady || !latestSelectionState) {
           statusMessage.textContent = "Select a frame to copy debug JSON.";

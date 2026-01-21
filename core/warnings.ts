@@ -5,7 +5,7 @@ import { deriveWarningsFromAiSignals, readAiSignals } from "./ai-signals.js";
 import { hasOverlayRole, hasHeroBleedRole } from "./node-roles.js";
 import { resolveSafeAreaInsets } from "./safe-area.js";
 
-const IGNORED_ROLES = new Set(["hero_image", "secondary_image", "decorative", "hero_bleed"]);
+const IGNORED_ROLES = new Set(["subject", "environment", "container"]);
 
 type ContentMargins = {
   left: number;

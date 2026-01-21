@@ -16,9 +16,9 @@ export function resolveLayoutProfile(dimensions: { readonly width: number; reado
   const aspectRatio = safeWidth / safeHeight; // Width / Height
 
   // Handle extreme aspect ratios with more granular thresholds
-  
-  // Ultra-vertical (like TikTok 9:16) - Ratio <= 0.6
-  if (aspectRatio <= ASPECT_RATIOS.VERTICAL_VIDEO) {
+
+  // Ultra-vertical (like TikTok 9:16) - Ratio < 0.57
+  if (aspectRatio < ASPECT_RATIOS.EXTREME_VERTICAL) {
     return "vertical";
   }
 

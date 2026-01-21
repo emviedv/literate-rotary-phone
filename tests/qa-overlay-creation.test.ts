@@ -58,6 +58,12 @@ function assert(condition: boolean, message?: string) {
   }
 }
 
+function assertStartsWith(actual: string, expected: string, message?: string) {
+  if (!actual.startsWith(expected)) {
+    throw new Error(message || `Expected "${actual}" to start with "${expected}"`);
+  }
+}
+
 function testCase(name: string, fn: () => void) {
   try {
     fn();
@@ -76,7 +82,8 @@ testCase("createQaOverlay generates YouTube safe area", () => {
 
   assert(overlay.children.length === 1, "Should have 1 child (safe area)");
   const safeArea = overlay.children[0];
-  assert(safeArea.name === "Text & Logo Safe Area", "Should be named 'Text & Logo Safe Area'");
+  // Name includes compact spec suffix like "[T:144 B:144 L:256 R:256]"
+  assertStartsWith(safeArea.name, "Text & Logo Safe Area", "Should start with 'Text & Logo Safe Area'");
   // 2560x1440 with 10% ratio: width = 2560 - (256*2) = 2048, height = 1440 - (144*2) = 1152
   const expectedWidth = 2560 - (2560 * 0.1 * 2);
   const expectedHeight = 1440 - (1440 * 0.1 * 2);
@@ -91,7 +98,8 @@ testCase("createQaOverlay generates TikTok safe area", () => {
 
   assert(overlay.children.length === 1, "Should have 1 child");
   const safeArea = overlay.children[0];
-  assert(safeArea.name === "Content Safe Zone", "Should be named 'Content Safe Zone'");
+  // Name includes compact spec suffix
+  assertStartsWith(safeArea.name, "Content Safe Zone", "Should start with 'Content Safe Zone'");
   // TikTok safe area insets: { top: 150, bottom: 400, left: 90, right: 120 }
   // Width: 1080 - 90 - 120 = 870
   assert(safeArea.width === 870, `Width should be 870, got ${safeArea.width}`);
@@ -106,7 +114,8 @@ testCase("createQaOverlay generates generic safe area", () => {
 
   assert(overlay.children.length === 1, "Should have 1 child");
   const safeArea = overlay.children[0];
-  assert(safeArea.name === "Safe Area", "Should be named 'Safe Area'");
+  // Name includes compact spec suffix
+  assertStartsWith(safeArea.name, "Safe Area", "Should start with 'Safe Area'");
 
   const insetX = 1440 * 0.1;
   const insetY = 600 * 0.1;

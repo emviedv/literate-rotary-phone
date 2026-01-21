@@ -156,6 +156,10 @@ export const LAYOUT_PATTERNS: Record<LayoutPatternId, LayoutPattern> = {
 /**
  * Pattern affinity matrix: preferred patterns for each target format.
  * Listed in order of preference (first = most preferred).
+ *
+ * @deprecated This matrix is defined but not used in the layout pipeline.
+ * AI layout advice is used instead for pattern selection.
+ * Retained for documentation purposes - may be removed in future versions.
  */
 export const PATTERN_AFFINITY: Record<string, readonly LayoutPatternId[]> = {
   "figma-cover": ["layered-hero", "split-left", "horizontal-stack", "banner-spread"],
@@ -174,22 +178,4 @@ export const PATTERN_AFFINITY: Record<string, readonly LayoutPatternId[]> = {
  */
 export function getPatternLayoutMode(patternId: LayoutPatternId): "HORIZONTAL" | "VERTICAL" | "NONE" {
   return LAYOUT_PATTERNS[patternId]?.layoutMode ?? "NONE";
-}
-
-/**
- * Check if a pattern is in the preferred list for a target.
- */
-export function isPatternPreferredForTarget(patternId: LayoutPatternId, targetId: string): boolean {
-  const preferred = PATTERN_AFFINITY[targetId];
-  return preferred?.includes(patternId) ?? false;
-}
-
-/**
- * Get the preference rank (0 = most preferred) for a pattern on a target.
- * Returns -1 if pattern is not in the preferred list.
- */
-export function getPatternPreferenceRank(patternId: LayoutPatternId, targetId: string): number {
-  const preferred = PATTERN_AFFINITY[targetId];
-  if (!preferred) return -1;
-  return preferred.indexOf(patternId);
 }

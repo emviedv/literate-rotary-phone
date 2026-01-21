@@ -47,8 +47,8 @@ testCase("AiSignals contract: roles array has required fields", () => {
   // Happy path: well-formed AI response
   const validResponse = {
     roles: [
-      { nodeId: "node-1", role: "title", confidence: 0.95 },
-      { nodeId: "node-2", role: "hero_image", confidence: 0.88 }
+      { nodeId: "node-1", role: "typography", confidence: 0.95 },
+      { nodeId: "node-2", role: "subject", confidence: 0.88 }
     ],
     focalPoints: [{ nodeId: "node-2", x: 0.5, y: 0.4, confidence: 0.82 }],
     qa: [{ code: "LOW_CONTRAST", severity: "warn", message: "Check contrast" }]
@@ -74,7 +74,7 @@ testCase("AiSignals contract: roles array has required fields", () => {
 
 testCase("AiSignals contract: focalPoints array has required fields", () => {
   const response = {
-    roles: [{ nodeId: "n1", role: "title", confidence: 0.9 }],
+    roles: [{ nodeId: "n1", role: "typography", confidence: 0.9 }],
     focalPoints: [
       { nodeId: "n1", x: 0.25, y: 0.75, confidence: 0.85 }
     ],
@@ -170,10 +170,10 @@ testCase("AiSignals contract: empty object returns undefined", () => {
 testCase("AiSignals contract: malformed roles are filtered, not thrown", () => {
   const response = {
     roles: [
-      { nodeId: 123, role: "title" },           // Invalid nodeId type
+      { nodeId: 123, role: "typography" },           // Invalid nodeId type
       { nodeId: "n1" },                         // Missing role
-      { role: "title" },                        // Missing nodeId
-      { nodeId: "n2", role: "title", confidence: 0.9 } // Valid
+      { role: "typography" },                        // Missing nodeId
+      { nodeId: "n2", role: "typography", confidence: 0.9 } // Valid
     ],
     focalPoints: [],
     qa: []
@@ -189,7 +189,7 @@ testCase("AiSignals contract: unknown roles are filtered, not thrown", () => {
   const response = {
     roles: [
       { nodeId: "n1", role: "invalid_role_type", confidence: 0.9 },
-      { nodeId: "n2", role: "title", confidence: 0.85 }
+      { nodeId: "n2", role: "typography", confidence: 0.85 }
     ],
     focalPoints: [],
     qa: []
@@ -198,7 +198,7 @@ testCase("AiSignals contract: unknown roles are filtered, not thrown", () => {
   const sanitized = sanitizeAiSignals(response);
   assertDefined(sanitized, "Should return result");
   assertEqual(sanitized.roles.length, 1, "Invalid role should be filtered");
-  assertEqual(sanitized.roles[0].role, "title", "Valid role should remain");
+  assertEqual(sanitized.roles[0].role, "typography", "Valid role should remain");
 });
 
 testCase("AiSignals contract: unknown QA codes are filtered, not thrown", () => {
@@ -213,8 +213,9 @@ testCase("AiSignals contract: unknown QA codes are filtered, not thrown", () => 
 
   const sanitized = sanitizeAiSignals(response);
   assertDefined(sanitized, "Should return result");
-  assertEqual(sanitized.qa.length, 1, "Invalid QA code should be filtered");
-  assertEqual(sanitized.qa[0].code, "LOW_CONTRAST", "Valid QA code should remain");
+  assertEqual(sanitized.qa?.length ?? 0, 1, "Invalid QA code should be filtered");
+  // LOW_CONTRAST is consolidated to CONTRAST_ISSUE after sanitization
+  assertEqual(sanitized.qa?.[0]?.code, "CONTRAST_ISSUE", "Valid QA code should remain (consolidated)");
 });
 
 testCase("AiSignals contract: graceful handling of non-array roles", () => {
@@ -234,20 +235,30 @@ testCase("AiSignals contract: graceful handling of non-array roles", () => {
 // Contract 3: Valid role vocabulary (exhaustive check)
 // ============================================================================
 
-testCase("AiSignals contract: accepts all valid semantic roles", () => {
+testCase("AiSignals contract: accepts all valid semantic roles (universal 7-role taxonomy)", () => {
+  // Universal taxonomy: 7 roles for compositional layout analysis
   const validRoles = [
-    "logo", "hero_image", "hero_bleed", "secondary_image", "background",
-    "title", "subtitle", "body", "caption",
-    "cta", "cta_secondary",
-    "badge", "icon", "list", "feature_item", "testimonial", "price", "rating",
-    "divider", "container", "decorative", "unknown"
+    // Primary focal
+    "subject",
+    // Branding
+    "branding",
+    // Typography
+    "typography",
+    // Interactive
+    "action",
+    // Structural
+    "container", "component",
+    // Background
+    "environment",
+    // Catch-all
+    "unknown"
   ];
 
   const response = {
     roles: validRoles.map((role, i) => ({
       nodeId: `node-${i}`,
       role,
-      confidence: 0.8
+      confidence: 0.85  // High confidence by default
     })),
     focalPoints: [],
     qa: []
@@ -263,6 +274,7 @@ testCase("AiSignals contract: accepts all valid semantic roles", () => {
 // ============================================================================
 
 testCase("AiSignals contract: accepts all valid QA codes", () => {
+  // All 33 valid input QA codes (accepted by sanitization)
   const validQaCodes = [
     "LOW_CONTRAST", "LOGO_TOO_SMALL", "TEXT_OVERLAP", "UNCERTAIN_ROLES",
     "SALIENCE_MISALIGNED", "SAFE_AREA_RISK", "GENERIC", "EXCESSIVE_TEXT",
@@ -291,7 +303,14 @@ testCase("AiSignals contract: accepts all valid QA codes", () => {
 
   const sanitized = sanitizeAiSignals(response);
   assertDefined(sanitized, "Should accept all valid QA codes");
-  assertEqual(sanitized.qa.length, validQaCodes.length, `Should have ${validQaCodes.length} QA signals`);
+
+  // After consolidation, 33 input codes map to 25 unique consolidated codes:
+  // - LOW_CONTRAST, COLOR_CONTRAST_INSUFFICIENT, COLOR_HARMONY_POOR → CONTRAST_ISSUE (3→1)
+  // - TEXT_TOO_SMALL_FOR_TARGET, TEXT_TOO_SMALL_ACCESSIBLE, THUMBNAIL_LEGIBILITY → TEXT_SIZE_ISSUE (3→1)
+  // - HIERARCHY_UNCLEAR, CONTENT_HIERARCHY_FLAT, HEADING_HIERARCHY_BROKEN, POOR_READING_ORDER → HIERARCHY_ISSUE (4→1)
+  // - VERTICAL_OVERFLOW_RISK, HORIZONTAL_OVERFLOW_RISK → OVERFLOW_RISK (2→1)
+  const expectedConsolidatedCount = 25;
+  assertEqual(sanitized.qa?.length ?? 0, expectedConsolidatedCount, `Should have ${expectedConsolidatedCount} consolidated QA signals`);
 });
 
 console.log("\n✅ All AI contract tests passed!\n");

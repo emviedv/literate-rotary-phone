@@ -12,6 +12,9 @@
 
 import { MIN_ELEMENT_SIZES, ELEMENT_ROLE_PATTERNS } from "./layout-constants.js";
 import { cloneValue } from "./effect-scaling.js";
+// Re-export isBackgroundLike from layout-detection-helpers for backward compatibility
+// This eliminates the duplicate implementation and uses the unified 90% threshold with multi-signal detection
+export { isBackgroundLike } from "./layout-detection-helpers.js";
 
 // ============================================================================
 // Type Definitions
@@ -79,28 +82,10 @@ export function getElementRole(node: SceneNode): ElementRole | null {
 }
 
 // ============================================================================
-// Background Detection
+// Background Detection - Re-exported from layout-detection-helpers.ts
+// Uses unified 90% threshold with multi-signal detection (area + layer position + fill type + text + name)
+// See import statement at top of file
 // ============================================================================
-
-/**
- * Determines if a node covers enough area to be considered a background element.
- * Background elements are scaled to fill the target frame completely.
- *
- * Threshold: 95% of root frame area (same as warning detection logic).
- *
- * @param node - The node to check
- * @param rootWidth - Width of the root frame
- * @param rootHeight - Height of the root frame
- * @returns true if the node is background-like
- */
-export function isBackgroundLike(node: SceneNode, rootWidth: number, rootHeight: number): boolean {
-  if (!("width" in node) || !("height" in node)) return false;
-  if (typeof node.width !== "number" || typeof node.height !== "number") return false;
-  const nodeArea = node.width * node.height;
-  const rootArea = rootWidth * rootHeight;
-  // 95% threshold, same as warning logic
-  return rootArea > 0 && nodeArea >= rootArea * 0.95;
-}
 
 // ============================================================================
 // Decorative Element Detection
@@ -186,4 +171,92 @@ export function ensureFillModeForImages(node: SceneNode, isBackground: boolean =
     if ("imageTransform" in clone) delete (clone as { imageTransform?: unknown }).imageTransform;
     return clone as Paint;
   });
+}
+
+// ============================================================================
+// Atomic Group Detection
+// ============================================================================
+
+/**
+ * Pattern to match names that suggest an atomic illustration/mockup group.
+ * These groups should be treated as single visual units during scaling.
+ */
+const ATOMIC_GROUP_NAME_PATTERN = /\b(illustration|mockup|device|phone|iphone|android|tablet|ipad|asset|graphic|artwork|icon-group|logo-group|diagram|infographic|chart|screenshot)\b/i;
+
+/**
+ * Detects if a GROUP node should be treated as an atomic unit during scaling.
+ *
+ * Atomic groups are illustration-like containers where children maintain fixed
+ * relative positions (e.g., iPhone mockups, vector illustrations, device frames).
+ *
+ * When a group is atomic:
+ * - The group itself is repositioned at the parent level
+ * - Children are scaled in size but NOT repositioned independently
+ * - This preserves the internal layout of the illustration
+ *
+ * Heuristics applied:
+ * 1. Name patterns: "illustration", "mockup", "device", "phone", etc.
+ * 2. High vector/shape density (>70% of children)
+ * 3. Image fills present (common in device mockups)
+ * 4. NO TEXT children (text indicates a structural container, not an atomic unit)
+ *
+ * @param node - The node to check
+ * @returns true if the group should be scaled as an atomic unit
+ */
+export function isAtomicGroup(node: SceneNode): boolean {
+  if (node.type !== "GROUP") return false;
+
+  // Groups must have children to analyze
+  if (!("children" in node) || node.children.length === 0) return false;
+
+  const children = node.children as readonly SceneNode[];
+
+  // Disqualifier: TEXT children indicate a structural container, not an atomic illustration
+  const hasTextChild = children.some((child) => child.type === "TEXT");
+  if (hasTextChild) return false;
+
+  // Heuristic 1: Name suggests atomic illustration
+  if (ATOMIC_GROUP_NAME_PATTERN.test(node.name)) {
+    return true;
+  }
+
+  // Count child types for composition analysis
+  let vectorShapeCount = 0;
+  let imageCount = 0;
+
+  for (const child of children) {
+    // Vector-like types (common in illustrations)
+    if (
+      child.type === "VECTOR" ||
+      child.type === "BOOLEAN_OPERATION" ||
+      child.type === "STAR" ||
+      child.type === "POLYGON" ||
+      child.type === "ELLIPSE" ||
+      child.type === "RECTANGLE" ||
+      child.type === "LINE"
+    ) {
+      vectorShapeCount++;
+    }
+
+    // Check for image fills (common in mockups)
+    if ("fills" in child && Array.isArray(child.fills)) {
+      const fills = child.fills as readonly Paint[];
+      if (fills.some((f) => f.type === "IMAGE" || f.type === "VIDEO")) {
+        imageCount++;
+      }
+    }
+  }
+
+  // Heuristic 2: High vector/shape density (>70%)
+  const vectorDensity = vectorShapeCount / children.length;
+  if (vectorDensity > 0.7) {
+    return true;
+  }
+
+  // Heuristic 3: Contains images (mockup with screenshots/photos)
+  if (imageCount > 0) {
+    return true;
+  }
+
+  return false;
 }

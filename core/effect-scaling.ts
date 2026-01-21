@@ -65,21 +65,21 @@ export function scaleEffect(effect: Effect, scale: number): Effect {
         clone.radius *= scale;
       }
       // Cap shadow radius to prevent extreme effects
-      clone.radius = Math.min(clone.radius, 100);
+      clone.radius = Math.round(Math.min(clone.radius, 100));
     }
 
     if (clone.offset) {
       // Dampen offset for large scales
       const offsetScale = scale > 2 ? Math.pow(scale, 0.7) : scale;
       clone.offset = {
-        x: clone.offset.x * offsetScale,
-        y: clone.offset.y * offsetScale
+        x: Math.round(clone.offset.x * offsetScale),
+        y: Math.round(clone.offset.y * offsetScale)
       };
     }
 
     // Scale spread if present
     if (typeof clone.spread === "number") {
-      clone.spread = clone.spread * Math.pow(scale, 0.6);
+      clone.spread = Math.round(clone.spread * Math.pow(scale, 0.6));
     }
   }
 
@@ -92,7 +92,7 @@ export function scaleEffect(effect: Effect, scale: number): Effect {
         clone.radius *= scale;
       }
       // Cap blur radius to prevent extreme effects
-      clone.radius = Math.min(clone.radius, 50);
+      clone.radius = Math.round(Math.min(clone.radius, 50));
     }
   }
 

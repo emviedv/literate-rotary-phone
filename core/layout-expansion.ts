@@ -35,21 +35,32 @@ export function planAutoLayoutExpansion(context: LayoutExpansionContext): AxisEx
   if (canReflow) {
     const gapCount = Math.max(flowChildCount - 1, 1);
     // Increased base weight for more generous gap distribution
-    // Was: 0.58 + gapCount * 0.12, cap 0.82
-    // Now: 0.65 + gapCount * 0.10, cap 0.88
-    baseInteriorWeight = Math.min(0.65 + gapCount * 0.10, 0.88);
+    // Was: 0.65 + gapCount * 0.10, cap 0.88
+    // Now: Allow nearly full expansion (cap 0.98) for sparse layouts to fill space
+    baseInteriorWeight = Math.min(0.75 + gapCount * 0.12, 0.98);
     if (baseItemSpacing < 16) {
-      // Smaller penalty for tight spacing (was 0.92, now 0.95)
-      baseInteriorWeight *= 0.95;
+      // Smaller penalty for tight spacing (was 0.95)
+      baseInteriorWeight *= 0.98;
     }
   }
 
   const asymmetry = gaps ? computeAsymmetry(gaps) : 0;
   const symmetryMultiplier = 1 - asymmetry * 0.6;
-  const interiorWeight = clamp(baseInteriorWeight * symmetryMultiplier, 0, 0.9);
+  const interiorWeight = clamp(baseInteriorWeight * symmetryMultiplier, 0, 1.0);
   const interiorExtra = round(leftover * interiorWeight);
 
-  const edgeBudget = round(totalExtra - interiorExtra);
+  // CRITICAL FIX: If there is only 1 child, do NOT dump all extra space into padding.
+  // Leave it for the child to grow into (layoutGrow: 1).
+  // Only use edgeBudget to satisfy safe area constraints.
+  let edgeBudget = round(totalExtra - interiorExtra);
+  
+  if (flowChildCount === 1 && totalExtra > 0) {
+     // Calculate minimum required padding to satisfy safe areas
+     const minStart = Math.max(0, requestedInset.start - (context.gaps?.start || 0));
+     const minEnd = Math.max(0, requestedInset.end - (context.gaps?.end || 0));
+     edgeBudget = minStart + minEnd;
+  }
+
   const distributed = distributePadding({
     totalExtra: edgeBudget,
     safeInset: appliedSafe,

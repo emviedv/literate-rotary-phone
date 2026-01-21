@@ -31,9 +31,9 @@ const BASE_SCORES: Record<LayoutProfile, Record<RegionId, number>> = {
     "bottom-left": 0.70, "bottom-center": 0.75, "bottom-right": 0.70
   },
   horizontal: {
-    "top-left": 0.35, "top-center": 0.50, "top-right": 0.70,
-    "middle-left": 0.35, "center": 0.50, "middle-right": 0.75,
-    "bottom-left": 0.35, "bottom-center": 0.50, "bottom-right": 0.70
+    "top-left": 0.30, "top-center": 0.40, "top-right": 0.60,
+    "middle-left": 0.45, "center": 0.50, "middle-right": 0.80,
+    "bottom-left": 0.30, "bottom-center": 0.40, "bottom-right": 0.60
   }
 };
 

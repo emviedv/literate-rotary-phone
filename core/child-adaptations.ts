@@ -3,11 +3,21 @@
  *
  * Creates per-child layout adaptations based on content type,
  * background detection, and target format requirements.
+ *
+ * PROPERTY ASSIGNMENT PRIORITY (highest to lowest):
+ * 1. Background detection - ABSOLUTE positioning trumps all
+ * 2. Edge element constraints - first/last children in extreme formats
+ * 3. Layout mode conversion - VERTICAL/HORIZONTAL specific properties
+ * 4. Content-type defaults - text alignment, image preservation
+ *
+ * CRITICAL: When edge element handling applies (extreme aspect ratios),
+ * use INHERIT instead of STRETCH to avoid conflicting layout signals.
  */
 
 import { debugAutoLayoutLog } from "./debug.js";
-import { hasImageContent, isBackgroundLike } from "./layout-detection-helpers.js";
+import { isBackgroundLike } from "./layout-detection-helpers.js";
 import type { LayoutContext } from "./layout-mode-resolver.js";
+import { ASPECT_RATIOS } from "./layout-constants.js";
 
 /**
  * Configuration for a single child's layout adaptation.
@@ -16,6 +26,7 @@ export interface ChildAdaptation {
   layoutGrow?: number;
   layoutAlign?: "INHERIT" | "STRETCH";
   layoutPositioning?: "AUTO" | "ABSOLUTE";
+  textAlignHorizontal?: "LEFT" | "CENTER" | "RIGHT" | "JUSTIFIED";
   minWidth?: number;
   maxWidth?: number;
   minHeight?: number;
@@ -42,7 +53,7 @@ export function createChildAdaptations(
     if (!child.visible) return;
 
     const adaptation: ChildAdaptation = {};
-    const containsImage = hasImageContent(child as SceneNode);
+    const isText = child.type === "TEXT";
 
     // AI Background Override
     if (context.layoutAdvice?.backgroundNodeId) {
@@ -64,18 +75,40 @@ export function createChildAdaptations(
       }
     }
 
+    // Determine if this is an edge element in an extreme format FIRST
+    // Edge elements get special handling that takes precedence over generic layout rules
+    const isExtremeFormat = context.targetProfile.aspectRatio < ASPECT_RATIOS.EDGE_SIZING_VERTICAL ||
+                            context.targetProfile.aspectRatio > ASPECT_RATIOS.EDGE_SIZING_HORIZONTAL;
+    const isEdgeElement = index === 0 || index === frame.children.length - 1;
+    const needsEdgeConstraints = isExtremeFormat && isEdgeElement;
+
     // For converted layouts, adjust child properties
     if (frame.layoutMode !== newLayoutMode && newLayoutMode !== "NONE") {
-      // When converting to vertical, make children stretch horizontally
+      // When converting to vertical, use INHERIT alignment for all children
+      // CRITICAL: Setting STRETCH + layoutGrow=0 is contradictory (see Phase 2 fix)
+      // INHERIT allows children to maintain their intrinsic sizing while reflow occurs
       if (newLayoutMode === "VERTICAL") {
-        // Only stretch text boxes by default; other elements should maintain their intrinsic size.
-        adaptation.layoutAlign = (containsImage || child.type !== 'TEXT') ? "INHERIT" : "STRETCH";
+        adaptation.layoutAlign = "INHERIT";
         adaptation.layoutGrow = 0;
+
+        // Auto-center text when stacking vertically, unless specific alignment is requested
+        if (isText) {
+          // If the target profile is vertical/square, we generally want centered text
+          if (context.targetProfile.type === "vertical" || context.targetProfile.type === "square") {
+             adaptation.textAlignHorizontal = "CENTER";
+          }
+        }
       }
       // When converting to horizontal, control heights
       if (newLayoutMode === "HORIZONTAL") {
         adaptation.layoutAlign = "INHERIT";
-        adaptation.layoutGrow = containsImage ? 0 : 1; // Distribute space evenly
+        // PRIORITY CHECK: Edge elements in extreme formats don't grow
+        if (needsEdgeConstraints) {
+          adaptation.layoutGrow = 0;
+        } else {
+          // Allow image containers to grow in horizontal layouts (banners)
+          adaptation.layoutGrow = 1;
+        }
         adaptation.maxHeight = context.targetProfile.height * 0.8; // Prevent vertical overflow
 
         const previousAlign = (child as { layoutAlign?: string }).layoutAlign ?? "unknown";
@@ -85,24 +118,10 @@ export function createChildAdaptations(
           previousAlign,
           assignedAlign: adaptation.layoutAlign,
           sourceLayoutMode: frame.layoutMode,
-          targetLayoutMode: newLayoutMode
+          targetLayoutMode: newLayoutMode,
+          isEdgeElement,
+          needsEdgeConstraints
         });
-
-        if (containsImage && adaptation.layoutGrow === 0) {
-          debugAutoLayoutLog("preventing media stretch in horizontal flow", {
-            childId: child.id,
-            childType: child.type,
-            targetWidth: context.targetProfile.width,
-            targetHeight: context.targetProfile.height
-          });
-        }
-      }
-    }
-
-    // Special handling for first/last children in extreme formats
-    if (context.targetProfile.aspectRatio < 0.5 || context.targetProfile.aspectRatio > 2) {
-      if (index === 0 || index === frame.children.length - 1) {
-        adaptation.layoutGrow = 0; // Don't expand edge elements too much
       }
     }
 

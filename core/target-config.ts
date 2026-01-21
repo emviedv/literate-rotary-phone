@@ -8,22 +8,136 @@ export interface TargetConfig {
   readonly overlayConstraints: FrameNode["constraints"];
 }
 
+/**
+ * Platform-specific safe area configurations.
+ *
+ * SAFE AREA RATIONALE:
+ * Each platform overlays UI chrome (buttons, captions, usernames) on top of content.
+ * These insets define where content remains fully visible and unobstructed.
+ *
+ * ASYMMETRIC LEFT/RIGHT MARGINS:
+ * - Left edge: Minimal UI (just edge proximity concerns)
+ * - Right edge: Action buttons stack vertically (like, comment, share, bookmark)
+ *   requiring ~120px clearance on all vertical video platforms
+ *
+ * CONSTRAINT MODES:
+ * - STRETCH/MIN: Pins safe zone to top, stretches horizontally (for scrolling vertical content)
+ * - SCALE: Proportional scaling (for fixed aspect ratio content)
+ * - CENTER: Centered safe zone (for responsive banners like YouTube covers)
+ *
+ * VALUES LAST VERIFIED: January 2025
+ * Sources: Platform design guidelines, community templates, manual UI measurement
+ */
 const SPECIFIC_CONFIGS: Record<string, Partial<TargetConfig>> = {
+  /**
+   * TikTok Vertical (1080×1920)
+   *
+   * TOP (150px / 7.8%):
+   *   - Username display + follow button
+   *   - "Following | For You" tab switcher proximity
+   *   - Sound/music ticker can appear here
+   *
+   * BOTTOM (400px / 20.8%):
+   *   - Caption text (can be multi-line, expandable)
+   *   - @username and music/sound attribution
+   *   - Home/Discover/+/Inbox/Profile tab bar (~100px)
+   *   - Most aggressive bottom margin of all platforms
+   *
+   * LEFT (90px / 8.3%):
+   *   - Slightly wider than Reels due to TikTok's UI density
+   *   - Prevents text from feeling cramped against edge
+   *
+   * RIGHT (120px / 11.1%):
+   *   - Like button + count
+   *   - Comment button + count
+   *   - Bookmark button
+   *   - Share button
+   *   - Creator avatar (floating, bottom-right)
+   */
   "tiktok-vertical": {
      safeAreaInsets: { top: 150, bottom: 400, left: 90, right: 120 },
      overlayLabel: "Content Safe Zone",
      overlayConstraints: { horizontal: "STRETCH", vertical: "MIN" }
   },
+
+  /**
+   * YouTube Shorts (1080×1920)
+   *
+   * TOP (200px / 10.4%):
+   *   - Channel name + subscribe button
+   *   - "Shorts" branding overlay
+   *   - Search and camera icons
+   *   - More generous than TikTok/Reels for YouTube's header UI
+   *
+   * BOTTOM (280px / 14.6%):
+   *   - Video title/description
+   *   - Like/Dislike/Comment/Share buttons (horizontal row)
+   *   - Navigation bar
+   *   - Less aggressive than TikTok because buttons are horizontal, not stacked
+   *
+   * LEFT (60px / 5.6%):
+   *   - Minimal chrome on left edge
+   *   - Standard edge breathing room
+   *
+   * RIGHT (120px / 11.1%):
+   *   - Vertical action buttons when in immersive mode
+   *   - Channel avatar
+   *   - "More" overflow menu
+   */
   "youtube-shorts": {
      safeAreaInsets: { top: 200, bottom: 280, left: 60, right: 120 },
      overlayLabel: "Shorts Safe Zone",
      overlayConstraints: { horizontal: "STRETCH", vertical: "MIN" }
   },
+
+  /**
+   * Instagram Reels (1080×1920)
+   *
+   * TOP (108px / 5.6%):
+   *   - "Reels" header text
+   *   - Camera icon (top-right, but small)
+   *   - Lightest top margin of the three vertical platforms
+   *
+   * BOTTOM (340px / 17.7%):
+   *   - Username + follow button
+   *   - Caption text (expandable)
+   *   - Audio/music attribution
+   *   - Home/Search/+/Reels/Profile tab bar
+   *   - Note: Some sources suggest 320px; 340px is conservative
+   *
+   * LEFT (60px / 5.6%):
+   *   - Minimal UI on left
+   *   - Caption text starts here
+   *
+   * RIGHT (120px / 11.1%):
+   *   - Like button + count (heart)
+   *   - Comment button + count
+   *   - Share/Send button
+   *   - Bookmark/Save button
+   *   - Three-dot menu
+   *   - Audio disc animation (bottom-right corner)
+   */
   "instagram-reels": {
      safeAreaInsets: { top: 108, bottom: 340, left: 60, right: 120 },
      overlayLabel: "Reels Safe Zone",
      overlayConstraints: { horizontal: "STRETCH", vertical: "MIN" }
   },
+
+  /**
+   * YouTube Channel Cover (2560×1440)
+   *
+   * No explicit pixel insets - uses ratio-based fallback.
+   * YouTube's banner is responsive and crops differently on:
+   *   - Desktop: Shows full width, crops top/bottom
+   *   - Mobile: Shows center portion only
+   *   - TV: Shows full image
+   *
+   * CENTER/CENTER constraints ensure the safe zone stays
+   * centered regardless of how the banner is displayed.
+   *
+   * Recommended: Keep critical content in center 1546×423px
+   * (the "safe area for text and logos" per YouTube guidelines)
+   */
   "youtube-cover": {
       overlayLabel: "Text & Logo Safe Area",
       overlayConstraints: { horizontal: "CENTER", vertical: "CENTER" }
@@ -133,7 +247,7 @@ export function resolveTargetConfig(target: VariantTarget): TargetConfig {
   const specific = SPECIFIC_CONFIGS[target.id];
   
   const aspectRatio = target.width / Math.max(target.height, 1);
-  const isVerticalVideo = aspectRatio < ASPECT_RATIOS.VERTICAL_VIDEO;
+  const isVerticalVideo = aspectRatio < ASPECT_RATIOS.EXTREME_VERTICAL;
 
   const baseConfig: TargetConfig = {
       overlayLabel: isVerticalVideo ? "Content Safe Zone" : "Safe Area",
