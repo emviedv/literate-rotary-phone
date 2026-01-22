@@ -13,6 +13,17 @@ import { isAtomicGroup } from "./element-classification.js";
 declare const figma: PluginAPI;
 
 // ============================================================================
+// Edge Padding Enforcement
+// ============================================================================
+
+/**
+ * Minimum padding from frame edges for text and important content.
+ * Programmatic enforcement ensures AI positioning errors don't result in
+ * content flush against edges.
+ */
+const MIN_EDGE_PADDING = 40;
+
+// ============================================================================
 // Types
 // ============================================================================
 
@@ -53,6 +64,23 @@ export async function createDesignVariant(
   // Clone the source frame
   const variant = sourceFrame.clone();
   variant.name = `TikTok • ${sourceFrame.name}`;
+
+  // Ensure frame's image fills use cover behavior (prevents skewing on resize)
+  if (Array.isArray(variant.fills)) {
+    const fills = variant.fills as Paint[];
+    const hasImageFill = fills.some((f) => f.type === "IMAGE");
+    if (hasImageFill) {
+      variant.fills = fills.map((fill) =>
+        fill.type === "IMAGE"
+          ? { ...fill, scaleMode: "FILL" as const }
+          : fill
+      );
+      debugFixLog("Set image fill scaleMode to FILL for cover behavior", {
+        frameId: variant.id,
+        frameName: variant.name
+      });
+    }
+  }
 
   // Resize to TikTok dimensions
   variant.resizeWithoutConstraints(CONSTRAINTS.WIDTH, CONSTRAINTS.HEIGHT);
@@ -212,6 +240,9 @@ export async function createDesignVariant(
   // Reorder children based on zIndex values from specs
   // Pass atomicGroupChildIds so we skip reordering atomic children (preserve their z-order)
   reorderChildrenByZIndex(variant, nodeMap, specs.nodes, atomicGroupChildIds);
+
+  // Enforce edge padding for all text (catches nested text in containers)
+  enforceEdgePadding(variant);
 
   // Apply safe area enforcement
   enforceSafeAreas(variant);
@@ -506,8 +537,36 @@ function applyNodeSpec(
         }
 
         try {
-          node.x = spec.position.x;
-          node.y = spec.position.y;
+          let targetX = spec.position.x;
+          const targetY = spec.position.y;
+
+          // EDGE PADDING ENFORCEMENT: Clamp text nodes away from edges
+          // This is a programmatic safeguard when AI returns positions too close to edges
+          if (node.type === "TEXT" && "width" in node) {
+            const textWidth = (node as TextNode).width;
+            const maxX = CONSTRAINTS.WIDTH - MIN_EDGE_PADDING - textWidth;
+
+            if (targetX < MIN_EDGE_PADDING) {
+              debugFixLog("Edge padding enforcement: shifting text from left edge", {
+                nodeId: spec.nodeId,
+                nodeName: spec.nodeName,
+                originalX: targetX,
+                correctedX: MIN_EDGE_PADDING
+              });
+              targetX = MIN_EDGE_PADDING;
+            } else if (targetX > maxX && maxX > MIN_EDGE_PADDING) {
+              debugFixLog("Edge padding enforcement: shifting text from right edge", {
+                nodeId: spec.nodeId,
+                nodeName: spec.nodeName,
+                originalX: targetX,
+                correctedX: maxX
+              });
+              targetX = maxX;
+            }
+          }
+
+          node.x = targetX;
+          node.y = targetY;
         } catch (error) {
           debugFixLog("Failed to set position", {
             nodeId: spec.nodeId,
@@ -704,6 +763,96 @@ function reorderChildrenByZIndex(
     debugFixLog("Children reordered by zIndex", {
       reorderedCount,
       totalWithZIndex: specsWithZIndex.length
+    });
+  }
+}
+
+// ============================================================================
+// Edge Padding Enforcement
+// ============================================================================
+
+/**
+ * Enforces minimum edge padding for all text nodes in the frame.
+ * This is a post-processing safeguard that catches text positioned at edges
+ * regardless of how it got there (direct positioning or inherited from container).
+ *
+ * Uses absolute bounding box to detect actual position on canvas, then
+ * adjusts relative position to shift text away from edges.
+ */
+function enforceEdgePadding(frame: FrameNode): void {
+  const frameBounds = frame.absoluteBoundingBox;
+  if (!frameBounds) return;
+
+  let correctionCount = 0;
+
+  function checkAndCorrectNode(node: SceneNode): void {
+    if (!node.visible) return;
+
+    // Only enforce on text nodes
+    if (node.type === "TEXT" && node.absoluteBoundingBox) {
+      const bounds = node.absoluteBoundingBox;
+
+      // Convert to frame-relative coordinates
+      // Note: frameBounds is guaranteed non-null due to early return above
+      const relX = bounds.x - frameBounds!.x;
+      const relRight = relX + bounds.width;
+      const maxRight = CONSTRAINTS.WIDTH - MIN_EDGE_PADDING;
+
+      // Check left edge
+      if (relX < MIN_EDGE_PADDING) {
+        const correction = MIN_EDGE_PADDING - relX;
+        try {
+          node.x = node.x + correction;
+          correctionCount++;
+          debugFixLog("Edge padding enforcement (post-process): shifted from left", {
+            nodeId: node.id,
+            nodeName: node.name,
+            originalRelX: relX,
+            correction
+          });
+        } catch (error) {
+          debugFixLog("Failed to enforce left edge padding", {
+            nodeId: node.id,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+      // Check right edge
+      else if (relRight > maxRight) {
+        const correction = relRight - maxRight;
+        try {
+          node.x = node.x - correction;
+          correctionCount++;
+          debugFixLog("Edge padding enforcement (post-process): shifted from right", {
+            nodeId: node.id,
+            nodeName: node.name,
+            originalRelRight: relRight,
+            correction
+          });
+        } catch (error) {
+          debugFixLog("Failed to enforce right edge padding", {
+            nodeId: node.id,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+    }
+
+    // Recurse into children
+    if ("children" in node) {
+      for (const child of (node as FrameNode | GroupNode).children) {
+        checkAndCorrectNode(child);
+      }
+    }
+  }
+
+  for (const child of frame.children) {
+    checkAndCorrectNode(child);
+  }
+
+  if (correctionCount > 0) {
+    debugFixLog("Edge padding enforcement complete", {
+      textNodesCorrected: correctionCount
     });
   }
 }

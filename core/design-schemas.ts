@@ -76,7 +76,7 @@ export const STAGE_1_SCHEMA = {
           },
           prices: {
             type: "array",
-            description: "Every price/value visible ($XX, 50% off, etc.)",
+            description: "Every price/value visible (any currency: $, €, £, ¥, ₹, percentages, discounts)",
             items: {
               type: "object",
               required: ["value", "nodeNameGuess"],
@@ -347,7 +347,7 @@ export const STAGE_2_SCHEMA = {
             },
             zIndex: {
               type: ["number", "null"],
-              description: "Stack order (higher = in front)"
+              description: "Stack order: 1-10 backgrounds, 11-30 content, 31-50 text, 51-70 CTAs, 71-90 logos, 91-100 overlays"
             },
             textTruncate: {
               type: ["boolean", "null"],

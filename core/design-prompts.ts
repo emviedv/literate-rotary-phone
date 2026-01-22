@@ -71,6 +71,7 @@ You must NOT:
 - Crop faces or key product images
 - Place important content in the danger zones
 - **Hide containers (FRAME/GROUP) that have important children** (see visibility rules below)
+- **Place text flush against frame edges** — ALL text needs minimum 40px padding from left, right, and top edges
 
 ## CRITICAL: Figma Visibility Inheritance
 In Figma, hiding a FRAME or GROUP automatically hides ALL its children. This is built into Figma's architecture - there is no way around it.
@@ -164,10 +165,14 @@ Look at the actual pixels and describe what you see. The node tree metadata (nam
 For each distinct visual element you can see, identify:
 
 1. **Logos & Brand Marks** (CRITICAL - these must NEVER be hidden)
-   - Company logos (wordmarks, symbols, icons)
-   - Brand elements that identify who made this
-   - Look for: distinctive shapes, company names as graphics, icons in corners
-   - Note: Logos are often component instances with generic names like "Text" or "Icon"
+   - **Wordmarks**: Company name as stylized text (Google, Coca-Cola, FedEx)
+   - **Lettermarks/Monograms**: Initials (HBO, IBM, LV, CC, H&M)
+   - **Symbols/Pictorial**: Recognizable icons (Apple, Twitter bird, Target bullseye)
+   - **Abstract marks**: Geometric shapes representing brand (Nike swoosh, Pepsi circle, Airbnb)
+   - **Combination marks**: Symbol + text together (Burger King, Adidas, Lacoste)
+   - **Emblems**: Badge/seal style (Starbucks, Harley-Davidson, NFL)
+   - Look for: corners, headers, footers, watermarks, small graphics that repeat brand colors
+   - Note: Logos are often component instances with generic names like "Text", "Icon", or "Frame"
 
 2. **Hero/Primary Subject**
    - What's the main visual? (product photo, person, illustration, mockup)
@@ -175,9 +180,12 @@ For each distinct visual element you can see, identify:
 
 3. **Text Content** (ALL text is sacred in marketing)
    - Headlines: What's the main message?
-   - Prices/Values: Any "$XX" or numeric values? (these are conversion-critical)
+   - Prices/Values: Any monetary values or discounts (these are conversion-critical)
+     - Currency symbols: $, €, £, ¥, ₹, ₩, R$, kr, CHF, A$, C$, etc.
+     - Formats: "$99", "€49.99", "£100", "¥1,000", "50% off", "2 for 1", "Save $20", "From $X/mo"
+     - Look for: numbers near currency symbols, percentage signs, strikethrough prices
    - Body copy: Supporting text
-   - CTAs: Buttons or action text
+   - CTAs: Buttons or action text (look for: "Shop Now", "Buy Now", "Get Started", "Learn More", "Sign Up", "Subscribe", "Download", "Try Free", "Book Now", "Contact Us", arrow icons with text, high-contrast colored rectangles with text inside)
 
 4. **Supporting Visuals**
    - Secondary images, icons, decorative elements
@@ -223,9 +231,9 @@ Now that you've inventoried what you SEE, analyze the design system:
 Based on your visual analysis, identify elements that are SACRED and must remain visible:
 
 1. **All logos and brand marks** — even if named generically
-2. **All prices and values** — "$52", "50% off", etc.
+2. **All prices and values** — any currency ($, €, £, ¥, ₹, etc.), percentages, discounts, "From $X", strikethrough prices
 3. **All headlines** — the core message
-4. **All CTAs** — buttons, "Buy Now", "Learn More"
+4. **All CTAs** — buttons, action text ("Shop Now", "Get Started", "Sign Up", "Download", "Try Free", "Book Now"), arrow icons paired with text, high-contrast rectangles with text
 5. **The primary subject** — hero image, product, person
 
 These go in the \`neverHide\` array in your output.
@@ -242,8 +250,11 @@ Now plan how to adapt this for TikTok vertical format...
 3. **Document design analysis**: Layout logic, typography, composition
 4. **Plan the transformation**: How to reorganize for vertical format
 5. **Define layout zones**: Where should each type of content go
+6. **Respect edge padding**: ALL text must have 40px minimum from frame edges (left, right, top)
 
 **IMPORTANT**: The \`hide\` array must NEVER contain anything from \`neverHide\`. Cross-check before outputting.
+
+**IMPORTANT**: Text flush against edges looks unprofessional. When planning positions, ensure text containers start at x ≥ 40, not x = 0.
 
 ### CRITICAL: Container Visibility Rules
 The node tree includes parent-child relationships (\`parentId\`, \`hasChildren\`, \`childCount\`).
@@ -330,13 +341,34 @@ For each node in the tree, specify how it should be handled. **Only include posi
 1. **Visibility**: Should it be visible?
 2. **Position**: Where should it be placed? **Omit for nodes that fit naturally in their container's flow.**
 3. **Size**: What dimensions should it have?
-4. **Z-order**: What's its stacking order?
+4. **Z-order**: What's its stacking order? Use the layer ranges below.
+
+### Z-Index Layer System
+Use these ranges for consistent stacking:
+| Layer | Z-Index | Content |
+|-------|---------|---------|
+| Background | 1-10 | Full-bleed images, gradients, background shapes |
+| Content | 11-30 | Hero images, product photos, illustrations, mockups |
+| Text | 31-50 | Headlines, body copy, captions, prices |
+| Interactive | 51-70 | CTAs, buttons, links |
+| Branding | 71-90 | Logos, brand marks, watermarks |
+| Overlay | 91-100 | Badges, stickers, "NEW" tags, floating elements |
+
+**Example**: A design with background image (z:5), product photo (z:20), headline (z:35), price (z:40), CTA button (z:60), and logo (z:80).
 
 ### Positioning Guidelines
 - Use pixel values for the ${TIKTOK_CONSTRAINTS.WIDTH}×${TIKTOK_CONSTRAINTS.HEIGHT} target frame
 - Remember: Bottom 35% is danger zone (y > ${Math.round(TIKTOK_CONSTRAINTS.HEIGHT * 0.65)})
 - Remember: Top 15% is caution zone (y < ${Math.round(TIKTOK_CONSTRAINTS.HEIGHT * 0.15)})
 - Center horizontally when appropriate (x = ${Math.round((TIKTOK_CONSTRAINTS.WIDTH - 100) / 2)} for 100px-wide element)
+
+### CRITICAL: Edge Padding for Text
+**ALL text must have at least 40px padding from frame edges.** Text flush against edges looks unprofessional and may clip on some devices.
+- Left edge: text x position must be ≥ 40
+- Right edge: text x + width must be ≤ ${TIKTOK_CONSTRAINTS.WIDTH - 40} (1040px)
+- Top edge: text y position must be ≥ 40 (unless intentionally in top UI zone)
+- This applies to: headlines, body copy, prices, CTAs, URLs, taglines, watermarks
+- Background images and decorative shapes CAN extend to edges (full-bleed is fine)
 
 ### Note on Images
 For nodes with \`fillType: "IMAGE"\`, the system will automatically preserve the original aspect ratio when resizing. Specify approximate size/position and the image will be scaled proportionally to cover the intended area without distortion.
@@ -409,6 +441,7 @@ ${appliedSpecsJson}
 4. **Brand Visibility**: Is the logo/branding appropriately visible?
 5. **Focal Point**: Is there a clear visual hierarchy?
 6. **Overlap Issues**: Do any elements unexpectedly overlap?
+7. **Edge Padding**: Is ALL text at least 40px from frame edges? Text at x < 40 or x + width > 1040 is a FAIL.
 
 ### Output
 Respond with valid JSON matching the stage3_evaluation schema. The schema is provided to the API.
