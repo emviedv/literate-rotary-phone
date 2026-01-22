@@ -9,6 +9,7 @@ import { debugFixLog } from "./debug.js";
 import type { DesignSpecs, NodeSpec } from "../types/design-types.js";
 import { TIKTOK_CONSTRAINTS as CONSTRAINTS } from "../types/design-types.js";
 import { isAtomicGroup } from "./element-classification.js";
+import { applyProximityAutoLayout } from "./proximity-auto-layout.js";
 
 declare const figma: PluginAPI;
 
@@ -64,6 +65,33 @@ export async function createDesignVariant(
   // Clone the source frame
   const variant = sourceFrame.clone();
   variant.name = `TikTok • ${sourceFrame.name}`;
+
+  // PROXIMITY-BASED AUTO-LAYOUT: Apply proximity grouping BEFORE scaling
+  // This prevents collisions by grouping nearby elements into auto-layout containers
+  try {
+    const proximityResult = await applyProximityAutoLayout(variant, {
+      proximityThreshold: 50,
+      enableDebugLogging: true
+    });
+    debugFixLog("Proximity-based auto-layout applied", {
+      groupsCreated: proximityResult.groupsCreated,
+      elementsGrouped: proximityResult.elementsGrouped,
+      elementsSkipped: proximityResult.elementsSkipped,
+      processingTimeMs: proximityResult.processingTimeMs,
+      success: proximityResult.success
+    });
+
+    if (proximityResult.errors.length > 0) {
+      debugFixLog("Proximity processing had errors", {
+        errors: proximityResult.errors.slice(0, 3) // Log first 3 errors
+      });
+    }
+  } catch (proximityError) {
+    debugFixLog("Proximity processing failed with exception", {
+      error: proximityError instanceof Error ? proximityError.message : String(proximityError)
+    });
+    // Continue with normal processing - proximity is enhancement, not requirement
+  }
 
   // Ensure frame's image fills use cover behavior (prevents skewing on resize)
   if (Array.isArray(variant.fills)) {

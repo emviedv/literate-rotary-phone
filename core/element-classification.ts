@@ -16,6 +16,12 @@
 const ATOMIC_GROUP_NAME_PATTERN = /\b(illustration|mockup|device|phone|iphone|android|tablet|ipad|asset|graphic|artwork|icon-group|logo-group|diagram|infographic|chart|screenshot|frame-mockup|screen|bezel)\b/i;
 
 /**
+ * Pattern to match proximity groups created by the auto-layout system.
+ * These groups should be treated as atomic units to preserve their internal layout.
+ */
+const PROXIMITY_GROUP_NAME_PATTERN = /^ProximityGroup|^RecoveredGroup/i;
+
+/**
  * Detects if a GROUP or FRAME node should be treated as an atomic unit during scaling.
  *
  * Atomic groups are illustration-like containers where children maintain fixed
@@ -59,6 +65,12 @@ export function isAtomicGroup(node: SceneNode): boolean {
     return true;
   }
 
+  // Heuristic 1b: Proximity groups should be treated as atomic
+  // These are auto-layout containers created by the proximity system
+  if (PROXIMITY_GROUP_NAME_PATTERN.test(node.name)) {
+    return true;
+  }
+
   // Count child types for composition analysis
   let vectorShapeCount = 0;
   let imageCount = 0;
@@ -95,6 +107,27 @@ export function isAtomicGroup(node: SceneNode): boolean {
   // Heuristic 3: Contains images (mockup with screenshots/photos)
   if (imageCount > 0) {
     return true;
+  }
+
+  // Heuristic 4: Auto-layout containers with multiple children (likely proximity groups)
+  // These containers were intentionally created to group elements and should stay together
+  if (
+    node.type === "FRAME" &&
+    "layoutMode" in node &&
+    node.layoutMode !== "NONE" &&
+    children.length >= 2
+  ) {
+    // Additional check: if container has no visual properties itself (pure layout container)
+    // and contains elements that could be proximity-grouped
+    const hasOwnFills = "fills" in node && Array.isArray(node.fills) &&
+      node.fills.length > 0 && node.fills.some((f: any) => f.visible !== false);
+    const hasOwnStrokes = "strokes" in node && Array.isArray(node.strokes) &&
+      node.strokes.length > 0 && node.strokes.some((s: any) => s.visible !== false);
+
+    // If it's a pure layout container (no own visual properties), treat as atomic
+    if (!hasOwnFills && !hasOwnStrokes) {
+      return true;
+    }
   }
 
   return false;
