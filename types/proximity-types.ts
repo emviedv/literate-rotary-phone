@@ -154,6 +154,8 @@ export interface ContainerConfig {
   readonly padding?: number;
   /** Container name prefix */
   readonly namePrefix?: string;
+  /** Whether to make vertical containers fill available height */
+  readonly fillVerticalSpace?: boolean;
 }
 
 /**
@@ -194,6 +196,8 @@ export interface ProximityGroupingOptions {
   readonly defaultSpacing: number;
   /** Whether to enable debug logging (default: false) */
   readonly enableDebugLogging: boolean;
+  /** Whether to make vertical containers fill available height (default: false) */
+  readonly fillVerticalSpace: boolean;
 }
 
 /**
@@ -207,6 +211,7 @@ export const DEFAULT_PROXIMITY_OPTIONS: ProximityGroupingOptions = {
   respectAtomicProtection: true,
   defaultSpacing: 8,
   enableDebugLogging: false,
+  fillVerticalSpace: false,
 };
 
 // ============================================================================

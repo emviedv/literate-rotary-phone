@@ -9,6 +9,7 @@ import { debugFixLog } from "./debug.js";
 import { tryExportFrameAsBase64 } from "./ai-image-export.js";
 import { summarizeFrameEnhanced, type EnhancedFrameSummary } from "./ai-frame-summary.js";
 import { requestFullDesignSpecs, requestStage3Evaluation } from "./design-ai-service.js";
+import { requestFullDesignSpecsWithRelationships, requestStage3EvaluationWithRelationships } from "./design-ai-service-enhanced.js";
 import { createDesignVariant, applyEvaluationAdjustments } from "./design-executor.js";
 import {
   ensureDesignPage,
@@ -19,7 +20,9 @@ import {
   addContainerLabel,
   removeDesignContainer
 } from "./design-page-manager.js";
+import { detectRelationshipsOptimized } from "./relationship-performance.js";
 import type { DesignResult, DesignStatus } from "../types/design-types.js";
+import type { RelationshipConstraints } from "../types/design-relationships.js";
 
 declare const figma: PluginAPI;
 
@@ -58,6 +61,7 @@ export async function executeDesignFlow(
   const { onStatus, runEvaluation = false, apiKey } = options;
 
   const stageDurations: {
+    relationshipDetection?: number;
     stage1?: number;
     stage2?: number;
     stage3?: number;
@@ -99,13 +103,60 @@ export async function executeDesignFlow(
   });
 
   // ===========================================================================
+  // Stage 0.5: Relationship Detection (Relationship-Aware Layout System)
+  // ===========================================================================
+
+  onStatus?.({ stage: "analyzing", message: "Analyzing design relationships..." });
+
+  const relationshipStart = Date.now();
+  let relationshipConstraints: RelationshipConstraints | undefined;
+
+  try {
+    const relationshipResult = await detectRelationshipsOptimized(sourceFrame, {
+      preserveMode: 'adaptive', // Balance preservation with adaptation for TikTok
+      maxAnalysisTimeMs: 500 // Quick timeout to prevent blocking pipeline
+    });
+
+    stageDurations.relationshipDetection = Date.now() - relationshipStart;
+
+    if (relationshipResult.success && relationshipResult.constraints) {
+      relationshipConstraints = relationshipResult.constraints;
+      debugFixLog("Relationship detection complete", {
+        relationships: relationshipResult.analysis?.analysisMetrics.relationshipCount || 0,
+        constraints: relationshipConstraints.constraints.length,
+        criticalConstraints: relationshipConstraints.adaptationGuidance.criticalConstraintCount,
+        fallbackMode: relationshipResult.fallbackMode,
+        confidence: relationshipResult.analysis?.analysisMetrics.averageConfidence || 0
+      });
+    } else {
+      debugFixLog("Relationship detection skipped", {
+        reason: relationshipResult.error || "No relationships detected",
+        fallbackMode: relationshipResult.fallbackMode
+      });
+    }
+  } catch (error) {
+    stageDurations.relationshipDetection = Date.now() - relationshipStart;
+    debugFixLog("Relationship detection error, continuing without", { error: String(error) });
+    // Continue without relationship constraints - graceful degradation
+  }
+
+  // ===========================================================================
   // Stages 1 & 2: AI Design Specification
   // ===========================================================================
 
   onStatus?.({ stage: "planning", message: "AI is analyzing your design..." });
 
   const stage1Start = Date.now();
-  const specsResult = await requestFullDesignSpecs(apiKey, imageBase64, nodeTreeJson);
+
+  // Use enhanced AI service with relationship constraints if available
+  debugFixLog("AI Service Selection", {
+    useEnhancedService: !!relationshipConstraints,
+    constraintCount: relationshipConstraints?.constraints.length || 0
+  });
+
+  const specsResult = relationshipConstraints
+    ? await requestFullDesignSpecsWithRelationships(apiKey, imageBase64, nodeTreeJson, relationshipConstraints)
+    : await requestFullDesignSpecs(apiKey, imageBase64, nodeTreeJson);
   stageDurations.stage1 = Date.now() - stage1Start;
 
   if (!specsResult.success || !specsResult.data) {
@@ -185,7 +236,10 @@ export async function executeDesignFlow(
     // Export the generated variant for evaluation
     const variantImage = await tryExportFrameAsBase64(variant);
     if (variantImage) {
-      const evalResult = await requestStage3Evaluation(apiKey, variantImage, specs);
+      // Use enhanced evaluation with relationship validation if constraints available
+      const evalResult = relationshipConstraints
+        ? await requestStage3EvaluationWithRelationships(apiKey, variantImage, specs, relationshipConstraints)
+        : await requestStage3Evaluation(apiKey, variantImage, specs);
       stageDurations.stage3 = Date.now() - stage3Start;
 
       if (evalResult.success && evalResult.data) {

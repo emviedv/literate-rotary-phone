@@ -226,7 +226,8 @@ async function processProximityCluster(
     const containerConfig: ContainerConfig = {
       direction: finalDirection,
       spacing: config.defaultSpacing,
-      namePrefix: "ProximityGroup"
+      namePrefix: "ProximityGroup",
+      fillVerticalSpace: config.fillVerticalSpace
     };
 
     // Create auto-layout container
@@ -343,7 +344,19 @@ async function createAutoLayoutContainer(
 
     // Configure auto-layout
     container.layoutMode = config.direction === 'horizontal' ? 'HORIZONTAL' : 'VERTICAL';
-    container.primaryAxisSizingMode = 'AUTO';
+
+    // For vertical containers in TikTok layouts, fill available height
+    if (config.direction === 'vertical' && config.fillVerticalSpace) {
+      container.primaryAxisSizingMode = 'FILL';
+      debugFixLog("Setting vertical container to fill available height", {
+        containerId: container.id,
+        containerName: container.name,
+        fillVerticalSpace: true
+      });
+    } else {
+      container.primaryAxisSizingMode = 'AUTO';
+    }
+
     container.counterAxisSizingMode = 'AUTO';
     container.itemSpacing = config.spacing || 8;
 

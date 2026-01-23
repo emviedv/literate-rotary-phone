@@ -138,3 +138,7 @@ export function debugFixLog(message: string, context?: DebugContext): void {
 export function debugAutoLayoutLog(message: string, context?: DebugContext): void {
   log("[ScaleResizer][auto-layout]", message, context);
 }
+
+export function debugPerformanceLog(message: string, context?: DebugContext): void {
+  log("[ScaleResizer][performance]", message, context);
+}

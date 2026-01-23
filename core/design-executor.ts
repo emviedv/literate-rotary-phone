@@ -66,12 +66,29 @@ export async function createDesignVariant(
   const variant = sourceFrame.clone();
   variant.name = `TikTok • ${sourceFrame.name}`;
 
+  // Log initial frame properties after cloning
+  debugFixLog("FRAME_CLONED", {
+    width: variant.width,
+    height: variant.height,
+    frameId: variant.id,
+    frameName: variant.name,
+    layoutMode: variant.layoutMode,
+    constraints: {
+      horizontal: variant.constraints?.horizontal || "NONE",
+      vertical: variant.constraints?.vertical || "NONE"
+    },
+    parent: variant.parent?.type || "none",
+    locked: variant.locked,
+    visible: variant.visible
+  });
+
   // PROXIMITY-BASED AUTO-LAYOUT: Apply proximity grouping BEFORE scaling
   // This prevents collisions by grouping nearby elements into auto-layout containers
   try {
     const proximityResult = await applyProximityAutoLayout(variant, {
       proximityThreshold: 50,
-      enableDebugLogging: true
+      enableDebugLogging: true,
+      fillVerticalSpace: true  // Make vertical containers fill TikTok frame height
     });
     debugFixLog("Proximity-based auto-layout applied", {
       groupsCreated: proximityResult.groupsCreated,
@@ -86,10 +103,28 @@ export async function createDesignVariant(
         errors: proximityResult.errors.slice(0, 3) // Log first 3 errors
       });
     }
+
+    // Log frame dimensions after proximity processing
+    debugFixLog("FRAME_AFTER_PROXIMITY", {
+      width: variant.width,
+      height: variant.height,
+      frameId: variant.id,
+      proximitySuccess: proximityResult.success,
+      groupsCreated: proximityResult.groupsCreated
+    });
+
   } catch (proximityError) {
     debugFixLog("Proximity processing failed with exception", {
       error: proximityError instanceof Error ? proximityError.message : String(proximityError)
     });
+
+    // Log frame dimensions after proximity error
+    debugFixLog("FRAME_AFTER_PROXIMITY_ERROR", {
+      width: variant.width,
+      height: variant.height,
+      frameId: variant.id
+    });
+
     // Continue with normal processing - proximity is enhancement, not requirement
   }
 
@@ -110,8 +145,34 @@ export async function createDesignVariant(
     }
   }
 
+  // Log initial dimensions before resize
+  debugFixLog("FRAME_RESIZE_BEFORE", {
+    width: variant.width,
+    height: variant.height,
+    targetWidth: CONSTRAINTS.WIDTH,
+    targetHeight: CONSTRAINTS.HEIGHT,
+    frameId: variant.id,
+    frameName: variant.name,
+    layoutMode: variant.layoutMode,
+    constraints: {
+      horizontal: variant.constraints?.horizontal || "NONE",
+      vertical: variant.constraints?.vertical || "NONE"
+    }
+  });
+
   // Resize to TikTok dimensions
   variant.resizeWithoutConstraints(CONSTRAINTS.WIDTH, CONSTRAINTS.HEIGHT);
+
+  // Log actual dimensions after resize
+  debugFixLog("FRAME_RESIZE_AFTER", {
+    width: variant.width,
+    height: variant.height,
+    targetWidth: CONSTRAINTS.WIDTH,
+    targetHeight: CONSTRAINTS.HEIGHT,
+    frameId: variant.id,
+    frameName: variant.name,
+    resizeSuccessful: variant.width === CONSTRAINTS.WIDTH && variant.height === CONSTRAINTS.HEIGHT
+  });
 
   // Break auto-layout for aggressive repositioning
   if (variant.layoutMode !== "NONE") {
@@ -617,6 +678,19 @@ function applyNodeSpec(
 
   // Apply size - SKIP for atomic instances, PRESERVE ASPECT RATIO for images
   if (spec.size && "resize" in node) {
+
+    // CRITICAL DIAGNOSTIC: Log if this is a size spec for the main frame
+    if (node.type === "FRAME" && (node as FrameNode).parent?.type === "PAGE") {
+      debugFixLog("FRAME_SIZE_SPEC_DETECTED", {
+        nodeId: spec.nodeId,
+        nodeName: spec.nodeName,
+        currentSize: { width: (node as FrameNode).width, height: (node as FrameNode).height },
+        specSize: spec.size,
+        isMainFrame: true,
+        WARNING: "This size spec will override the TikTok resize!"
+      });
+    }
+
     if (isAtomicInstance) {
       debugFixLog("Skipping size change for atomic instance", {
         nodeId: spec.nodeId,
@@ -655,13 +729,42 @@ function applyNodeSpec(
         });
       }
 
+      // Log before resize
+      const beforeResize = node.type === "FRAME" ? {
+        width: (node as FrameNode).width,
+        height: (node as FrameNode).height
+      } : null;
+
       try {
         (node as FrameNode).resize(targetWidth, targetHeight);
+
+        // Log after successful resize
+        if (beforeResize && node.type === "FRAME") {
+          debugFixLog("FRAME_RESIZED_BY_SPEC", {
+            nodeId: spec.nodeId,
+            nodeName: spec.nodeName,
+            before: beforeResize,
+            requested: { width: targetWidth, height: targetHeight },
+            after: { width: (node as FrameNode).width, height: (node as FrameNode).height }
+          });
+        }
+
       } catch {
         // Try resizeWithoutConstraints
         try {
           if ("resizeWithoutConstraints" in node) {
             (node as FrameNode).resizeWithoutConstraints(targetWidth, targetHeight);
+
+            // Log after successful resizeWithoutConstraints
+            if (beforeResize && node.type === "FRAME") {
+              debugFixLog("FRAME_RESIZED_BY_SPEC_WITHOUT_CONSTRAINTS", {
+                nodeId: spec.nodeId,
+                nodeName: spec.nodeName,
+                before: beforeResize,
+                requested: { width: targetWidth, height: targetHeight },
+                after: { width: (node as FrameNode).width, height: (node as FrameNode).height }
+              });
+            }
           }
         } catch (error) {
           debugFixLog("Failed to resize node", {
