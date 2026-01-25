@@ -176,20 +176,20 @@ export const TIKTOK_CONSTRAINTS = {
   WIDTH: 1080,
   HEIGHT: 1920,
   /** Bottom danger zone - TikTok UI overlays (percentage from bottom) */
-  BOTTOM_DANGER_ZONE: 0.35,
+  BOTTOM_DANGER_ZONE: 0.08,
   /** Top caution zone - status bar, close button (percentage from top) */
-  TOP_CAUTION_ZONE: 0.15,
+  TOP_CAUTION_ZONE: 0.04,
   /** Safe content area after accounting for UI overlays */
   SAFE_AREA: {
-    TOP: 0.15,      // Content should generally be below 15%
-    BOTTOM: 0.65,   // Content should generally be above 35% from bottom
+    TOP: 0.08,      // Content should generally be below 8%
+    BOTTOM: 0.92,   // Content should generally be above 8% from bottom
   },
   /** Minimum text size for legibility at TikTok resolution */
   MIN_TEXT_SIZE: 24,
   /** Recommended hero zone for thumb-stopping content */
   HERO_ZONE: {
-    TOP: 0.15,
-    BOTTOM: 0.45,
+    TOP: 0.08,
+    BOTTOM: 0.50,
   },
 } as const;
 

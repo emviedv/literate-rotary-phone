@@ -65,8 +65,8 @@ interface LayoutEnforcerContract {
 // ============================================================================
 
 const TIKTOK_HEIGHT = 1920;
-const BOTTOM_DANGER_ZONE = 0.35;
-const TOP_CAUTION_ZONE = 0.15;
+const BOTTOM_DANGER_ZONE = 0.08;
+const TOP_CAUTION_ZONE = 0.04;
 
 // ============================================================================
 // Implementation (will be replaced by import after extraction)
@@ -264,13 +264,13 @@ testCase("CONTRACT: reorderChildrenByZIndex ignores hidden nodes", () => {
 testCase("CONTRACT: enforceSafeAreas detects bottom danger zone violations", () => {
   resetNodeCounter();
 
-  // Bottom danger starts at 1920 * 0.65 = 1248
-  // A node that extends past 1248 is in the danger zone
+  // Bottom danger starts at 1920 * 0.92 = 1766
+  // A node that extends past 1766 is in the danger zone
   const dangerNode = createRectangleNode({
     id: "danger",
     name: "DangerNode",
     x: 100,
-    y: 1200, // Starts at 1200, extends to 1300 (past 1248)
+    y: 1700, // Starts at 1700, extends to 1800 (past 1766)
     width: 100,
     height: 100,
   });
@@ -293,7 +293,7 @@ testCase("CONTRACT: enforceSafeAreas detects bottom danger zone violations", () 
 testCase("CONTRACT: enforceSafeAreas detects top caution zone for important content", () => {
   resetNodeCounter();
 
-  // Top caution ends at 1920 * 0.15 = 288
+  // Top caution ends at 1920 * 0.04 = 77
   // Important content (TEXT) in this zone should trigger a warning
   const topText = createTextNode({
     id: "top-text",

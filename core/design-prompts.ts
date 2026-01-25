@@ -45,9 +45,9 @@ The source frame is a carefully crafted marketing asset. The text, headlines, CT
 - Target: ${TIKTOK_CONSTRAINTS.WIDTH}×${TIKTOK_CONSTRAINTS.HEIGHT} pixels (9:16 vertical)
 
 ### UI Overlay Zones (CRITICAL)
-- **Bottom 35%**: DANGER ZONE - TikTok overlays like, comment, share buttons, caption text, and progress bar here. No important content should be placed here.
-- **Top 15%**: CAUTION ZONE - Status bar, close button, and follow button appear here. Avoid placing key messaging here.
-- **Safe Content Area**: Keep critical content between 15% and 65% from top
+- **Bottom 8%**: DANGER ZONE - TikTok overlays like, comment, share buttons, caption text, and progress bar here. No important content should be placed here.
+- **Top 4%**: CAUTION ZONE - Status bar, close button, and follow button appear here. Avoid placing key messaging here.
+- **Safe Content Area**: Keep critical content between 8% and 92% from top
 
 ### Design Principles for TikTok
 1. **Vertical-first composition**: Content should flow top-to-bottom
@@ -72,6 +72,51 @@ You must NOT:
 - Place important content in the danger zones
 - **Hide containers (FRAME/GROUP) that have important children** (see visibility rules below)
 - **Place text flush against frame edges** — ALL text needs minimum 40px padding from left, right, and top edges
+
+## CRITICAL: Fill the Vertical Canvas Intentionally
+
+The TikTok canvas is TALL (1920px). Your safe content area spans from y=154 to y=1766 — that's **1612px of prime real estate**.
+
+Most source designs are only 400-600px tall. **If you place them as-is, you waste 50%+ of the canvas.** This creates the "copy-paste" look we must avoid.
+
+### The #1 Mistake to Avoid
+❌ Content clustered in one spot with massive empty space above or below
+❌ Original proportions preserved exactly — this wastes the vertical canvas
+❌ Uniform scaling (everything 1.5x) — feels stretched, not designed
+
+### The Creative Transformation Process
+
+**Step 1: Classify Content Type**
+- **Visual-heavy:** Has prominent photo, device mockup, illustration, person → Hero visual should LEAD
+- **Text-heavy:** Has numbered lists, feature bullets, text-first messaging → Headline should LEAD
+
+**Step 2: Identify the Dominant Element**
+- Visual-heavy designs: The hero image/mockup is your dominant element
+- Text-heavy designs: The headline/title is your dominant element
+
+**Step 3: Apply Strategic Scaling**
+Scale elements DIFFERENTLY based on their role — this creates hierarchy:
+
+| Element Type | Visual-Heavy Design | Text-Heavy Design |
+|--------------|---------------------|-------------------|
+| Dominant (hero OR headline) | Scale hero to 400-500px tall | Scale headline 1.8-2.5x |
+| Supporting elements | Scale 1.2-1.5x | Scale 1.3-1.5x |
+| Tertiary (branding, small text) | Scale 1.0-1.2x | Scale 1.0-1.2x |
+
+**Step 4: Expand Spacing Dramatically**
+After scaling, SPREAD elements through the vertical space:
+- Use 60-120px gaps between logical groups (not 20-30px)
+- Content should span from approximately y=154 to y=1766
+- The viewer's eye should travel DOWN the full composition
+
+### Target: 80-90% Safe Area Utilization
+- Safe area = 1612px vertical space
+- Your content should occupy **1290-1450px** of that space
+- If your final layout is under 1200px tall, you haven't transformed enough — scale up!
+
+### Mental Model
+Think: "I'm not fitting content INTO TikTok — I'm DESIGNING for TikTok."
+The vertical format is an opportunity for bold, impactful composition, not a constraint to work around.
 
 ## CRITICAL: Figma Visibility Inheritance
 In Figma, hiding a FRAME or GROUP automatically hides ALL its children. This is built into Figma's architecture - there is no way around it.
@@ -244,6 +289,14 @@ These go in the \`neverHide\` array in your output.
 
 Now plan how to adapt this for TikTok vertical format...
 
+### Content Classification (Required)
+Before planning positions, you MUST classify:
+1. **Content Type**: Is this visual-heavy or text-heavy?
+2. **Dominant Element**: Which element should occupy the most vertical space?
+3. **Scaling Strategy**: How will you scale elements to fill 70-80% of the safe area?
+
+This classification drives your entire transformation strategy.
+
 ### Your Task
 1. **Complete the Visual Inventory**: Describe what you literally SEE (logos, prices, headlines, subject)
 2. **Build the neverHide list**: Sacred elements that must remain visible no matter what
@@ -358,9 +411,22 @@ Use these ranges for consistent stacking:
 
 ### Positioning Guidelines
 - Use pixel values for the ${TIKTOK_CONSTRAINTS.WIDTH}×${TIKTOK_CONSTRAINTS.HEIGHT} target frame
-- Remember: Bottom 35% is danger zone (y > ${Math.round(TIKTOK_CONSTRAINTS.HEIGHT * 0.65)})
-- Remember: Top 15% is caution zone (y < ${Math.round(TIKTOK_CONSTRAINTS.HEIGHT * 0.15)})
+- Remember: Bottom 8% is danger zone (y > ${Math.round(TIKTOK_CONSTRAINTS.HEIGHT * 0.92)})
+- Remember: Top 4% is caution zone (y < ${Math.round(TIKTOK_CONSTRAINTS.HEIGHT * 0.08)})
 - Center horizontally when appropriate (x = ${Math.round((TIKTOK_CONSTRAINTS.WIDTH - 100) / 2)} for 100px-wide element)
+
+### CRITICAL: Space Utilization Target
+Your layout should utilize 80-90% of the safe area (1290-1450px of the 1612px available).
+
+**Calculate your layout height:**
+- Sum up element heights + gaps
+- If total < 1200px, you need to scale up more aggressively
+- Content should span from ~y=154 to ~y=1766, not cluster in one area
+
+**Don't just place — DESIGN:**
+- Dominant element: 40-50% of safe area
+- Supporting elements: Scaled 1.2-1.5x from original
+- Generous spacing between groups (60-120px)
 
 ### CRITICAL: Edge Padding for Text
 **ALL text must have at least 40px padding from frame edges.** Text flush against edges looks unprofessional and may clip on some devices.

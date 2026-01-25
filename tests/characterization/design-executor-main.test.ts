@@ -545,16 +545,16 @@ testCase("TikTok dimensions are 1080x1920", () => {
   assertEqual(TIKTOK_HEIGHT, 1920, "Height should be 1920");
 });
 
-testCase("TikTok safe areas: bottom 35%, top 15%", () => {
-  const BOTTOM_DANGER_ZONE = 0.35;
-  const TOP_CAUTION_ZONE = 0.15;
+testCase("TikTok safe areas: bottom 8%, top 4%", () => {
+  const BOTTOM_DANGER_ZONE = 0.08;
+  const TOP_CAUTION_ZONE = 0.04;
 
   const height = 1920;
   const bottomDangerY = height * (1 - BOTTOM_DANGER_ZONE); // Content should be above this
   const topCautionY = height * TOP_CAUTION_ZONE; // Content should be below this
 
-  assertEqual(bottomDangerY, 1248, "Bottom danger zone starts at 1248px");
-  assertEqual(topCautionY, 288, "Top caution zone ends at 288px");
+  assertEqual(bottomDangerY, 1766, "Bottom danger zone starts at 1766px");
+  assertEqual(topCautionY, 77, "Top caution zone ends at 77px");
 });
 
 // ============================================================================
