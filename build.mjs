@@ -10,7 +10,7 @@ const defaultAiKey =
   process.env.SCALERESIZER_DEFAULT_OPENAI_KEY ??
   process.env.BIBLIOSCALE_DEFAULT_OPENAI_KEY ??
   process.env.BIBLIO_DEFAULT_OPENAI_KEY ??
-  "";
+  ""; // Set via environment variable
 
 const envDebugRaw =
   process.env.SCALERESIZER_DEBUG_FIX ??
