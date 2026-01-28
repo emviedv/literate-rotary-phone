@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { readdirSync, rmSync } from "node:fs";
+import { readdirSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -28,12 +28,27 @@ async function main() {
   await run("npx", ["tsc", "--project", "tsconfig.tests.json"]);
   try {
     const testsDir = path.join(buildDir, "tests");
-    const testFiles = readdirSync(testsDir)
-      .filter((file) => file.endsWith(".test.js"))
-      .sort();
+
+    // Recursively find all .test.js files
+    function findTestFiles(dir) {
+      const results = [];
+      const entries = readdirSync(dir);
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry);
+        const stat = statSync(fullPath);
+        if (stat.isDirectory()) {
+          results.push(...findTestFiles(fullPath));
+        } else if (entry.endsWith(".test.js")) {
+          results.push(fullPath);
+        }
+      }
+      return results;
+    }
+
+    const testFiles = findTestFiles(testsDir).sort();
 
     for (const file of testFiles) {
-      await run("node", [path.join(testsDir, file)]);
+      await run("node", [file]);
     }
   } finally {
     rmSync(buildDir, { recursive: true, force: true });
