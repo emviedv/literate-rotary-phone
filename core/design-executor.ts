@@ -32,6 +32,71 @@ import {
 declare const figma: PluginAPI;
 
 // ============================================================================
+// Orphaned Container Handling
+// ============================================================================
+
+/**
+ * Checks if a node has visible styling that would create artifacts
+ * when left orphaned (stroke, visible fill, etc.)
+ */
+function hasVisibleContainerStyling(node: SceneNode): boolean {
+  if (!("strokes" in node) && !("fills" in node)) return false;
+
+  const frameNode = node as FrameNode;
+
+  // Check for visible strokes
+  if ("strokes" in frameNode && Array.isArray(frameNode.strokes)) {
+    const strokes = frameNode.strokes as readonly Paint[];
+    if (strokes.some(s => s.visible !== false)) {
+      return true;
+    }
+  }
+
+  // Check for visible solid/gradient fills (not image fills, which are content)
+  if ("fills" in frameNode && Array.isArray(frameNode.fills)) {
+    const fills = frameNode.fills as readonly Paint[];
+    if (fills.some(f => f.visible !== false && f.type !== "IMAGE")) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Hides containers that have visible styling but no visible children.
+ * Prevents visual artifacts from orphaned container frames.
+ */
+function hideOrphanedStyledContainers(frame: FrameNode): void {
+  const queue: SceneNode[] = [...frame.children];
+
+  while (queue.length > 0) {
+    const node = queue.shift()!;
+
+    if ("children" in node) {
+      const frameNode = node as FrameNode;
+
+      // Check if this is a styled container with no visible children
+      if (hasVisibleContainerStyling(frameNode)) {
+        const visibleChildren = frameNode.children.filter(c => c.visible);
+        if (visibleChildren.length === 0) {
+          frameNode.visible = false;
+          debugFixLog("Hiding empty styled container", {
+            nodeId: frameNode.id,
+            nodeName: frameNode.name,
+            reason: "Container has visible styling but no visible children"
+          });
+          continue; // Don't recurse into hidden container
+        }
+      }
+
+      // Recurse into children
+      queue.push(...frameNode.children);
+    }
+  }
+}
+
+// ============================================================================
 // Types
 // ============================================================================
 
@@ -185,7 +250,14 @@ export async function createDesignVariant(
     variant.layoutMode = "NONE";
   }
 
-  // CRITICAL: Identify atomic instances BEFORE detachment
+  // 1. Build node map FIRST (before any modifications)
+  // This ensures source→variant mapping works while trees are structurally identical
+  const nodeMap = buildNodeMap(sourceFrame, variant);
+  debugFixLog("Node map built", {
+    mappedNodes: Object.keys(nodeMap).length
+  });
+
+  // 2. Identify atomic instances BEFORE detachment
   // This preserves component boundaries for mockups, illustrations, device frames
   const atomicInstanceIds = collectAtomicInstanceIds(variant);
   if (atomicInstanceIds.size > 0) {
@@ -194,21 +266,14 @@ export async function createDesignVariant(
     });
   }
 
-  // Detach non-atomic instances to allow repositioning of their children
+  // 3. Detach non-atomic instances to allow repositioning of their children
   // Atomic instances (mockups, etc.) are preserved to keep their structure
   const detachCount = detachAllInstances(variant, atomicInstanceIds);
   if (detachCount > 0) {
     debugFixLog("Detached non-atomic instances for repositioning", { detachCount });
   }
 
-  // Build node map for fast lookup
-  const nodeMap = buildNodeMap(sourceFrame, variant);
-
-  debugFixLog("Node map built", {
-    mappedNodes: Object.keys(nodeMap).length
-  });
-
-  // Identify children of atomic groups (mockups, illustrations, etc.)
+  // 4. Identify children of atomic groups (after detachment is fine)
   // These should NOT be repositioned independently - they move with their parent
   // Now includes both preserved instances AND frame-based atomic groups
   const atomicGroupChildIds = collectAtomicGroupChildren(variant);
@@ -328,6 +393,10 @@ export async function createDesignVariant(
       skippedSpecs++;
     }
   }
+
+  // Hide orphaned containers with visible styling but no visible children
+  // This prevents visual artifacts when children are repositioned outside their parent
+  hideOrphanedStyledContainers(variant);
 
   // Reorder children based on zIndex values from specs
   // Pass atomicGroupChildIds so we skip reordering atomic children (preserve their z-order)

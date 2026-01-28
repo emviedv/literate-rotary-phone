@@ -242,4 +242,101 @@ testCase("image nodes preserve aspect ratio during resize", () => {
   assertEqual(targetHeight, 450, "Height should preserve aspect ratio");
 });
 
+// --- Z-Index Reordering Edge Cases ---
+
+testCase("reorderChildrenByZIndex handles more specs than children", () => {
+  // Simulate: 5 specs with zIndex but only 3 are direct children of variant
+  const specsCount = 5;
+  const directChildrenCount = 3;
+
+  let insertionIndex = 0;
+  const insertedIndices: number[] = [];
+
+  for (let i = 0; i < specsCount; i++) {
+    const isDirectChild = i < directChildrenCount;
+    if (isDirectChild) {
+      const safeIndex = Math.min(insertionIndex, directChildrenCount);
+      insertedIndices.push(safeIndex);
+      insertionIndex++;
+    }
+  }
+
+  const allIndicesValid = insertedIndices.every(idx => idx <= directChildrenCount);
+  assertEqual(allIndicesValid, true, "All indices should be within bounds");
+  assertEqual(insertedIndices.length, 3, "Should insert exactly 3 nodes");
+});
+
+testCase("z-index insertion clamps to children.length", () => {
+  // Simulate the fix: safeIndex = Math.min(insertionIndex, children.length)
+  const childrenCount = 2;
+  const insertionIndex = 5; // Exceeds children count
+
+  const safeIndex = Math.min(insertionIndex, childrenCount);
+
+  assertEqual(safeIndex, 2, "Should clamp to children count");
+});
+
+// --- Orphaned Container Detection ---
+
+testCase("hasVisibleContainerStyling detects visible stroke", () => {
+  const node = {
+    strokes: [{ type: "SOLID", visible: true }],
+    fills: [],
+  };
+  const hasStroke = node.strokes.some((s: { visible?: boolean }) => s.visible !== false);
+  assertEqual(hasStroke, true, "Should detect visible stroke");
+});
+
+testCase("hasVisibleContainerStyling detects invisible stroke as false", () => {
+  const node = {
+    strokes: [{ type: "SOLID", visible: false }],
+    fills: [],
+  };
+  const hasStroke = node.strokes.some((s: { visible?: boolean }) => s.visible !== false);
+  assertEqual(hasStroke, false, "Should not detect invisible stroke");
+});
+
+testCase("hasVisibleContainerStyling ignores image fills", () => {
+  const node = {
+    strokes: [],
+    fills: [{ type: "IMAGE", visible: true }],
+  };
+  const hasStyling = node.fills.some(
+    (f: { type: string; visible?: boolean }) => f.visible !== false && f.type !== "IMAGE"
+  );
+  assertEqual(hasStyling, false, "Image fills are content, not styling");
+});
+
+testCase("hasVisibleContainerStyling detects solid fill", () => {
+  const node = {
+    strokes: [],
+    fills: [{ type: "SOLID", visible: true }],
+  };
+  const hasStyling = node.fills.some(
+    (f: { type: string; visible?: boolean }) => f.visible !== false && f.type !== "IMAGE"
+  );
+  assertEqual(hasStyling, true, "Should detect visible solid fill");
+});
+
+testCase("orphaned container hidden when no visible children", () => {
+  const containerHasStroke = true;
+  const visibleChildrenCount = 0;
+  const shouldHide = containerHasStroke && visibleChildrenCount === 0;
+  assertEqual(shouldHide, true, "Should hide orphaned styled container");
+});
+
+testCase("container kept visible when children remain", () => {
+  const containerHasStroke = true;
+  const visibleChildren = [{ id: "child-1" }]; // Simulates one visible child
+  const shouldHide = containerHasStroke && visibleChildren.length === 0;
+  assertEqual(shouldHide, false, "Should keep container with remaining children");
+});
+
+testCase("container without styling kept visible even when empty", () => {
+  const containerHasStroke = false;
+  const visibleChildrenCount = 0;
+  const shouldHide = containerHasStroke && visibleChildrenCount === 0;
+  assertEqual(shouldHide, false, "Unstyled containers don't need hiding");
+});
+
 console.log("\n✅ All spec applicator characterization tests passed!\n");

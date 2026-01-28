@@ -283,20 +283,25 @@ export function reorderChildrenByZIndex(
   if (specsWithZIndex.length === 0) return;
 
   let reorderedCount = 0;
+  let insertionIndex = 0;
 
-  for (let i = 0; i < specsWithZIndex.length; i++) {
-    const spec = specsWithZIndex[i];
+  for (const spec of specsWithZIndex) {
     const node = nodeMap[spec.nodeId];
 
     if (node && node.parent === variant && !node.removed) {
       try {
-        variant.insertChild(i, node);
+        // Clamp index to valid range - insertion index may exceed children count
+        // when some specs reference nodes that aren't direct children
+        const safeIndex = Math.min(insertionIndex, variant.children.length);
+        variant.insertChild(safeIndex, node);
         reorderedCount++;
+        insertionIndex++; // Only increment on successful insertion
       } catch (error) {
         debugFixLog("Failed to reorder node", {
           nodeId: spec.nodeId,
           nodeName: spec.nodeName,
-          targetIndex: i,
+          targetIndex: insertionIndex,
+          childCount: variant.children.length,
           error: error instanceof Error ? error.message : String(error),
         });
       }
