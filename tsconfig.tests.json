@@ -24,6 +24,13 @@
     "core/ai-service.ts",
     "core/ai-few-shot-examples.ts",
     "core/ai-sanitization.ts",
-    "core/ai-frame-summary.ts"
+    "core/ai-frame-summary.ts",
+    "core/design-executor.ts",
+    "core/element-classification.ts",
+    "core/node-map-builder.ts",
+    "core/spec-applicator.ts",
+    "core/edge-enforcement.ts",
+    "core/instance-management.ts",
+    "types/design-types.ts"
   ]
 }
