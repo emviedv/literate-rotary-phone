@@ -32,11 +32,9 @@ function assertEqual<T>(actual: T, expected: T, message: string): void {
   }
 }
 
-// Mock the debug system
-const mockIsDebugFixEnabled = () => true;
-
-// Override debug check for testing
-(global as any).isDebugFixEnabled = mockIsDebugFixEnabled;
+// Enable debug mode for testing by setting the global flag
+// The debug module checks globalThis.DEBUG_FIX === "1"
+(globalThis as any).DEBUG_FIX = "1";
 
 /**
  * Helper function to wait for a specific duration.
@@ -70,8 +68,9 @@ testCase("PerformanceProfiler - Basic Timer Operations", async () => {
 
 // Test timer with no debug mode
 testCase("PerformanceProfiler - Zero Overhead When Debug Disabled", () => {
-  // Temporarily disable debug
-  (global as any).isDebugFixEnabled = () => false;
+  // Temporarily disable debug by unsetting the flag
+  const originalDebugFlag = (globalThis as any).DEBUG_FIX;
+  (globalThis as any).DEBUG_FIX = undefined;
 
   const profiler = new PerformanceProfiler();
 
@@ -81,7 +80,7 @@ testCase("PerformanceProfiler - Zero Overhead When Debug Disabled", () => {
   assertEqual(measurement, null, "Should return null when debug disabled");
 
   // Restore debug mode
-  (global as any).isDebugFixEnabled = mockIsDebugFixEnabled;
+  (globalThis as any).DEBUG_FIX = originalDebugFlag;
 });
 
 // Test timeSync function
@@ -299,7 +298,8 @@ testCase("PerformanceProfiler - Timer Overwriting", async () => {
   profiler.startTimer("overwrite-test");
   await wait(5);
 
-  // Start again with same name - should end the previous one
+  // Start again with same name - should end the previous one and start fresh
+  // This creates a measurement for the first timer
   profiler.startTimer("overwrite-test");
   await wait(5);
 
@@ -310,9 +310,11 @@ testCase("PerformanceProfiler - Timer Overwriting", async () => {
 
   const measurements = profiler.getMeasurements();
 
-  // Only check measurement details if debug is enabled and measurements exist
+  // Implementation auto-ends previous timer, so we get 2 measurements:
+  // 1. From auto-ending the first timer when second start() is called
+  // 2. From explicitly ending the second timer
   if (measurements.length > 0) {
-    assertEqual(measurements.length, 1, "Should only have one measurement (overwritten)");
+    assertEqual(measurements.length, 2, "Should have two measurements (original + overwritten)");
   }
 
   assertEqual(typeof measurements, "object", "Should return measurements array");

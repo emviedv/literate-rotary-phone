@@ -1,4 +1,4 @@
-import { isDebugFixEnabled } from "./debug.js";
+import { debugFixLog } from "./debug.js";
 
 export type TelemetryEvent =
   | "TARGET_SELECTED"
@@ -23,13 +23,5 @@ export interface TelemetryProperties {
  * In a real deployment, this would pipe to an analytics provider (e.g. Mixpanel, Segment).
  */
 export function trackEvent(eventName: TelemetryEvent, properties?: TelemetryProperties): void {
-  if (!isDebugFixEnabled()) {
-    return;
-  }
-
-  const timestamp = new Date().toISOString();
-  console.log(`[ScaleResizer][Telemetry] ${eventName}`, {
-    timestamp,
-    ...properties
-  });
+  debugFixLog(`Telemetry: ${eventName}`, properties ?? {});
 }

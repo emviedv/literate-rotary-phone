@@ -247,7 +247,7 @@ function validateAnchorPattern(
   // Check relative positioning if geometric constraints exist
   if (constraint.geometric?.relativePositions) {
     const positionViolations = validateRelativePositioning(
-      constraint.geometric.relativePositions as any,
+      constraint.geometric.relativePositions as { elementId: string; position: NormalizedPoint }[],
       anchorSpec,
       designSpecs,
       constraint

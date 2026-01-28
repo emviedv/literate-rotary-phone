@@ -17,7 +17,11 @@ import type {
   RelationshipAnalysis,
   RelationshipConstraints,
   RelationshipDetectionConfig,
-  RelationshipDetectionResult
+  RelationshipDetectionResult,
+  SpatialRelationship,
+  VisualRelationship,
+  CompositionalRelationship,
+  ElementVisualProperties
 } from "../types/design-relationships.js";
 
 // ============================================================================
@@ -185,13 +189,26 @@ async function performCompleteAnalysis(
   startTime: number
 ): Promise<RelationshipDetectionResult> {
 
-  const analysis: RelationshipAnalysis = {
+  const analysis: {
+    frameId: string;
+    analysisTimestamp: number;
+    spatialRelationships: SpatialRelationship[];
+    visualRelationships: VisualRelationship[];
+    compositionalRelationships: CompositionalRelationship[];
+    elementProperties: ElementVisualProperties[];
+    analysisMetrics: {
+      processingTimeMs: number;
+      elementCount: number;
+      relationshipCount: number;
+      averageConfidence: number;
+    };
+  } = {
     frameId: frame.id,
     analysisTimestamp: Date.now(),
     spatialRelationships: [],
     visualRelationships: [],
     compositionalRelationships: [],
-    elementProperties: [], // Will be populated by analyzers
+    elementProperties: [],
     analysisMetrics: {
       processingTimeMs: 0,
       elementCount: 0,
@@ -206,7 +223,7 @@ async function performCompleteAnalysis(
     // Stage 1: Spatial relationship analysis
     if (config.enableSpatialAnalysis) {
       try {
-        (analysis as any).spatialRelationships = analyzeSpatialRelationships(frame);
+        analysis.spatialRelationships = analyzeSpatialRelationships(frame);
         debugFixLog("Spatial analysis complete", {
           relationships: analysis.spatialRelationships.length
         });
@@ -220,7 +237,7 @@ async function performCompleteAnalysis(
     const elementCount = countVisibleElements(frame);
     if (config.enableVisualAnalysis && elementCount <= config.maxElementCount) {
       try {
-        (analysis as any).visualRelationships = analyzeVisualRelationships(frame);
+        analysis.visualRelationships = analyzeVisualRelationships(frame);
         debugFixLog("Visual analysis complete", {
           relationships: analysis.visualRelationships.length
         });
@@ -233,7 +250,7 @@ async function performCompleteAnalysis(
     // Stage 3: Compositional relationship analysis (if not too complex)
     if (config.enableCompositionalAnalysis && elementCount <= config.maxElementCount) {
       try {
-        (analysis as any).compositionalRelationships = analyzeCompositionalRelationships(frame);
+        analysis.compositionalRelationships = analyzeCompositionalRelationships(frame);
         debugFixLog("Compositional analysis complete", {
           relationships: analysis.compositionalRelationships.length
         });
@@ -258,7 +275,7 @@ async function performCompleteAnalysis(
       ? allConfidences.reduce((sum, conf) => sum + conf, 0) / allConfidences.length
       : 0;
 
-    (analysis as any).analysisMetrics = {
+    analysis.analysisMetrics = {
       processingTimeMs: Date.now() - startTime,
       elementCount,
       relationshipCount: totalRelationships,

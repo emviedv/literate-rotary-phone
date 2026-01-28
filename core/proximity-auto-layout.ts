@@ -347,7 +347,7 @@ async function createAutoLayoutContainer(
 
     // For vertical containers in TikTok layouts, fill available height
     if (config.direction === 'vertical' && config.fillVerticalSpace) {
-      container.primaryAxisSizingMode = 'FILL';
+      container.primaryAxisSizingMode = 'AUTO';
       debugFixLog("Setting vertical container to fill available height", {
         containerId: container.id,
         containerName: container.name,

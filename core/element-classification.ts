@@ -120,9 +120,9 @@ export function isAtomicGroup(node: SceneNode): boolean {
     // Additional check: if container has no visual properties itself (pure layout container)
     // and contains elements that could be proximity-grouped
     const hasOwnFills = "fills" in node && Array.isArray(node.fills) &&
-      node.fills.length > 0 && node.fills.some((f: any) => f.visible !== false);
+      node.fills.length > 0 && node.fills.some((f: Paint) => f.visible !== false);
     const hasOwnStrokes = "strokes" in node && Array.isArray(node.strokes) &&
-      node.strokes.length > 0 && node.strokes.some((s: any) => s.visible !== false);
+      node.strokes.length > 0 && node.strokes.some((s: Paint) => s.visible !== false);
 
     // If it's a pure layout container (no own visual properties), treat as atomic
     if (!hasOwnFills && !hasOwnStrokes) {

@@ -5,7 +5,7 @@ import { trackEvent } from "./telemetry.js";
 import { debugFixLog, setLogHandler, isDebugFixEnabled } from "./debug.js";
 import { ensureAiKeyLoaded, getCachedAiApiKey, persistApiKey } from "./ai-state.js";
 import { createSelectionState, getSelectionFrame } from "./selection.js";
-import { PLUGIN_NAME } from "./plugin-constants.js";
+
 import { executeDesignFlow, validateSourceFrame } from "./design-orchestration.js";
 import type { DesignStatus } from "../types/design-types.js";
 
@@ -47,7 +47,7 @@ figma.ui.onmessage = async (rawMessage: ToCoreMessage) => {
       await handleDesignForTikTok();
       break;
     default:
-      console.warn("Unhandled message", rawMessage);
+      debugFixLog("Unhandled message", { message: rawMessage });
   }
 };
 
@@ -205,7 +205,7 @@ async function handleDesignForTikTok(): Promise<void> {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unexpected error during design generation.";
-    console.error(`${PLUGIN_NAME} Design for TikTok failed`, error);
+    debugFixLog("Design for TikTok failed", { error: String(error) });
     postToUI({ type: "design-error", payload: { message } });
     trackEvent("DESIGN_FOR_TIKTOK_FAILED", {
       frameId: frame.id,

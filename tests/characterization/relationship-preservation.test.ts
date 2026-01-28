@@ -8,11 +8,14 @@
 
 import type {
   RelationshipAnalysis,
-  RelationshipConstraints,
   SpatialRelationship,
   AnchorPattern,
   FlowPattern
 } from "../../types/design-relationships.js";
+import { analyzeSpatialRelationships } from "../../core/relationship-spatial-analyzer.js";
+import { analyzeVisualRelationships } from "../../core/relationship-visual-analyzer.js";
+import { analyzeCompositionalRelationships } from "../../core/relationship-compositional-analyzer.js";
+import { generateRelationshipConstraints } from "../../core/relationship-constraint-generator.js";
 
 // ============================================================================
 // Test Utilities
@@ -34,12 +37,6 @@ function testCase(name: string, fn: () => void | Promise<void>): void {
   } catch (error) {
     console.error(`❌ CHARACTERIZATION: ${name}`);
     throw error;
-  }
-}
-
-function assertApproxEqual(actual: number, expected: number, tolerance: number, message: string): void {
-  if (Math.abs(actual - expected) > tolerance) {
-    throw new Error(`${message}\nExpected: ${expected} (±${tolerance})\nReceived: ${actual}`);
   }
 }
 
@@ -120,7 +117,7 @@ function createReferenceIPhoneDiagonalFrame(): FrameNode {
         absoluteBoundingBox: { x: 1000, y: 50, width: 120, height: 60 }
       }
     ]
-  } as FrameNode;
+  } as unknown as FrameNode;
 }
 
 /**
@@ -166,7 +163,7 @@ function createReferenceHorizontalFlowFrame(): FrameNode {
         absoluteBoundingBox: { x: 720, y: 320, width: 140, height: 45 }
       }
     ]
-  } as FrameNode;
+  } as unknown as FrameNode;
 }
 
 /**
@@ -213,7 +210,7 @@ function createReferenceSymmetricFrame(): FrameNode {
         absoluteBoundingBox: { x: 350, y: 500, width: 100, height: 40 }
       }
     ]
-  } as FrameNode;
+  } as unknown as FrameNode;
 }
 
 // ============================================================================
@@ -221,7 +218,6 @@ function createReferenceSymmetricFrame(): FrameNode {
 // ============================================================================
 
 testCase("iPhone diagonal composition creates predictable anchor pattern", () => {
-  const { analyzeSpatialRelationships } = require("../../core/relationship-spatial-analyzer.js");
 
   const frame = createReferenceIPhoneDiagonalFrame();
   const relationships = analyzeSpatialRelationships(frame);
@@ -253,7 +249,6 @@ testCase("iPhone diagonal composition creates predictable anchor pattern", () =>
 });
 
 testCase("Horizontal flow layout creates predictable flow vectors", () => {
-  const { analyzeSpatialRelationships } = require("../../core/relationship-spatial-analyzer.js");
 
   const frame = createReferenceHorizontalFlowFrame();
   const relationships = analyzeSpatialRelationships(frame);
@@ -298,7 +293,6 @@ testCase("Horizontal flow layout creates predictable flow vectors", () => {
 // ============================================================================
 
 testCase("Symmetric layout produces consistent visual weight analysis", () => {
-  const { analyzeVisualRelationships } = require("../../core/relationship-visual-analyzer.js");
 
   const frame = createReferenceSymmetricFrame();
   const relationships = analyzeVisualRelationships(frame);
@@ -343,7 +337,6 @@ testCase("Symmetric layout produces consistent visual weight analysis", () => {
 // ============================================================================
 
 testCase("Symmetric frame produces balanced compositional analysis", () => {
-  const { analyzeCompositionalRelationships } = require("../../core/relationship-compositional-analyzer.js");
 
   const frame = createReferenceSymmetricFrame();
   const relationships = analyzeCompositionalRelationships(frame);
@@ -384,7 +377,6 @@ testCase("Symmetric frame produces balanced compositional analysis", () => {
 // ============================================================================
 
 testCase("Complex frame generates proportional constraint count", () => {
-  const { generateRelationshipConstraints } = require("../../core/relationship-constraint-generator.js");
 
   // Create mock analysis with multiple relationship types
   const mockAnalysis: RelationshipAnalysis = {

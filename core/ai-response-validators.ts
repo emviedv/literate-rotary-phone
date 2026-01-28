@@ -20,6 +20,7 @@ import type {
   DesignEvaluation
 } from "../types/design-types.js";
 import { USE_STRUCTURED_OUTPUTS } from "./design-schemas.js";
+import { debugFixLog } from "./debug.js";
 
 // ============================================================================
 // Types for Node Tree Validation
@@ -329,29 +330,24 @@ export function parseStage1Response(
     // Validate visual inventory
     const visualInventoryWarnings = validateVisualInventory(parsed.visualInventory);
     if (visualInventoryWarnings.length > 0) {
-      console.warn(
-        "[Design AI] WARNING: Visual inventory issues:",
-        visualInventoryWarnings
-      );
+      debugFixLog("AI visual inventory issues", { warnings: visualInventoryWarnings });
       warnings.push(...visualInventoryWarnings);
     } else {
       // Log info about prices (not a warning - not all designs have prices)
       const vi = parsed.visualInventory;
       if (!Array.isArray(vi?.prices) || vi.prices.length === 0) {
-        console.log("[Design AI] No prices identified in visual inventory");
+        debugFixLog("AI no prices in visual inventory", {});
       }
     }
 
     // Validate neverHide list
     if (!Array.isArray(parsed.neverHide) || parsed.neverHide.length === 0) {
-      console.warn(
-        "[Design AI] WARNING: No 'neverHide' elements identified - critical elements may be hidden"
-      );
+      debugFixLog("AI neverHide list empty", { warning: "critical elements may be hidden" });
       warnings.push(
         "No 'neverHide' list provided - logos, prices, and CTAs may be incorrectly hidden"
       );
     } else {
-      console.log(`[Design AI] Protected elements (neverHide): ${parsed.neverHide.join(", ")}`);
+      debugFixLog("AI protected elements", { neverHide: parsed.neverHide });
     }
 
     // Cross-check: elements.hide should not contain anything from neverHide
@@ -362,19 +358,16 @@ export function parseStage1Response(
       );
 
       if (violations.length > 0) {
-        console.warn(
-          "[Design AI] CONFLICT: 'hide' list contains protected elements:",
-          violations
-        );
+        debugFixLog("AI hide list conflict", { violations });
         warnings.push(`Protected elements incorrectly in hide list: ${violations.join(", ")}`);
-        console.log("[Design AI] Auto-removed protected elements from hide list");
+        debugFixLog("AI auto-removed protected from hide list", {});
       }
     }
 
     // Validate design analysis
     const analysisWarnings = validateDesignAnalysis(parsed.designAnalysis);
     if (analysisWarnings.length > 0) {
-      console.warn("[Design AI] WARNING: Design analysis issues:", analysisWarnings);
+      debugFixLog("AI design analysis issues", { warnings: analysisWarnings });
       warnings.push(...analysisWarnings);
     }
 
@@ -389,10 +382,7 @@ export function parseStage1Response(
           );
 
           if (hiddenContainersWithChildren.length > 0) {
-            console.warn(
-              "[Design AI] WARNING: AI wants to hide containers with children:",
-              hiddenContainersWithChildren
-            );
+            debugFixLog("AI wants to hide containers with children", { containers: hiddenContainersWithChildren });
             warnings.push(
               `Hiding containers with children may hide important content: ${hiddenContainersWithChildren.join(", ")}`
             );
@@ -402,15 +392,12 @@ export function parseStage1Response(
               (name: string) => !hiddenContainersWithChildren.includes(name)
             );
 
-            console.log(
-              "[Design AI] Removed dangerous containers from hide list. Remaining:",
-              parsed.elements.hide
-            );
+            debugFixLog("AI removed dangerous containers from hide list", { remaining: parsed.elements.hide });
           }
         }
       } catch (parseError) {
         // Don't fail the whole operation if validation fails, just log
-        console.warn("[Design AI] Could not validate container visibility:", parseError);
+        debugFixLog("AI could not validate container visibility", { error: String(parseError) });
       }
     }
 
@@ -495,10 +482,7 @@ export function parseStage2Response(
           );
 
           if (hiddenContainersWithChildren.length > 0) {
-            console.warn(
-              "[Design AI] Stage 2 hiding containers with children:",
-              hiddenContainersWithChildren.map((s: NodeSpecForValidation) => s.nodeName)
-            );
+            debugFixLog("AI Stage 2 hiding containers with children", { containers: hiddenContainersWithChildren.map((s: NodeSpecForValidation) => s.nodeName) });
 
             warnings.push(
               `Stage 2 tried to hide containers: ${hiddenContainersWithChildren
@@ -516,20 +500,14 @@ export function parseStage2Response(
               }
             }
 
-            console.log(
-              "[Design AI] Forced dangerous containers to visible. Fixed:",
-              hiddenContainersWithChildren.map((s: NodeSpecForValidation) => s.nodeName)
-            );
+            debugFixLog("AI forced dangerous containers to visible", { fixed: hiddenContainersWithChildren.map((s: NodeSpecForValidation) => s.nodeName) });
           }
 
           // Filter out specs for children of INSTANCE nodes
           const { filtered, removed } = filterInstanceChildren(parsed.nodes, nodeTree);
 
           if (removed.length > 0) {
-            console.warn(
-              `[Design AI] Filtering ${removed.length} specs for INSTANCE children:`,
-              removed
-            );
+            debugFixLog("AI filtering INSTANCE children specs", { count: removed.length, removed });
             warnings.push(
               `Filtered ${removed.length} specs for component instance children: ${removed.slice(0, 5).join(", ")}${removed.length > 5 ? "..." : ""}`
             );
@@ -555,10 +533,7 @@ export function parseStage2Response(
             );
 
             if (violatingSpecs.length > 0) {
-              console.warn(
-                "[Design AI] Stage 2 trying to hide protected elements from neverHide list:",
-                violatingSpecs.map((s: NodeSpecForValidation) => s.nodeName)
-              );
+              debugFixLog("AI Stage 2 trying to hide protected elements", { elements: violatingSpecs.map((s: NodeSpecForValidation) => s.nodeName) });
 
               warnings.push(
                 `Stage 2 tried to hide protected elements: ${violatingSpecs.map((s: NodeSpecForValidation) => s.nodeName).join(", ")}`
@@ -574,18 +549,15 @@ export function parseStage2Response(
                 }
               }
 
-              console.log(
-                "[Design AI] Enforced neverHide protection, forced visible:",
-                violatingSpecs.map((s: NodeSpecForValidation) => s.nodeName)
-              );
+              debugFixLog("AI enforced neverHide protection", { forcedVisible: violatingSpecs.map((s: NodeSpecForValidation) => s.nodeName) });
             }
           } else {
-            console.warn("[Design AI] No neverHide list in plan - cannot enforce element protection");
+            debugFixLog("AI no neverHide list in plan", { warning: "cannot enforce element protection" });
           }
         }
       } catch (parseError) {
         // Don't fail the whole operation if validation fails, just log
-        console.warn("[Design AI] Could not validate Stage 2 container visibility:", parseError);
+        debugFixLog("AI could not validate Stage 2 container visibility", { error: String(parseError) });
       }
     }
 

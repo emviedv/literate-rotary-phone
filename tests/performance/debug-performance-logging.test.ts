@@ -38,10 +38,7 @@ import {
 testCase("Debug Performance Logging - Performance Log Interface", () => {
   // Test that the function can be called without errors
   try {
-    debugPerformanceLog("test-operation", 1500, {
-      testMetadata: "value",
-      iterations: 10
-    });
+    debugPerformanceLog("test-operation", { durationMs: 1500, testMetadata: "value", iterations: 10 });
 
     assertEqual(true, true, "debugPerformanceLog should execute without errors");
   } catch (error) {
@@ -114,9 +111,9 @@ testCase("Debug Performance Logging - Performance Report Interface", () => {
 testCase("Debug Performance Logging - Data Types", () => {
   try {
     // Test different duration values
-    debugPerformanceLog("small-op", 50);
-    debugPerformanceLog("large-op", 3600000);
-    debugPerformanceLog("zero-op", 0);
+    debugPerformanceLog("small-op", { durationMs: 50 });
+    debugPerformanceLog("large-op", { durationMs: 3600000 });
+    debugPerformanceLog("zero-op", { durationMs: 0 });
 
     // Test different context types
     debugTimingLog("context-test", 1000, {

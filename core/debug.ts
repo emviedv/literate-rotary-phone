@@ -36,6 +36,7 @@ function traceDebugFlag(reason: string, context: DebugContext): void {
   if (!isDebugTraceEnabled()) {
     return;
   }
+  // eslint-disable-next-line no-console
   console.info("[ScaleResizer][debug-flag]", { reason, ...context });
 }
 
@@ -43,6 +44,7 @@ function traceDebugLog(reason: string, context: DebugContext): void {
   if (!isDebugTraceEnabled()) {
     return;
   }
+  // eslint-disable-next-line no-console
   console.info("[ScaleResizer][debug-log]", { reason, ...context });
 }
 
@@ -118,6 +120,7 @@ function log(prefix: string, message: string, context?: DebugContext): void {
 
   const logMessage = `${prefix} ${message}`;
   if (context) {
+    // eslint-disable-next-line no-console
     console.log(logMessage, context);
     if (logHandler) {
       logHandler(`${logMessage}\n${JSON.stringify(context, null, 2)}`);
@@ -125,6 +128,7 @@ function log(prefix: string, message: string, context?: DebugContext): void {
     return;
   }
 
+  // eslint-disable-next-line no-console
   console.log(logMessage);
   if (logHandler) {
     logHandler(logMessage);
@@ -141,4 +145,16 @@ export function debugAutoLayoutLog(message: string, context?: DebugContext): voi
 
 export function debugPerformanceLog(message: string, context?: DebugContext): void {
   log("[ScaleResizer][performance]", message, context);
+}
+
+export function debugTimingLog(operation: string, durationMs: number, context?: DebugContext): void {
+  log("[ScaleResizer][timing]", operation, { durationMs, ...context });
+}
+
+export function debugBottleneckLog(bottlenecks: Array<{ operation: string; durationMs: number; severity: string }>): void {
+  log("[ScaleResizer][bottleneck]", `Found ${bottlenecks.length} bottlenecks`, { bottlenecks });
+}
+
+export function debugPerformanceReport(report: { totalDurationMs: number; operationCount: number; bottlenecks: Array<{ operation: string; durationMs: number; severity: string }> }): void {
+  log("[ScaleResizer][report]", "Performance report", report);
 }

@@ -382,7 +382,7 @@ function findTensionAreas(
 
   // Check for edge tension
   const edgeTensions = detectEdgeTensions(elements, config);
-  tensionAreas.push(...(edgeTensions as any));
+  tensionAreas.push(...(edgeTensions as typeof tensionAreas));
 
   // Sort by intensity and remove overlaps
   return deduplicateTensionAreas(
@@ -505,13 +505,7 @@ function detectEdgeTensions(
 function deduplicateTensionAreas(
   tensionAreas: TensionPoints['tensionAreas']
 ): TensionPoints['tensionAreas'] {
-  const deduplicated: {
-    center: NormalizedPoint;
-    radius: number;
-    tensionType: 'conflict' | 'energy' | 'focus' | 'stress';
-    involvedElements: string[];
-    intensity: number;
-  }[] = [];
+  const deduplicated: { readonly center: NormalizedPoint; readonly radius: number; readonly tensionType: 'conflict' | 'energy' | 'focus' | 'stress'; readonly involvedElements: readonly string[]; readonly intensity: number; }[] = [];
 
   for (const area of tensionAreas) {
     let isOverlapping = false;
@@ -527,7 +521,7 @@ function deduplicateTensionAreas(
     }
 
     if (!isOverlapping) {
-      deduplicated.push(area as any);
+      deduplicated.push(area);
     }
   }
 

@@ -553,8 +553,10 @@ testCase("TikTok safe areas: bottom 8%, top 4%", () => {
   const bottomDangerY = height * (1 - BOTTOM_DANGER_ZONE); // Content should be above this
   const topCautionY = height * TOP_CAUTION_ZONE; // Content should be below this
 
-  assertEqual(bottomDangerY, 1766, "Bottom danger zone starts at 1766px");
-  assertEqual(topCautionY, 77, "Top caution zone ends at 77px");
+  // Note: These are exact float values from the multiplication
+  // 1920 * 0.92 = 1766.4, 1920 * 0.04 = 76.8
+  assertEqual(bottomDangerY, 1766.4, "Bottom danger zone starts at ~1766px");
+  assertEqual(topCautionY, 76.8, "Top caution zone ends at ~77px");
 });
 
 // ============================================================================

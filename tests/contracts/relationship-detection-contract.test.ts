@@ -8,12 +8,11 @@
 import type {
   RelationshipAnalysis,
   RelationshipConstraints,
-  RelationshipDetectionConfig,
   RelationshipDetectionResult,
-  SpatialRelationship,
-  VisualRelationship,
-  CompositionalRelationship
+  SpatialRelationship
 } from "../../types/design-relationships.js";
+import { generateRelationshipConstraints } from "../../core/relationship-constraint-generator.js";
+import { validateRelationshipPreservation } from "../../core/relationship-validator.js";
 
 // ============================================================================
 // Test Utilities
@@ -51,18 +50,6 @@ function assertType(value: unknown, expectedType: string, message: string): void
   }
 }
 
-function assertArrayType<T>(array: unknown, itemTypeCheck: (item: T) => boolean, message: string): void {
-  if (!Array.isArray(array)) {
-    throw new Error(`Contract violation: ${message} - Expected array`);
-  }
-
-  for (const item of array) {
-    if (!itemTypeCheck(item)) {
-      throw new Error(`Contract violation: ${message} - Invalid array item type`);
-    }
-  }
-}
-
 // ============================================================================
 // Mock Frame Factory
 // ============================================================================
@@ -95,7 +82,7 @@ function createValidMockFrame(id: string = "contract-test-frame"): FrameNode {
         absoluteBoundingBox: { x: 300, y: 200, width: 200, height: 50 }
       }
     ]
-  } as FrameNode;
+  } as unknown as FrameNode;
 }
 
 // ============================================================================
@@ -160,7 +147,7 @@ testCase("RelationshipConstraints interface contract", () => {
     }],
     adaptationGuidance: {
       primaryStrategy: 'preserve',
-      fallbackStrategy: 'adaptive',
+      fallbackStrategy: 'graceful',
       criticalConstraintCount: 1
     }
   };
@@ -211,7 +198,7 @@ testCase("RelationshipDetectionResult interface contract", () => {
       constraints: [],
       constraintGroups: [],
       adaptationGuidance: {
-        primaryStrategy: 'adaptive',
+        primaryStrategy: 'adapt',
         fallbackStrategy: 'simplified',
         criticalConstraintCount: 0
       }
@@ -307,7 +294,6 @@ testCase("Detection function always returns valid result structure", async () =>
 });
 
 testCase("Constraint generation preserves input frame ID", () => {
-  const { generateRelationshipConstraints } = require("../../core/relationship-constraint-generator.js");
 
   const mockAnalysis: RelationshipAnalysis = {
     frameId: "specific-frame-id-12345",
@@ -334,17 +320,17 @@ testCase("Constraint generation preserves input frame ID", () => {
 });
 
 testCase("Validation function handles empty constraints gracefully", () => {
-  const { validateRelationshipPreservation } = require("../../core/relationship-validator.js");
 
   const emptySpecs = {
     plan: {
       designStrategy: "test",
-      layoutZones: { hook: { top: 0, bottom: 100 }, main: { top: 0, bottom: 100 }, safe: { top: 0, bottom: 100 } },
+      reasoning: "Test reasoning",
+      layoutZones: { hero: { top: 0, bottom: 50 }, content: { top: 50, bottom: 100 } },
       designAnalysis: {
         visualFocal: "", compositionalFlow: "", layoutLogic: "", typographyHierarchy: "",
         imageRoles: "", colorHarmony: "", designIntent: "", criticalRelationships: [], completeThoughts: []
       },
-      adaptationNotes: ""
+      elements: { keep: [], hide: [], emphasize: [] }
     },
     nodes: [],
     confidence: 0.5,
@@ -406,13 +392,13 @@ testCase("Memory management prevents infinite element analysis", async () => {
 
   // Create frame with many children to test complexity limits
   const complexFrame = createValidMockFrame();
-  complexFrame.children = Array(200).fill(null).map((_, i) => ({
+  (complexFrame as unknown as { children: SceneNode[] }).children = Array(200).fill(null).map((_, i) => ({
     id: `child-${i}`,
     name: `Child ${i}`,
     type: "RECTANGLE",
     visible: true,
     absoluteBoundingBox: { x: i * 10, y: i * 10, width: 50, height: 50 }
-  })) as SceneNode[];
+  })) as unknown as SceneNode[];
 
   const result = await detectRelationshipsOptimized(complexFrame, {
     maxElementCount: 100 // Limit complexity

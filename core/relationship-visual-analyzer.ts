@@ -15,7 +15,7 @@ import type {
   LayeringHierarchy,
   VisualWeightDistribution,
   // ContrastRelationship, // For future contrast analysis
-  // ScaleRelationship, // For future scale analysis
+  ScaleRelationship,
   ElementVisualProperties,
   NormalizedPoint
   // NormalizedBounds // For future bounds analysis
@@ -178,7 +178,8 @@ function hexToHsl(hex: string): { h: number; s: number; l: number } {
 
   const max = Math.max(r, g, b);
   const min = Math.min(r, g, b);
-  let h, s, l = (max + min) / 2;
+  let h: number, s: number;
+  const l = (max + min) / 2;
 
   if (max === min) {
     h = s = 0; // achromatic
@@ -356,7 +357,7 @@ function analyzeVisualWeight(
     weightMap.push({
       elementId: element.elementId,
       weight,
-      weightFactors: weightFactors as any
+      weightFactors: weightFactors as ('size' | 'contrast' | 'color' | 'position')[]
     });
 
     totalWeight += weight;
@@ -487,7 +488,7 @@ function calculateWeightConfidence(
 function detectScaleRelationships(
   elements: ElementVisualProperties[],
   config: VisualAnalysisConfig = DEFAULT_VISUAL_CONFIG
-): any | null { // ScaleRelationship | null {
+): ScaleRelationship | null {
   if (elements.length < 3) return null;
 
   const scaleGroups = groupElementsByScale(elements, config);
@@ -513,8 +514,8 @@ function detectScaleRelationships(
 function groupElementsByScale(
   elements: ElementVisualProperties[],
   config: VisualAnalysisConfig
-): any[] { // ScaleRelationship['scaleGroups'] {
-  const groups: any[] = []; // ScaleRelationship['scaleGroups'] = [];
+): ScaleRelationship['scaleGroups'] {
+  const groups: { elementIds: string[]; scaleRatio: number; scaleType: 'golden' | 'fibonacci' | 'modular' | 'proportional' }[] = [];
   const threshold = config.scaleSimilarityThreshold;
 
   for (const element of elements) {
@@ -528,11 +529,11 @@ function groupElementsByScale(
       const relativeDifference = sizeDifference / Math.max(element.area, representativeElement.area);
 
       if (relativeDifference <= threshold) {
-        group.elementIds.push(element.elementId);
+        (group.elementIds as string[]).push(element.elementId);
         // Recalculate scale ratio
         const groupElements = group.elementIds.map((id: string) => elements.find((e: ElementVisualProperties) => e.elementId === id)!);
         const areas = groupElements.map((e: ElementVisualProperties) => e.area);
-        group.scaleRatio = Math.max(...areas) / Math.min(...areas);
+        (group as { scaleRatio: number }).scaleRatio = Math.max(...areas) / Math.min(...areas);
         foundGroup = true;
         break;
       }
@@ -559,7 +560,7 @@ function groupElementsByScale(
 /**
  * Classifies the type of scale relationship
  */
-function classifyScaleType(ratio: number): any { // ScaleRelationship['scaleGroups'][0]['scaleType'] {
+function classifyScaleType(ratio: number): ScaleRelationship['scaleGroups'][0]['scaleType'] {
   if (Math.abs(ratio - 1.618) < 0.1) return 'golden';
   if (Math.abs(ratio - 1.5) < 0.1 || Math.abs(ratio - 2.0) < 0.1) return 'proportional';
   if (ratio > 2.0) return 'modular';
@@ -570,7 +571,7 @@ function classifyScaleType(ratio: number): any { // ScaleRelationship['scaleGrou
  * Calculates confidence for scale relationships
  */
 function calculateScaleConfidence(
-  scaleGroups: any[], // ScaleRelationship['scaleGroups'],
+  scaleGroups: ScaleRelationship['scaleGroups'],
   totalElements: number
 ): number {
   const groupCoverage = scaleGroups.reduce((sum, group) => sum + group.elementIds.length, 0) / totalElements;

@@ -21,7 +21,8 @@ import type {
   LayeringHierarchy,
   VisualWeightDistribution,
   BalanceAnalysis,
-  TensionPoints
+  TensionPoints,
+  ProximityCluster
 } from "../types/design-relationships.js";
 
 // ============================================================================
@@ -346,7 +347,7 @@ function generateAlignmentPreservationRule(
  * Generates constraints for proximity clusters (placeholder for existing system integration)
  */
 function generateProximityConstraints(
-  cluster: any, // ProximityCluster from existing system
+  cluster: ProximityCluster,
   config: ConstraintGenerationConfig
 ): RelationshipConstraint[] {
   // This would integrate with the existing proximity system
@@ -618,7 +619,7 @@ function generateBreathingConstraints(
   if (breathing.type !== 'breathing') return [];
 
   const priority = determinePriority(breathing.confidence, config);
-  const importantSpaces = breathing.spaceDistribution.filter((space: any) => space.importance > 0.5);
+  const importantSpaces = breathing.spaceDistribution.filter((space: { importance: number }) => space.importance > 0.5);
 
   const constraint: RelationshipConstraint = {
     id: `breathing-room`,
