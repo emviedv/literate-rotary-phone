@@ -325,7 +325,7 @@ export const UI_SCRIPT_PART1 = /* js */ `
       }
 
       function updateDebugControls() {
-        copySelectionButton.disabled = isBusy || !selectionReady || !latestSelectionState;
+        copySelectionButton.disabled = isBusy || !latestSelectionState;
       }
 
       function updateDesignTikTokButton() {

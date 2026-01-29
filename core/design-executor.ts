@@ -534,9 +534,19 @@ export async function applyEvaluationAdjustments(
 // ============================================================================
 
 /**
- * Loads all fonts used in the frame.
+ * Font loading batch size - balances parallelism with API rate limits
+ */
+const FONT_LOAD_BATCH_SIZE = 4;
+
+/**
+ * Loads all fonts used in the frame with parallel batch processing.
+ * Collects all font requirements first, then loads in parallel batches.
  */
 async function loadFontsForFrame(frame: FrameNode, cache: Set<string>): Promise<void> {
+  // Collect all unique fonts needed first (synchronous traversal)
+  const fontsToLoad: FontName[] = [];
+  const seenFonts = new Set<string>();
+  
   const queue: SceneNode[] = [...frame.children];
 
   while (queue.length > 0) {
@@ -545,24 +555,46 @@ async function loadFontsForFrame(frame: FrameNode, cache: Set<string>): Promise<
     if (node.type === "TEXT") {
       const textNode = node as TextNode;
       try {
-        const fonts = await textNode.getRangeAllFontNames(0, textNode.characters.length);
+        // Use getRangeAllFontNames without await during collection phase
+        const fonts = textNode.getRangeAllFontNames(0, textNode.characters.length);
         for (const font of fonts) {
           const key = `${font.family}__${font.style}`;
-          if (!cache.has(key)) {
-            await figma.loadFontAsync(font);
-            cache.add(key);
+          // Check both caches to avoid duplicates within this frame
+          if (!cache.has(key) && !seenFonts.has(key)) {
+            seenFonts.add(key);
+            fontsToLoad.push(font);
           }
         }
       } catch (error) {
-        debugFixLog("Failed to load font for text node", {
-          nodeId: node.id,
-          error: error instanceof Error ? error.message : String(error)
-        });
+        // Silently skip fonts we can't read - will be handled when applying specs
       }
     }
 
     if ("children" in node) {
       queue.push(...node.children);
+    }
+  }
+
+  // Load fonts in parallel batches for optimal throughput
+  for (let i = 0; i < fontsToLoad.length; i += FONT_LOAD_BATCH_SIZE) {
+    const batch = fontsToLoad.slice(i, i + FONT_LOAD_BATCH_SIZE);
+    const batchResults = await Promise.allSettled(
+      batch.map(async (font) => {
+        await figma.loadFontAsync(font);
+        cache.add(`${font.family}__${font.style}`);
+        return font;
+      })
+    );
+
+    // Log any failures after batch completes
+    for (let j = 0; j < batchResults.length; j++) {
+      const result = batchResults[j];
+      if (result.status === "rejected") {
+        debugFixLog("Failed to load font", {
+          font: `${batch[j].family} ${batch[j].style}`,
+          error: String(result.reason)
+        });
+      }
     }
   }
 }

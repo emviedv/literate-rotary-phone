@@ -114,8 +114,8 @@ export const UI_SCRIPT_PART3 = /* js */ `
       }
 
       async function copySelectionJson() {
-        if (!selectionReady || !latestSelectionState) {
-          statusMessage.textContent = "Select a frame to copy debug JSON.";
+        if (!latestSelectionState) {
+          statusMessage.textContent = "No selection state to copy yet.";
           return;
         }
         const payload = buildSelectionDebugPayload();

@@ -182,7 +182,7 @@ async function requestStage1AnalysisWithRelationships(
           type: "image_url",
           image_url: {
             url: `data:image/png;base64,${imageBase64}`,
-            detail: "high"
+            detail: "low"
           }
         },
         {
@@ -301,7 +301,7 @@ export async function requestStage3EvaluationWithRelationships(
           type: "image_url",
           image_url: {
             url: `data:image/png;base64,${generatedImageBase64}`,
-            detail: "high"
+            detail: "low"
           }
         },
         {

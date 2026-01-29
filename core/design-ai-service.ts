@@ -206,7 +206,7 @@ function systemMessage(content: string): ChatMessage {
 function userMessageWithImage(
   imageBase64: string,
   textContent: string,
-  detail: "low" | "high" | "auto" = "high"
+  detail: "low" | "high" | "auto" = "low"
 ): ChatMessage {
   return {
     role: "user",

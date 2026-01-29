@@ -68,11 +68,7 @@ async function postInitialState(): Promise<void> {
   const selectionState = createSelectionState(selectionFrame);
 
   const payload = {
-    selectionOk: selectionState.selectionOk,
-    selectionName: selectionState.selectionName,
-    error: selectionState.error,
-    aiSignals: selectionState.aiSignals,
-    layoutAdvice: selectionState.layoutAdvice,
+    ...selectionState,
     targets: VARIANT_TARGETS,
     lastRun: undefined, // Generate feature removed
     debugEnabled: isDebugFixEnabled(),
