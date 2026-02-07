@@ -625,11 +625,11 @@ function applyAutoLayoutToFrame(
   frame.paddingBottom = 0;
   frame.paddingLeft = 0;
 
-  // Use HUG sizing so frame adapts to content
-  frame.layoutSizingHorizontal = "HUG";
+  // Use FILL for horizontal to stretch to parent width, HUG for vertical to adapt to content
+  frame.layoutSizingHorizontal = "FILL";
   frame.layoutSizingVertical = "HUG";
 
-  console.log("[spec-applicator] Auto-layout applied to:", frame.name);
+  console.log("[spec-applicator] Auto-layout applied to:", frame.name, "(width: FILL, height: HUG)");
 }
 
 /**
