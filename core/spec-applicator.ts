@@ -594,6 +594,10 @@ function convertToAutoLayout(
         applyAutoLayoutToFrame(frame, layoutDirection);
       } else {
         console.log("[spec-applicator] Frame already has auto-layout:", frame.name, frame.layoutMode);
+        // IMPORTANT: Still ensure FILL width even for existing auto-layout frames
+        console.log("[spec-applicator]   Current sizing - H:", frame.layoutSizingHorizontal, "V:", frame.layoutSizingVertical);
+        frame.layoutSizingHorizontal = "FILL";
+        console.log("[spec-applicator]   >>> Set layoutSizingHorizontal to FILL");
       }
 
       // Recurse into child frames - pass idChanges to track nested conversions
