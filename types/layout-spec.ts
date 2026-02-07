@@ -6,6 +6,45 @@
  */
 
 /**
+ * Semantic roles the AI can assign to groups of related elements.
+ * This allows the AI to identify visual relationships and keep related
+ * elements together during TikTok layout transformation.
+ */
+export type SemanticRole =
+  | "hero"        // Main headline/tagline
+  | "product"     // Product mockup, screenshot, main image
+  | "features"    // Feature list, benefits, bullet points
+  | "cta"         // Call-to-action, website URL, button
+  | "brand"       // Logo, brand mark
+  | "metadata"    // Author, date, read time, secondary info
+  | "decorative"; // Background elements, accents
+
+/**
+ * A group of semantically related elements.
+ * The AI identifies these groups visually and assigns roles
+ * to enable intelligent reordering while keeping related elements together.
+ */
+export interface SemanticGroup {
+  /** Unique identifier (e.g., "group-1") */
+  groupId: string;
+
+  /** What this group represents semantically */
+  role: SemanticRole;
+
+  /** Figma node IDs belonging to this group */
+  nodeIds: string[];
+
+  /** Group's position in layout (lower = higher/first) */
+  order: number;
+
+  /** Whether entire group is visible in TikTok variant */
+  visible: boolean;
+
+  /** How children within this group should stack (optional override) */
+  layoutDirection?: "VERTICAL" | "HORIZONTAL";
+}
+
+/**
  * Sizing mode for elements within auto-layout
  * - FILL: Element expands to fill available space
  * - HUG: Element shrinks to fit its content
@@ -43,6 +82,16 @@ export interface NodeSpec {
    * Applied after sizing mode, useful for hero images or prominent text.
    */
   scaleFactor?: number;
+
+  /**
+   * Layout direction for container nodes (FRAME or GROUP).
+   * - "VERTICAL": Convert to vertical auto-layout (default)
+   * - "HORIZONTAL": Convert to horizontal auto-layout
+   * - "NONE": Keep as absolute positioning (for decorative overlays, badges)
+   *
+   * Only applies to nodes with children. Omit to use default (VERTICAL).
+   */
+  layoutDirection?: "VERTICAL" | "HORIZONTAL" | "NONE";
 }
 
 /**
@@ -74,7 +123,14 @@ export interface RootLayout {
  * Complete layout specification returned by the AI
  */
 export interface LayoutSpec {
-  /** Specifications for each node */
+  /**
+   * Semantic groups that determine element ordering.
+   * Groups keep related elements together (e.g., headline + subhead).
+   * Optional for backward compatibility - if empty/missing, falls back to nodes-only.
+   */
+  semanticGroups?: SemanticGroup[];
+
+  /** Specifications for each node (sizing, scale, individual overrides) */
   nodes: NodeSpec[];
 
   /** Root frame layout configuration */
@@ -94,4 +150,19 @@ export interface NodeTreeItem {
   width: number;
   height: number;
   children?: NodeTreeItem[];
+
+  /**
+   * Layout mode for FRAME nodes.
+   * - "NONE": Absolute positioning (no auto-layout)
+   * - "HORIZONTAL": Horizontal auto-layout
+   * - "VERTICAL": Vertical auto-layout
+   * - "GRID": Grid layout (treated same as auto-layout for reordering)
+   */
+  layoutMode?: "NONE" | "HORIZONTAL" | "VERTICAL" | "GRID";
+
+  /**
+   * True if this node is a GROUP (which cannot have auto-layout).
+   * Groups are converted to Frames before applying auto-layout.
+   */
+  isGroup?: boolean;
 }

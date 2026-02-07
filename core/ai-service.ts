@@ -122,6 +122,10 @@ export async function generateLayoutSpec(
   const spec = parseLayoutSpec(content);
   console.log("[ai-service] Parsed layout spec successfully");
   console.log("[ai-service] Spec nodes count:", spec.nodes.length);
+  console.log("[ai-service] Semantic groups count:", spec.semanticGroups?.length ?? 0);
+  if (spec.semanticGroups && spec.semanticGroups.length > 0) {
+    console.log("[ai-service] Semantic groups:", spec.semanticGroups.map(g => `${g.role}(${g.nodeIds.length} nodes, order:${g.order}, visible:${g.visible})`).join(", "));
+  }
   console.log("[ai-service] Spec reasoning:", spec.reasoning);
 
   return spec;
@@ -146,9 +150,75 @@ Your task is to analyze the provided marketing frame and output a JSON layout sp
 4. Hide elements that don't work in vertical format (wide banners, horizontal galleries)
 5. Prioritize visual hierarchy: hero first, supporting content second, CTAs in safe areas
 
+## Semantic Grouping
+Analyze the design and group related elements by their semantic purpose. Elements that belong together visually should be in the same group.
+
+**Semantic Roles:**
+- "hero": Main headline, tagline, primary message - place at top in safe zone
+- "product": Device mockups, screenshots, main product imagery
+- "features": Feature lists, benefits, bullet points with icons
+- "cta": Call-to-action text, website URLs, buttons - position carefully (avoid bottom danger zone)
+- "brand": Logo, brand marks - usually at top or bottom
+- "metadata": Author info, dates, read times, secondary text - often hidden on mobile
+- "decorative": Background shapes, accents, non-essential visuals - usually hidden
+
+**Grouping Rules:**
+1. Elements that belong together visually → same group (headline + subhead = one "hero" group)
+2. An icon and its label → keep in same group (part of "features")
+3. Multiple related buttons → one "cta" group
+4. Order groups for TikTok: hero first (1-10), product/features middle (20-40), cta/brand at bottom (50-70)
+5. Set visible: false for "decorative" and "metadata" groups when they clutter mobile view
+
+## Padding & Spacing Guidelines
+Calculate padding and gap dynamically based on source frame characteristics - DO NOT copy example values verbatim.
+
+**Top Padding**: 160-200px minimum (must clear TikTok status bar at 154px)
+**Bottom Padding**: 40-80px (avoid engagement UI overlap, but don't waste vertical space)
+**Side Padding**: Scale proportionally from source - typically 24-48px for breathing room
+**Gap Between Elements**: Based on source frame's visual density:
+  - Dense content (many small elements): 16-24px for compact feel
+  - Medium density (typical marketing): 24-32px balanced spacing
+  - Sparse/hero-focused (large imagery): 32-48px for dramatic effect
+
+Analyze the source frame's content type:
+- Product showcases need breathing room (larger gaps)
+- Text-heavy layouts need tighter spacing to fit content
+- Hero-driven designs benefit from generous padding
+
 ## Output Format
 Return ONLY valid JSON (no markdown, no explanation) with this exact structure:
 {
+  "semanticGroups": [
+    {
+      "groupId": "group-1",
+      "role": "hero",
+      "nodeIds": ["123:456", "123:457"],
+      "order": 10,
+      "visible": true
+    },
+    {
+      "groupId": "group-2",
+      "role": "product",
+      "nodeIds": ["123:460"],
+      "order": 20,
+      "visible": true
+    },
+    {
+      "groupId": "group-3",
+      "role": "cta",
+      "nodeIds": ["123:470", "123:471"],
+      "order": 50,
+      "visible": true,
+      "layoutDirection": "HORIZONTAL"
+    },
+    {
+      "groupId": "group-4",
+      "role": "decorative",
+      "nodeIds": ["123:480"],
+      "order": 99,
+      "visible": false
+    }
+  ],
   "nodes": [
     {
       "nodeId": "123:456",
@@ -161,13 +231,18 @@ Return ONLY valid JSON (no markdown, no explanation) with this exact structure:
   ],
   "rootLayout": {
     "direction": "VERTICAL",
-    "padding": { "top": 160, "right": 32, "bottom": 40, "left": 32 },
-    "gap": 24,
+    "padding": { "top": 180, "right": 40, "bottom": 60, "left": 40 },
+    "gap": 28,
     "primaryAxisAlign": "MIN",
     "counterAxisAlign": "CENTER"
   },
-  "reasoning": "Brief explanation of layout decisions"
+  "reasoning": "Brief explanation of semantic grouping and layout decisions"
 }
+
+**semanticGroups**: Groups of related elements. Use group order values (10, 20, 30...) for positioning.
+**nodes**: Individual node overrides for sizing/scale. The order field in nodes is now secondary to group ordering.
+
+IMPORTANT: The values above are examples only. Calculate appropriate values based on the source frame.
 
 ## Sizing Modes
 - FILL: Element expands to fill available space (use for full-width images, backgrounds)
@@ -175,17 +250,50 @@ Return ONLY valid JSON (no markdown, no explanation) with this exact structure:
 - FIXED: Element keeps its original size (rarely needed)
 
 ## Order Values
-Lower order numbers appear first (top) in the vertical layout. Use order to prioritize content.`;
+Lower order numbers appear first (top) in the vertical layout. Use order to prioritize content.
+
+## Node Tree Properties
+The node tree includes:
+- layoutMode: For FRAME nodes - "NONE" (absolute), "HORIZONTAL", or "VERTICAL"
+- isGroup: true for GROUP nodes (cannot have auto-layout, will be converted to frames)
+
+## Nested Container Control (layoutDirection)
+By default, all nested containers are converted to VERTICAL auto-layout for proper TikTok stacking.
+Use layoutDirection to override this behavior:
+- "VERTICAL": Convert to vertical auto-layout (default, omit to use)
+- "HORIZONTAL": Convert to horizontal auto-layout (for icon rows, button groups)
+- "NONE": Keep absolute positioning (for decorative overlays, floating badges, complex positioned elements)
+
+Example with layoutDirection:
+{
+  "nodeId": "456:789",
+  "nodeName": "Badge Container",
+  "visible": true,
+  "order": 0,
+  "widthSizing": "HUG",
+  "heightSizing": "HUG",
+  "layoutDirection": "NONE"
+}`;
 
 /**
  * Build the user prompt with node tree and dimensions.
  */
 function buildPrompt(nodeTree: NodeTreeItem, sourceWidth: number, sourceHeight: number): string {
+  // Calculate content density hint based on node count
+  const nodeCount = countNodes(nodeTree);
+  const densityHint = nodeCount > 15 ? "dense" : nodeCount > 8 ? "medium" : "sparse";
+
   return `Transform this marketing frame for TikTok vertical format (1080×1920).
 
 ## Source Frame
 - Dimensions: ${sourceWidth}×${sourceHeight}px
 - Aspect ratio: ${(sourceWidth / sourceHeight).toFixed(2)}
+- Element count: ${nodeCount} nodes (${densityHint} density)
+
+## Spacing Analysis
+Based on source frame characteristics, calculate appropriate padding and gap values:
+- ${densityHint === "dense" ? "Dense content detected - use tighter gaps (16-24px) to fit more elements" : densityHint === "medium" ? "Medium density - balanced gaps (24-32px) work well" : "Sparse/hero layout - generous gaps (32-48px) create drama"}
+- Source is ${sourceWidth > sourceHeight ? "landscape (wide)" : sourceWidth < sourceHeight ? "portrait (tall)" : "square"} - adjust side padding accordingly
 
 ## Node Tree
 ${JSON.stringify(nodeTree, null, 2)}
@@ -195,8 +303,22 @@ Analyze the visual composition and generate a layout specification that:
 2. Keeps critical content in the TikTok safe zone (top 8% to bottom 35% is dangerous)
 3. Uses vertical stacking for optimal mobile viewing
 4. Hides elements that don't translate well to vertical format
+5. Calculates appropriate padding and gap values for this specific content (don't use default values)
 
 Return ONLY the JSON layout specification.`;
+}
+
+/**
+ * Count total nodes in tree recursively.
+ */
+function countNodes(node: NodeTreeItem): number {
+  let count = 1;
+  if (node.children) {
+    for (const child of node.children) {
+      count += countNodes(child);
+    }
+  }
+  return count;
 }
 
 /**
@@ -235,6 +357,16 @@ function parseLayoutSpec(content: string): LayoutSpec {
     if (!parsed.rootLayout) {
       console.error("[ai-service] Invalid spec: missing rootLayout");
       throw new Error("Invalid layout spec: missing rootLayout");
+    }
+
+    // Log semantic groups info (optional field)
+    if (parsed.semanticGroups && Array.isArray(parsed.semanticGroups)) {
+      console.log("[ai-service] semanticGroups found:", parsed.semanticGroups.length);
+      for (const group of parsed.semanticGroups) {
+        console.log(`[ai-service]   Group ${group.groupId}: role=${group.role}, nodes=${group.nodeIds.length}, order=${group.order}, visible=${group.visible}`);
+      }
+    } else {
+      console.log("[ai-service] No semanticGroups in response - will use nodes-only fallback");
     }
 
     console.log("[ai-service] Validation passed - nodes:", parsed.nodes.length);

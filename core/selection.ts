@@ -47,6 +47,19 @@ export function buildNodeTree(node: SceneNode, maxDepth: number = 5): NodeTreeIt
     height: "height" in node ? node.height : 0,
   };
 
+  // Capture layout mode for frames
+  if (node.type === "FRAME") {
+    const frameNode = node as FrameNode;
+    item.layoutMode = frameNode.layoutMode;
+    console.log("[selection] Frame", node.name, "layoutMode:", frameNode.layoutMode);
+  }
+
+  // Mark groups (they cannot have auto-layout and need conversion to frames)
+  if (node.type === "GROUP") {
+    item.isGroup = true;
+    console.log("[selection] Group detected:", node.name);
+  }
+
   // Recurse into children for container types
   if (maxDepth > 0 && "children" in node) {
     const children = node.children as readonly SceneNode[];
@@ -74,4 +87,17 @@ export function flattenNodeTree(tree: NodeTreeItem): NodeTreeItem[] {
 
   console.log("[selection] flattenNodeTree - total nodes:", result.length);
   return result;
+}
+
+/**
+ * Count total nodes in a tree (for AI context hints).
+ */
+export function countNodesInTree(tree: NodeTreeItem): number {
+  let count = 1;
+  if (tree.children) {
+    for (const child of tree.children) {
+      count += countNodesInTree(child);
+    }
+  }
+  return count;
 }
