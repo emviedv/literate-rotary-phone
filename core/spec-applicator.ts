@@ -34,10 +34,20 @@ export async function applyLayoutSpec(
   variant.name = `${sourceFrame.name} - TikTok`;
   console.log("[spec-applicator] Clone created:", variant.name, "id:", variant.id);
 
-  // Position next to the source frame
-  variant.x = sourceFrame.x + sourceFrame.width + 100;
-  variant.y = sourceFrame.y;
-  console.log("[spec-applicator] Positioned at:", variant.x, variant.y);
+  // Get or create the dedicated TikTok outputs page
+  const outputPage = getOrCreateOutputPage();
+
+  // Calculate position BEFORE appending (so it doesn't include this variant)
+  const nextY = getNextYPosition(outputPage);
+
+  // Move variant to output page
+  console.log("[spec-applicator] Moving variant to output page...");
+  outputPage.appendChild(variant);
+
+  // Position on output page (stack vertically)
+  variant.x = 0;
+  variant.y = nextY;
+  console.log("[spec-applicator] Positioned on output page at:", variant.x, variant.y);
 
   // Resize to TikTok dimensions
   console.log("[spec-applicator] Resizing to TikTok dimensions...");
@@ -218,4 +228,55 @@ function sizingModeToFigma(mode: NodeSpec["widthSizing"]): "FILL" | "HUG" | "FIX
       console.log("[spec-applicator] Unknown sizing mode:", mode, "- defaulting to HUG");
       return "HUG";
   }
+}
+
+/**
+ * Get or create the dedicated TikTok outputs page.
+ * This keeps generated variants organized in one place.
+ */
+function getOrCreateOutputPage(): PageNode {
+  const pageName = "TikTok Outputs";
+  console.log("[spec-applicator] Looking for output page:", pageName);
+
+  // Find existing page
+  let page = figma.root.children.find(p => p.name === pageName) as PageNode | undefined;
+
+  // Create if doesn't exist
+  if (!page) {
+    console.log("[spec-applicator] Output page not found, creating new page");
+    page = figma.createPage();
+    page.name = pageName;
+    console.log("[spec-applicator] Created output page:", pageName, "id:", page.id);
+  } else {
+    console.log("[spec-applicator] Found existing output page, id:", page.id);
+  }
+
+  return page;
+}
+
+/**
+ * Calculate the next Y position for stacking variants vertically.
+ * Returns 0 if page is empty, otherwise the bottom of the lowest frame + gap.
+ */
+function getNextYPosition(page: PageNode): number {
+  console.log("[spec-applicator] Calculating next Y position, children count:", page.children.length);
+
+  if (page.children.length === 0) {
+    console.log("[spec-applicator] Page is empty, starting at Y=0");
+    return 0;
+  }
+
+  // Find the bottom-most frame
+  let maxY = 0;
+  for (const child of page.children) {
+    const bottom = child.y + child.height;
+    if (bottom > maxY) {
+      maxY = bottom;
+      console.log("[spec-applicator] New max bottom:", bottom, "from node:", child.name);
+    }
+  }
+
+  const nextY = maxY + 100; // 100px gap between outputs
+  console.log("[spec-applicator] Next Y position:", nextY);
+  return nextY;
 }

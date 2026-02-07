@@ -160,6 +160,11 @@ async function handleGenerate(): Promise<void> {
     const variant = await applyLayoutSpec(frame, layoutSpec);
     console.log("[main] Variant created:", variant.name, "id:", variant.id);
 
+    // Switch to the output page where the variant now lives
+    const outputPage = variant.parent as PageNode;
+    console.log("[main] Switching to output page:", outputPage.name);
+    await figma.setCurrentPageAsync(outputPage);
+
     // Select the new variant
     figma.currentPage.selection = [variant];
     figma.viewport.scrollAndZoomIntoView([variant]);
