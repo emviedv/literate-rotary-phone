@@ -42,6 +42,18 @@ export interface SemanticGroup {
 
   /** How children within this group should stack (optional override) */
   layoutDirection?: "VERTICAL" | "HORIZONTAL";
+
+  /**
+   * If true, preserve original spacing between nodes in this group.
+   * The system will keep original X positions and center the composition
+   * horizontally, rather than using AI-specified coordinates.
+   *
+   * Use for:
+   * - Product mockup groups (phones side by side, device arrangements)
+   * - Feature lists where icon-text gap rhythm matters
+   * - Multi-element compositions that should scale as a unit
+   */
+  preserveSpacing?: boolean;
 }
 
 /**
@@ -92,6 +104,83 @@ export interface NodeSpec {
    * Only applies to nodes with children. Omit to use default (VERTICAL).
    */
   layoutDirection?: "VERTICAL" | "HORIZONTAL" | "NONE";
+
+  /**
+   * Positioning mode within parent auto-layout.
+   * - "AUTO": Normal auto-layout flow positioning (default)
+   * - "ABSOLUTE": Break out of auto-layout, use x/y coordinates
+   *
+   * Use "ABSOLUTE" for elements that need precise placement
+   * (floating badges, overlapping mockups, edge-bleeding elements).
+   */
+  positioning?: "AUTO" | "ABSOLUTE";
+
+  /**
+   * X coordinate relative to parent (only used when positioning: "ABSOLUTE").
+   * Can be negative for off-frame/edge-bleeding effects.
+   */
+  x?: number;
+
+  /**
+   * Y coordinate relative to parent (only used when positioning: "ABSOLUTE").
+   * Can be negative for off-frame/edge-bleeding effects.
+   */
+  y?: number;
+
+  /**
+   * Z-index for layer stacking order.
+   * Higher values appear in front of lower values.
+   * Only meaningful when multiple siblings have zIndex set.
+   */
+  zIndex?: number;
+
+  // ============================================
+  // Phase 2: Advanced Transforms
+  // ============================================
+
+  /**
+   * Rotation angle in degrees.
+   * Positive values rotate counterclockwise (Figma convention).
+   * Use for dynamic tilted compositions (e.g., phone at -15° angle).
+   */
+  rotation?: number;
+
+  /**
+   * Whether to lock aspect ratio when scaling.
+   * When true, scaleFactor applies uniformly to both dimensions.
+   * When false (default), width and height can scale independently.
+   */
+  aspectLocked?: boolean;
+
+  /**
+   * Target width after scaling (only used with aspectLocked).
+   * If aspectLocked is true and targetWidth is set, the element
+   * scales to this width while maintaining aspect ratio.
+   */
+  targetWidth?: number;
+
+  /**
+   * Target height after scaling (only used with aspectLocked).
+   * If aspectLocked is true and targetHeight is set, the element
+   * scales to this height while maintaining aspect ratio.
+   */
+  targetHeight?: number;
+
+  /**
+   * Anchor point for responsive positioning.
+   * Determines how the element positions relative to its parent frame.
+   * Only meaningful for absolutely positioned elements.
+   *
+   * horizontal: "LEFT" | "CENTER" | "RIGHT" - horizontal anchor
+   * vertical: "TOP" | "CENTER" | "BOTTOM" - vertical anchor
+   *
+   * Example: { horizontal: "RIGHT", vertical: "BOTTOM" }
+   * positions element relative to bottom-right corner.
+   */
+  anchor?: {
+    horizontal: "LEFT" | "CENTER" | "RIGHT";
+    vertical: "TOP" | "CENTER" | "BOTTOM";
+  };
 }
 
 /**
@@ -117,6 +206,16 @@ export interface RootLayout {
 
   /** How children align on the cross axis */
   counterAxisAlign: "MIN" | "CENTER" | "MAX";
+
+  /**
+   * Whether to clip content that overflows frame bounds.
+   * - true (default): Content is clipped at frame edges
+   * - false: Content can visually extend beyond frame (bleed effects)
+   *
+   * Set to false when elements should extend beyond the frame edges
+   * for dramatic visual effects (phone mockups bleeding off-screen, etc).
+   */
+  clipContent?: boolean;
 }
 
 /**

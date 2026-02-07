@@ -13,6 +13,53 @@ const TIKTOK_HEIGHT = 1920;
 
 console.log("[spec-applicator] Module loaded, TikTok dimensions:", TIKTOK_WIDTH, "x", TIKTOK_HEIGHT);
 
+/** Original position data for preserving element positions during adaptation */
+interface OriginalPosition {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Positioning modes for comparison testing.
+ * - PRESERVE_SPACING: Keep original X positions/spacing, center horizontally, scale Y with offset
+ * - UNIFORM_SCALED: Scale positions AND dimensions uniformly (preserves edge gaps but distorts components)
+ * - AI_DETERMINED: Use AI-specified x/y coordinates directly
+ * - HYBRID: Per-element strategy based on semantic group's preserveSpacing flag
+ */
+type PositioningMode = "PRESERVE_SPACING" | "UNIFORM_SCALED" | "AI_DETERMINED" | "HYBRID";
+
+/**
+ * Capture original positions of all nodes before resize.
+ * This allows us to preserve relative positions when adapting to TikTok format.
+ */
+function captureOriginalPositions(frame: FrameNode): Map<string, OriginalPosition> {
+  const positions = new Map<string, OriginalPosition>();
+
+  function walkAndCapture(node: SceneNode): void {
+    positions.set(node.id, {
+      x: node.x,
+      y: node.y,
+      width: node.width,
+      height: node.height,
+    });
+
+    if ("children" in node) {
+      for (const child of node.children as readonly SceneNode[]) {
+        walkAndCapture(child);
+      }
+    }
+  }
+
+  // Capture positions of all direct children (not the frame itself)
+  for (const child of frame.children) {
+    walkAndCapture(child);
+  }
+
+  return positions;
+}
+
 /**
  * Build a mapping from source node IDs to cloned node IDs.
  * Walks both trees in parallel, matching by structure position.
@@ -92,114 +139,142 @@ function remapSpecIds(spec: LayoutSpec, idMap: Map<string, string>): void {
 }
 
 /**
- * Apply a layout specification to create a TikTok variant.
+ * Deep clone a LayoutSpec to avoid mutations between variants.
+ */
+function deepCloneSpec(spec: LayoutSpec): LayoutSpec {
+  return JSON.parse(JSON.stringify(spec));
+}
+
+/**
+ * Apply a layout specification to create TikTok variant(s).
+ * Creates 4 comparison variants with different positioning modes (including HYBRID).
  *
  * @param sourceFrame - The original frame to transform
  * @param spec - The layout specification from the AI
- * @returns The newly created TikTok variant frame
+ * @returns The first created TikTok variant frame (HYBRID mode)
  */
 export async function applyLayoutSpec(
   sourceFrame: FrameNode,
   spec: LayoutSpec
 ): Promise<FrameNode> {
-  console.log("[spec-applicator] applyLayoutSpec started");
+  console.log("[spec-applicator] applyLayoutSpec started - COMPARISON MODE (4 variants with HYBRID)");
   console.log("[spec-applicator] Source frame:", sourceFrame.name, "id:", sourceFrame.id);
   console.log("[spec-applicator] Spec nodes count:", spec.nodes.length);
+  console.log("[spec-applicator] Semantic groups:", spec.semanticGroups?.length ?? 0, spec.semanticGroups?.filter(g => g.preserveSpacing).length ?? 0, "with preserveSpacing");
 
-  // Clone the source frame
-  console.log("[spec-applicator] Cloning source frame...");
-  const variant = sourceFrame.clone();
-  variant.name = `${sourceFrame.name} - TikTok`;
-  console.log("[spec-applicator] Clone created:", variant.name, "id:", variant.id);
-
-  // Build ID mapping from source to clone (critical for semantic groups)
-  console.log("[spec-applicator] Building source-to-clone ID mapping...");
-  const idMap = buildIdMapping(sourceFrame, variant);
-
-  // Remap all IDs in the spec to use cloned node IDs
-  remapSpecIds(spec, idMap);
+  // Define the 4 positioning modes to compare
+  const modes: Array<{ mode: PositioningMode; label: string; description: string }> = [
+    { mode: "HYBRID", label: "A) Hybrid", description: "Per-element strategy based on preserveSpacing" },
+    { mode: "PRESERVE_SPACING", label: "B) Preserve Gap", description: "Original spacing, centered horizontally" },
+    { mode: "UNIFORM_SCALED", label: "C) Uniform All", description: "Positions AND sizes scaled 0.9x" },
+    { mode: "AI_DETERMINED", label: "D) AI Position", description: "Using AI coordinates" },
+  ];
 
   // Get or create the dedicated TikTok outputs page
   const outputPage = getOrCreateOutputPage();
-
-  // Calculate position BEFORE appending (so it doesn't include this variant)
   const nextY = getNextYPosition(outputPage);
 
-  // Move variant to output page
-  console.log("[spec-applicator] Moving variant to output page...");
-  outputPage.appendChild(variant);
+  const variants: FrameNode[] = [];
+  const GAP_BETWEEN_VARIANTS = 100;
 
-  // Position on output page (stack vertically)
-  variant.x = 0;
-  variant.y = nextY;
-  console.log("[spec-applicator] Positioned on output page at:", variant.x, variant.y);
+  for (let i = 0; i < modes.length; i++) {
+    const { mode, label, description } = modes[i];
 
-  // Resize to TikTok dimensions
-  console.log("[spec-applicator] Resizing to TikTok dimensions...");
-  variant.resize(TIKTOK_WIDTH, TIKTOK_HEIGHT);
-  console.log("[spec-applicator] New dimensions:", variant.width, "x", variant.height);
+    console.log(`\n${"=".repeat(70)}`);
+    console.log(`[spec-applicator] Creating variant ${i + 1}/${modes.length}: ${label}`);
+    console.log(`[spec-applicator] Mode: ${mode} - ${description}`);
+    console.log(`${"=".repeat(70)}`);
 
-  // Build a map of node specs by ID for quick lookup
-  const specMap = new Map<string, NodeSpec>();
-  for (const nodeSpec of spec.nodes) {
-    specMap.set(nodeSpec.nodeId, nodeSpec);
-    console.log("[spec-applicator] Mapped spec for node:", nodeSpec.nodeId, nodeSpec.nodeName);
-  }
-  console.log("[spec-applicator] Spec map size:", specMap.size);
+    // Deep clone the spec for each variant (remapping modifies it)
+    const variantSpec = deepCloneSpec(spec);
 
-  // Apply root layout configuration (convert to auto-layout if needed)
-  console.log("[spec-applicator] Applying root layout...");
-  applyRootLayout(variant, spec.rootLayout);
+    // Clone the source frame
+    const variant = sourceFrame.clone();
+    variant.name = `${sourceFrame.name} - ${label}`;
+    console.log("[spec-applicator] Clone created:", variant.name);
 
-  // Convert nested containers to auto-layout (groups → frames, absolute → auto-layout)
-  // This returns a map of ID changes that occurred during group-to-frame conversions
-  console.log("[spec-applicator] Converting nested containers to auto-layout...");
-  const conversionIdChanges = convertToAutoLayout(variant, specMap);
+    // Build ID mapping and remap
+    const idMap = buildIdMapping(sourceFrame, variant);
+    remapSpecIds(variantSpec, idMap);
 
-  // If any groups were converted to frames, their IDs changed - remap specs again
-  if (conversionIdChanges.size > 0) {
-    console.log("[spec-applicator] Remapping specs for", conversionIdChanges.size, "group-to-frame conversions...");
-    remapSpecIds(spec, conversionIdChanges);
+    // Move to output page
+    outputPage.appendChild(variant);
 
-    // Also update specMap with new IDs
-    for (const [oldId, newId] of conversionIdChanges) {
-      const nodeSpec = specMap.get(oldId);
-      if (nodeSpec) {
-        console.log(`[spec-applicator] Moving specMap entry: ${oldId} → ${newId}`);
-        specMap.delete(oldId);
-        nodeSpec.nodeId = newId;
-        specMap.set(newId, nodeSpec);
+    // Position variants side by side horizontally
+    variant.x = i * (TIKTOK_WIDTH + GAP_BETWEEN_VARIANTS);
+    variant.y = nextY;
+    console.log("[spec-applicator] Positioned at:", variant.x, variant.y);
+
+    // Capture original positions BEFORE resize
+    const originalWidth = variant.width;
+    const originalHeight = variant.height;
+    const originalPositions = captureOriginalPositions(variant);
+    console.log("[spec-applicator] Captured", originalPositions.size, "original positions");
+
+    // Resize to TikTok dimensions
+    variant.resize(TIKTOK_WIDTH, TIKTOK_HEIGHT);
+
+    // Build spec map
+    const specMap = new Map<string, NodeSpec>();
+    for (const nodeSpec of variantSpec.nodes) {
+      specMap.set(nodeSpec.nodeId, nodeSpec);
+    }
+
+    // Apply root layout
+    applyRootLayout(variant, variantSpec.rootLayout);
+
+    // Convert nested containers to auto-layout
+    const conversionIdChanges = convertToAutoLayout(variant, specMap);
+    if (conversionIdChanges.size > 0) {
+      remapSpecIds(variantSpec, conversionIdChanges);
+      for (const [oldId, newId] of conversionIdChanges) {
+        const nodeSpec = specMap.get(oldId);
+        if (nodeSpec) {
+          specMap.delete(oldId);
+          nodeSpec.nodeId = newId;
+          specMap.set(newId, nodeSpec);
+        }
       }
     }
+
+    // Apply semantic grouping if present
+    let hasSemanticGroups = false;
+    if (variantSpec.semanticGroups && variantSpec.semanticGroups.length > 0) {
+      hasSemanticGroups = true;
+      applySemanticGrouping(variant, variantSpec.semanticGroups, specMap);
+    }
+
+    // Apply node specs
+    await applyNodeSpecs(variant, specMap);
+
+    // Reorder children if no semantic groups
+    if (!hasSemanticGroups) {
+      reorderChildren(variant, specMap);
+    }
+
+    // Apply absolute positioning with the specific MODE
+    console.log(`[spec-applicator] Applying ${mode} positioning...`);
+    applyAbsolutePositioning(variant, specMap, originalPositions, originalWidth, originalHeight, mode, variantSpec.semanticGroups ?? []);
+
+    // Phase 2 transforms
+    applyAspectLockedScaling(variant, specMap);
+    applyRotation(variant, specMap);
+    applyAnchorPoints(variant, specMap);
+    applyZIndexOrdering(variant, specMap);
+
+    variants.push(variant);
+    console.log(`[spec-applicator] Variant ${label} complete`);
   }
 
-  // Apply semantic grouping if present (takes precedence for ordering)
-  let hasSemanticGroups = false;
-  if (spec.semanticGroups && spec.semanticGroups.length > 0) {
-    console.log("[spec-applicator] Applying semantic grouping...");
-    hasSemanticGroups = true;
-    const nodeToGroup = applySemanticGrouping(variant, spec.semanticGroups, specMap);
-    console.log("[spec-applicator] Semantic grouping applied, mapped", nodeToGroup.size, "nodes to groups");
-  } else {
-    console.log("[spec-applicator] No semantic groups - using flat node ordering");
-  }
-
-  // Apply specs to all children
-  console.log("[spec-applicator] Applying node specs...");
-  await applyNodeSpecs(variant, specMap);
-
-  // Reorder children based on order values (only if no semantic groups)
-  // When semantic groups exist, they already handle the ordering
-  if (!hasSemanticGroups) {
-    console.log("[spec-applicator] Reordering children via node order values...");
-    reorderChildren(variant, specMap);
-  } else {
-    console.log("[spec-applicator] Skipping node-level reorder - semantic groups handled ordering");
-  }
-
+  console.log(`\n[spec-applicator] All ${modes.length} comparison variants created!`);
   console.log("[spec-applicator] Layout application complete");
-  return variant;
+
+  // Return the first variant (HYBRID) as the primary result
+  return variants[0];
 }
+
+/** Minimum horizontal padding for TikTok format (40-80px range, using 60px) */
+const MIN_HORIZONTAL_PADDING = 60;
 
 /**
  * Apply root layout configuration to the variant frame.
@@ -207,17 +282,27 @@ export async function applyLayoutSpec(
 function applyRootLayout(frame: FrameNode, layout: LayoutSpec["rootLayout"]): void {
   console.log("[spec-applicator] applyRootLayout - frame:", frame.name);
   console.log("[spec-applicator] Layout config:", JSON.stringify(layout));
+  console.log("[spec-applicator] AI-specified padding:", JSON.stringify(layout.padding));
 
   // Enable auto-layout with vertical direction
   frame.layoutMode = "VERTICAL";
   console.log("[spec-applicator] Set layoutMode to VERTICAL");
 
-  // Apply padding
+  // Apply padding with ENFORCED MINIMUM for horizontal padding
+  // AI often specifies 40px, but TikTok format needs 60-80px for breathing room
+  const effectivePaddingLeft = Math.max(layout.padding.left, MIN_HORIZONTAL_PADDING);
+  const effectivePaddingRight = Math.max(layout.padding.right, MIN_HORIZONTAL_PADDING);
+
   frame.paddingTop = layout.padding.top;
-  frame.paddingRight = layout.padding.right;
+  frame.paddingRight = effectivePaddingRight;
   frame.paddingBottom = layout.padding.bottom;
-  frame.paddingLeft = layout.padding.left;
-  console.log("[spec-applicator] Applied padding:", layout.padding);
+  frame.paddingLeft = effectivePaddingLeft;
+
+  console.log("[spec-applicator] Applied padding (with min horizontal enforcement):");
+  console.log(`  Top: ${layout.padding.top}`);
+  console.log(`  Right: ${layout.padding.right} → ${effectivePaddingRight} (min: ${MIN_HORIZONTAL_PADDING})`);
+  console.log(`  Bottom: ${layout.padding.bottom}`);
+  console.log(`  Left: ${layout.padding.left} → ${effectivePaddingLeft} (min: ${MIN_HORIZONTAL_PADDING})`);
 
   // Apply gap
   frame.itemSpacing = layout.gap;
@@ -233,9 +318,13 @@ function applyRootLayout(frame: FrameNode, layout: LayoutSpec["rootLayout"]): vo
   frame.layoutSizingVertical = "FIXED";
   console.log("[spec-applicator] Set sizing to FIXED");
 
-  // Clip content that overflows
-  frame.clipsContent = true;
-  console.log("[spec-applicator] Enabled content clipping");
+  // Apply clipContent setting (default: true for backward compatibility)
+  const clipContent = layout.clipContent ?? true;
+  frame.clipsContent = clipContent;
+  console.log("[spec-applicator] Set clipsContent:", clipContent);
+  if (!clipContent) {
+    console.log("[spec-applicator] Content can now bleed beyond frame edges");
+  }
 }
 
 /**
@@ -831,4 +920,876 @@ function applySemanticGrouping(
   console.log("[applySemanticGrouping] Reordering complete");
 
   return nodeToGroup;
+}
+
+/**
+ * Apply absolute positioning to nodes that specify positioning: "ABSOLUTE".
+ * This removes nodes from auto-layout flow and places them at specific x/y coordinates.
+ *
+ * POSITIONING MODES:
+ * - UNIFORM_FIXED: Scale positions uniformly, keep element sizes (default)
+ * - UNIFORM_SCALED: Scale positions AND dimensions uniformly (preserves edge gaps but distorts components)
+ * - AI_DETERMINED: Use AI-specified x/y coordinates directly
+ *
+ * Must be called AFTER auto-layout is set up (nodes need to be in an auto-layout container
+ * for layoutPositioning: "ABSOLUTE" to work).
+ *
+ * @param frame - The TikTok variant frame to process
+ * @param specMap - Map of node specs
+ * @param originalPositions - Original positions captured before resize
+ * @param originalWidth - Original frame width before resize
+ * @param originalHeight - Original frame height before resize
+ * @param mode - Positioning strategy to use
+ */
+function applyAbsolutePositioning(
+  frame: FrameNode,
+  specMap: Map<string, NodeSpec>,
+  originalPositions: Map<string, OriginalPosition>,
+  originalWidth: number,
+  originalHeight: number,
+  mode: PositioningMode = "HYBRID",
+  semanticGroups: SemanticGroup[] = []
+): void {
+  console.log("╔══════════════════════════════════════════════════════════════════╗");
+  console.log(`║ [applyAbsolutePositioning] MODE: ${mode.padEnd(20)}              ║`);
+  console.log("╚══════════════════════════════════════════════════════════════════╝");
+  console.log("[applyAbsolutePositioning] Original frame:", originalWidth, "x", originalHeight);
+  console.log("[applyAbsolutePositioning] Target frame:", frame.width, "x", frame.height);
+
+  // Calculate scale factors
+  const scaleX = frame.width / originalWidth;
+  const scaleY = frame.height / originalHeight;
+
+  // Use UNIFORM scaling to preserve relative spacing between elements
+  // Using the width scale (scaleX) since it's typically less drastic
+  // This maintains the original composition's spatial relationships
+  const uniformScale = scaleX;
+  console.log("[applyAbsolutePositioning] Scale factors - X:", scaleX.toFixed(3), "Y:", scaleY.toFixed(3));
+  console.log("[applyAbsolutePositioning] Using UNIFORM scale:", uniformScale.toFixed(3), "(preserves spacing)");
+
+  // Build node-to-group lookup for HYBRID mode
+  const nodeToGroup = new Map<string, SemanticGroup>();
+  for (const group of semanticGroups) {
+    for (const nodeId of group.nodeIds) {
+      nodeToGroup.set(nodeId, group);
+    }
+  }
+  console.log("[applyAbsolutePositioning] Built nodeToGroup map with", nodeToGroup.size, "entries");
+  if (mode === "HYBRID") {
+    const preserveSpacingGroups = semanticGroups.filter(g => g.preserveSpacing).map(g => g.groupId);
+    console.log("[applyAbsolutePositioning] Groups with preserveSpacing:", preserveSpacingGroups.length > 0 ? preserveSpacingGroups.join(", ") : "none");
+  }
+
+  // Build complete node map for the entire tree
+  const allNodesMap = buildNodeMap(frame);
+  console.log("[applyAbsolutePositioning] Built node map with", allNodesMap.size, "nodes");
+
+  // ============================================
+  // PASS 1: Collect nodes and compute EXTENSIVE diagnostics
+  // ============================================
+  const absoluteNodes: Array<{ nodeId: string; spec: NodeSpec; node: SceneNode; originalPos: OriginalPosition }> = [];
+  let sumOriginalY = 0;
+  let sumOriginalHeight = 0;
+  let nodeCount = 0;
+
+  for (const [nodeId, spec] of specMap) {
+    if (spec.positioning !== "ABSOLUTE") {
+      continue;
+    }
+
+    const node = allNodesMap.get(nodeId);
+    if (!node) continue;
+    if (isInsideComponentInstance(node)) continue;
+    if (!("layoutPositioning" in node)) continue;
+
+    const originalPos = originalPositions.get(nodeId);
+    if (!originalPos) continue;
+
+    absoluteNodes.push({ nodeId, spec, node, originalPos });
+
+    // Accumulate for centroid calculation
+    sumOriginalY += originalPos.y + originalPos.height / 2; // center Y of each element
+    sumOriginalHeight += originalPos.height;
+    nodeCount++;
+  }
+
+  console.log("┌─────────────────────────────────────────────────────────────────┐");
+  console.log("│ ORIGINAL ELEMENT BOUNDS (before any transformation)            │");
+  console.log("└─────────────────────────────────────────────────────────────────┘");
+  for (const { spec, originalPos } of absoluteNodes) {
+    console.log(`[ORIGINAL] ${spec.nodeName}:`);
+    console.log(`  Position: (${originalPos.x.toFixed(1)}, ${originalPos.y.toFixed(1)})`);
+    console.log(`  Size: ${originalPos.width.toFixed(1)} x ${originalPos.height.toFixed(1)}`);
+    console.log(`  Bounds: Left=${originalPos.x.toFixed(1)}, Right=${(originalPos.x + originalPos.width).toFixed(1)}`);
+    console.log(`          Top=${originalPos.y.toFixed(1)}, Bottom=${(originalPos.y + originalPos.height).toFixed(1)}`);
+    console.log(`  Center: (${(originalPos.x + originalPos.width / 2).toFixed(1)}, ${(originalPos.y + originalPos.height / 2).toFixed(1)})`);
+  }
+
+  // Calculate ORIGINAL edge-to-edge gaps between ALL pairs of elements
+  console.log("┌─────────────────────────────────────────────────────────────────┐");
+  console.log("│ ORIGINAL EDGE-TO-EDGE GAPS (visual spacing between elements)   │");
+  console.log("└─────────────────────────────────────────────────────────────────┘");
+  for (let i = 0; i < absoluteNodes.length; i++) {
+    for (let j = i + 1; j < absoluteNodes.length; j++) {
+      const a = absoluteNodes[i];
+      const b = absoluteNodes[j];
+
+      // Calculate horizontal gap (negative = overlap)
+      const aRight = a.originalPos.x + a.originalPos.width;
+      const bRight = b.originalPos.x + b.originalPos.width;
+      const horizontalGap = Math.max(b.originalPos.x - aRight, a.originalPos.x - bRight);
+
+      // Calculate vertical gap (negative = overlap)
+      const aBottom = a.originalPos.y + a.originalPos.height;
+      const bBottom = b.originalPos.y + b.originalPos.height;
+      const verticalGap = Math.max(b.originalPos.y - aBottom, a.originalPos.y - bBottom);
+
+      // Calculate center-to-center distance
+      const aCenterX = a.originalPos.x + a.originalPos.width / 2;
+      const aCenterY = a.originalPos.y + a.originalPos.height / 2;
+      const bCenterX = b.originalPos.x + b.originalPos.width / 2;
+      const bCenterY = b.originalPos.y + b.originalPos.height / 2;
+      const centerDeltaX = bCenterX - aCenterX;
+      const centerDeltaY = bCenterY - aCenterY;
+
+      console.log(`[ORIGINAL GAP] ${a.spec.nodeName} <-> ${b.spec.nodeName}:`);
+      console.log(`  Horizontal edge gap: ${horizontalGap.toFixed(1)}px ${horizontalGap < 0 ? "(OVERLAP)" : ""}`);
+      console.log(`  Vertical edge gap: ${verticalGap.toFixed(1)}px ${verticalGap < 0 ? "(OVERLAP)" : ""}`);
+      console.log(`  Center-to-center: ΔX=${centerDeltaX.toFixed(1)}, ΔY=${centerDeltaY.toFixed(1)}`);
+    }
+  }
+
+  // Calculate composition bounding box BEFORE transformation
+  let origMinX = Infinity, origMaxX = -Infinity;
+  let origMinY = Infinity, origMaxY = -Infinity;
+  for (const { originalPos } of absoluteNodes) {
+    origMinX = Math.min(origMinX, originalPos.x);
+    origMaxX = Math.max(origMaxX, originalPos.x + originalPos.width);
+    origMinY = Math.min(origMinY, originalPos.y);
+    origMaxY = Math.max(origMaxY, originalPos.y + originalPos.height);
+  }
+  console.log("┌─────────────────────────────────────────────────────────────────┐");
+  console.log("│ ORIGINAL COMPOSITION BOUNDING BOX                              │");
+  console.log("└─────────────────────────────────────────────────────────────────┘");
+  console.log(`  Position: (${origMinX.toFixed(1)}, ${origMinY.toFixed(1)})`);
+  console.log(`  Size: ${(origMaxX - origMinX).toFixed(1)} x ${(origMaxY - origMinY).toFixed(1)}`);
+  console.log(`  Center: (${((origMinX + origMaxX) / 2).toFixed(1)}, ${((origMinY + origMaxY) / 2).toFixed(1)})`);
+
+  // Calculate vertical offset to maintain relative vertical position
+  let yOffset = 0;
+  // Also calculate X centroid for horizontal centering
+  let sumOriginalX = 0;
+  for (const { originalPos } of absoluteNodes) {
+    sumOriginalX += originalPos.x + originalPos.width / 2;
+  }
+
+  // Calculate X offset for centering (used in PRESERVE_SPACING mode)
+  let xOffset = 0;
+
+  if (nodeCount > 0) {
+    // Original centroid Y position (average center of all elements)
+    const originalCentroidY = sumOriginalY / nodeCount;
+    // What percentage down the frame was the centroid?
+    const relativeVerticalPosition = originalCentroidY / originalHeight;
+    // Where should the centroid be in the new frame?
+    const targetCentroidY = relativeVerticalPosition * frame.height;
+    // Where would the centroid be with just uniform scaling?
+    const scaledCentroidY = originalCentroidY * uniformScale;
+    // The offset needed to move from scaled position to target position
+    yOffset = targetCentroidY - scaledCentroidY;
+
+    // Calculate X centroid and offset to center composition horizontally
+    const originalCentroidX = sumOriginalX / nodeCount;
+    // Target: center of new frame
+    const targetCentroidX = frame.width / 2;
+    // X offset to center the composition (keep original X positions, just shift)
+    xOffset = targetCentroidX - originalCentroidX;
+
+    console.log("┌─────────────────────────────────────────────────────────────────┐");
+    console.log("│ CENTROID & OFFSET CALCULATION                                  │");
+    console.log("└─────────────────────────────────────────────────────────────────┘");
+    console.log(`  Original centroid: (${originalCentroidX.toFixed(1)}, ${originalCentroidY.toFixed(1)})`);
+    console.log(`  Target centroid X (center of new frame): ${targetCentroidX.toFixed(1)}`);
+    console.log(`  >>> Initial X offset to center: ${xOffset.toFixed(1)}px`);
+
+    // ============================================
+    // EDGE CLAMPING & TIKTOK SAFETY ZONES
+    // ============================================
+    // TikTok safe zones:
+    // - TOP 8% (0-154px): Danger zone (status bar, TikTok UI)
+    // - BOTTOM 35% (1248-1920px): Danger zone (buttons, captions, engagement UI)
+    // - SAFE ZONE: 154-1248px vertically, 60px padding horizontally
+    const EDGE_PADDING = 60; // Horizontal padding (40-80px range)
+    const TIKTOK_TOP_DANGER = 154; // Top 8% danger zone
+    const TIKTOK_BOTTOM_SAFE = 1248; // Bottom of safe zone (above 35% danger)
+
+    // Calculate where the composition bounding box would be after applying xOffset
+    const projectedMinX = origMinX + xOffset;
+    const projectedMaxX = origMaxX + xOffset;
+    const compositionWidth = origMaxX - origMinX;
+
+    console.log("┌─────────────────────────────────────────────────────────────────┐");
+    console.log("│ TIKTOK SAFETY ZONES & EDGE CLAMPING                             │");
+    console.log("└─────────────────────────────────────────────────────────────────┘");
+    console.log(`  Horizontal padding: ${EDGE_PADDING}px`);
+    console.log(`  Vertical safe zone: ${TIKTOK_TOP_DANGER}px - ${TIKTOK_BOTTOM_SAFE}px`);
+    console.log(`  Projected X bounds after offset: [${projectedMinX.toFixed(1)}, ${projectedMaxX.toFixed(1)}]`);
+    console.log(`  Composition width: ${compositionWidth.toFixed(1)}px, Frame width: ${frame.width}px`);
+
+    // Check if composition fits within frame (with padding)
+    const availableWidth = frame.width - (2 * EDGE_PADDING);
+
+    if (compositionWidth > availableWidth) {
+      // Composition is wider than frame - center it and allow bleed
+      // This preserves spacing but accepts some elements will be cut off
+      const compositionCenterX = (origMinX + origMaxX) / 2;
+      xOffset = (frame.width / 2) - compositionCenterX;
+      console.log(`  ⚠️ Composition wider than frame (${compositionWidth.toFixed(0)}px > ${availableWidth.toFixed(0)}px)!`);
+      console.log(`  >>> Centering with controlled bleed`);
+      console.log(`  >>> Adjusted X offset: ${xOffset.toFixed(1)}px`);
+    } else {
+      // Composition fits - clamp to prevent going off-screen
+      if (projectedMinX < EDGE_PADDING) {
+        // Left edge would be cut off - shift right
+        const adjustment = EDGE_PADDING - projectedMinX;
+        xOffset += adjustment;
+        console.log(`  ⚠️ Left edge at ${projectedMinX.toFixed(1)}px < ${EDGE_PADDING}px padding`);
+        console.log(`  >>> Shifting right by ${adjustment.toFixed(1)}px`);
+        console.log(`  >>> Adjusted X offset: ${xOffset.toFixed(1)}px`);
+      } else if (projectedMaxX > frame.width - EDGE_PADDING) {
+        // Right edge would be cut off - shift left
+        const adjustment = projectedMaxX - (frame.width - EDGE_PADDING);
+        xOffset -= adjustment;
+        console.log(`  ⚠️ Right edge at ${projectedMaxX.toFixed(1)}px > ${frame.width - EDGE_PADDING}px`);
+        console.log(`  >>> Shifting left by ${adjustment.toFixed(1)}px`);
+        console.log(`  >>> Adjusted X offset: ${xOffset.toFixed(1)}px`);
+      } else {
+        console.log(`  ✓ Horizontal bounds OK: [${projectedMinX.toFixed(1)}, ${projectedMaxX.toFixed(1)}]`);
+      }
+    }
+
+    // Vertical safety zone adjustment for Y offset
+    // Ensure composition centroid stays within TikTok safe zone
+    const projectedCentroidY = scaledCentroidY + yOffset;
+    if (projectedCentroidY < TIKTOK_TOP_DANGER + 100) {
+      // Centroid too close to top danger zone - push down
+      const adjustment = (TIKTOK_TOP_DANGER + 100) - projectedCentroidY;
+      yOffset += adjustment;
+      console.log(`  ⚠️ Centroid at ${projectedCentroidY.toFixed(1)}px too close to top danger zone`);
+      console.log(`  >>> Pushing down by ${adjustment.toFixed(1)}px`);
+    } else if (projectedCentroidY > TIKTOK_BOTTOM_SAFE - 100) {
+      // Centroid too close to bottom danger zone - push up
+      const adjustment = projectedCentroidY - (TIKTOK_BOTTOM_SAFE - 100);
+      yOffset -= adjustment;
+      console.log(`  ⚠️ Centroid at ${projectedCentroidY.toFixed(1)}px too close to bottom danger zone`);
+      console.log(`  >>> Pushing up by ${adjustment.toFixed(1)}px`);
+    } else {
+      console.log(`  ✓ Vertical centroid OK at ${projectedCentroidY.toFixed(1)}px (safe: ${TIKTOK_TOP_DANGER + 100}-${TIKTOK_BOTTOM_SAFE - 100})`);
+    }
+
+    console.log(`  Relative Y position: ${(relativeVerticalPosition * 100).toFixed(1)}% down frame`);
+    console.log(`  Target centroid Y (in new frame): ${targetCentroidY.toFixed(1)}`);
+    console.log(`  Scaled centroid Y (uniform only): ${scaledCentroidY.toFixed(1)}`);
+    console.log(`  >>> Y offset needed: ${yOffset.toFixed(1)}px`);
+  }
+
+  // ============================================
+  // PASS 2: Apply positioning with uniform scale + offset
+  // ============================================
+  console.log("┌─────────────────────────────────────────────────────────────────┐");
+  console.log("│ APPLYING TRANSFORMATIONS                                        │");
+  console.log("└─────────────────────────────────────────────────────────────────┘");
+
+  if (mode === "HYBRID") {
+    console.log("┌─────────────────────────────────────────────────────────────────┐");
+    console.log("│ HYBRID MODE: Per-Element Strategy Selection                     │");
+    console.log("│ - preserveSpacing groups → PRESERVE_SPACING logic               │");
+    console.log("│ - AI coordinates available → AI_DETERMINED logic                │");
+    console.log("│ - Otherwise → UNIFORM_FALLBACK                                  │");
+    console.log("└─────────────────────────────────────────────────────────────────┘");
+  }
+
+  const finalPositions: Array<{ name: string; x: number; y: number; width: number; height: number }> = [];
+
+  for (const { nodeId, spec, node, originalPos } of absoluteNodes) {
+    console.log(`[TRANSFORM] ${spec.nodeName} (id: ${nodeId}):`);
+
+    // Set to absolute positioning (breaks out of auto-layout flow)
+    const targetNode = node as SceneNode & { layoutPositioning: "AUTO" | "ABSOLUTE" };
+    targetNode.layoutPositioning = "ABSOLUTE";
+
+    // Get CURRENT dimensions (may have changed during resize)
+    const currentWidth = "width" in node ? (node as { width: number }).width : originalPos.width;
+    const currentHeight = "height" in node ? (node as { height: number }).height : originalPos.height;
+
+    console.log(`  Original dimensions: ${originalPos.width.toFixed(1)} x ${originalPos.height.toFixed(1)}`);
+    console.log(`  Current dimensions:  ${currentWidth.toFixed(1)} x ${currentHeight.toFixed(1)}`);
+
+    let newX: number;
+    let newY: number;
+    let finalWidth = currentWidth;
+    let finalHeight = currentHeight;
+
+    // Apply positioning based on mode
+    switch (mode) {
+      case "PRESERVE_SPACING":
+        // KEEP original X positions (preserves horizontal spacing between elements)
+        // Just shift horizontally to center the composition in the narrower frame
+        // Scale Y by 0.9x + offset to maintain vertical placement
+        newX = originalPos.x + xOffset;
+        newY = originalPos.y * uniformScale + yOffset;
+        console.log(`  [PRESERVE_SPACING] Original X spacing preserved, centered horizontally`);
+        console.log(`    Original pos: (${originalPos.x.toFixed(1)}, ${originalPos.y.toFixed(1)})`);
+        console.log(`    X: ${originalPos.x.toFixed(1)} + offset ${xOffset.toFixed(1)} = ${newX.toFixed(1)}`);
+        console.log(`    Y: ${originalPos.y.toFixed(1)} * ${uniformScale.toFixed(3)} + ${yOffset.toFixed(1)} = ${newY.toFixed(1)}`);
+        console.log(`    >>> Final:    (${newX.toFixed(1)}, ${newY.toFixed(1)})`);
+        break;
+
+      case "UNIFORM_SCALED":
+        // Scale BOTH positions AND dimensions uniformly
+        newX = originalPos.x * uniformScale;
+        newY = originalPos.y * uniformScale + yOffset;
+        finalWidth = originalPos.width * uniformScale;
+        finalHeight = originalPos.height * uniformScale;
+
+        // Apply dimension scaling
+        if ("resize" in node && typeof (node as { resize: unknown }).resize === "function") {
+          const resizableNode = node as SceneNode & { resize: (width: number, height: number) => void };
+          resizableNode.resize(finalWidth, finalHeight);
+        }
+
+        console.log(`  [UNIFORM_SCALED] Positions AND dimensions scaled ${uniformScale.toFixed(3)}x`);
+        console.log(`    Original: (${originalPos.x.toFixed(1)}, ${originalPos.y.toFixed(1)}) @ ${originalPos.width.toFixed(1)}x${originalPos.height.toFixed(1)}`);
+        console.log(`    Scaled:   (${newX.toFixed(1)}, ${newY.toFixed(1)}) @ ${finalWidth.toFixed(1)}x${finalHeight.toFixed(1)}`);
+        break;
+
+      case "AI_DETERMINED":
+        // Use AI-specified coordinates if available, otherwise use center positioning
+        if (spec.x !== undefined && spec.y !== undefined) {
+          newX = spec.x;
+          newY = spec.y;
+          console.log(`  [AI_DETERMINED] Using AI coordinates: (${spec.x}, ${spec.y})`);
+        } else {
+          // Fallback: center horizontally, position at original Y percentage
+          newX = (frame.width - currentWidth) / 2;
+          const yPercentage = originalPos.y / originalHeight;
+          newY = yPercentage * frame.height;
+          console.log(`  [AI_DETERMINED] No AI coords, centering: (${newX.toFixed(1)}, ${newY.toFixed(1)})`);
+        }
+        break;
+
+      case "HYBRID":
+        // Per-element strategy based on semantic group's preserveSpacing flag
+        const group = nodeToGroup.get(nodeId);
+        let strategyUsed: string;
+
+        console.log(`  [HYBRID] Checking strategy for ${spec.nodeName}:`);
+        console.log(`    Group: ${group?.groupId ?? "none"}`);
+        console.log(`    Role: ${group?.role ?? "ungrouped"}`);
+        console.log(`    preserveSpacing: ${group?.preserveSpacing ?? false}`);
+        console.log(`    AI coords available: ${spec.x !== undefined && spec.y !== undefined}`);
+
+        if (group?.preserveSpacing) {
+          // Use PRESERVE_SPACING logic: keep original X, center horizontally, scale Y
+          newX = originalPos.x + xOffset;
+          newY = originalPos.y * uniformScale + yOffset;
+          strategyUsed = "PRESERVE_SPACING (group has preserveSpacing: true)";
+          console.log(`    >>> Strategy: PRESERVE_SPACING`);
+          console.log(`    Original pos: (${originalPos.x.toFixed(1)}, ${originalPos.y.toFixed(1)})`);
+          console.log(`    X: ${originalPos.x.toFixed(1)} + offset ${xOffset.toFixed(1)} = ${newX.toFixed(1)}`);
+          console.log(`    Y: ${originalPos.y.toFixed(1)} * ${uniformScale.toFixed(3)} + ${yOffset.toFixed(1)} = ${newY.toFixed(1)}`);
+        } else if (spec.x !== undefined && spec.y !== undefined) {
+          // Use AI_DETERMINED logic: AI-specified coordinates
+          newX = spec.x;
+          newY = spec.y;
+          strategyUsed = "AI_DETERMINED (has x/y coordinates)";
+          console.log(`    >>> Strategy: AI_DETERMINED`);
+          console.log(`    Using AI coordinates: (${spec.x}, ${spec.y})`);
+        } else {
+          // Fallback: uniform scaling with offset (centered)
+          newX = originalPos.x * uniformScale + (frame.width - originalWidth * uniformScale) / 2;
+          newY = originalPos.y * uniformScale + yOffset;
+          strategyUsed = "UNIFORM_FALLBACK (no group or AI coords)";
+          console.log(`    >>> Strategy: UNIFORM_FALLBACK`);
+          console.log(`    Original pos: (${originalPos.x.toFixed(1)}, ${originalPos.y.toFixed(1)})`);
+          console.log(`    Scaled + centered: (${newX.toFixed(1)}, ${newY.toFixed(1)})`);
+        }
+
+        console.log(`  [HYBRID] ${spec.nodeName}: ${strategyUsed}`);
+        break;
+    }
+
+    node.x = newX;
+    node.y = newY;
+
+    // Store final position for gap analysis
+    finalPositions.push({
+      name: spec.nodeName,
+      x: newX,
+      y: newY,
+      width: finalWidth,
+      height: finalHeight
+    });
+
+    console.log(`  >>> FINAL: (${newX.toFixed(1)}, ${newY.toFixed(1)}) @ ${finalWidth.toFixed(1)}x${finalHeight.toFixed(1)}`);
+  }
+
+  // Calculate FINAL edge-to-edge gaps between ALL pairs of elements
+  console.log("┌─────────────────────────────────────────────────────────────────┐");
+  console.log("│ FINAL EDGE-TO-EDGE GAPS (after transformation)                  │");
+  console.log("└─────────────────────────────────────────────────────────────────┘");
+  for (let i = 0; i < finalPositions.length; i++) {
+    for (let j = i + 1; j < finalPositions.length; j++) {
+      const a = finalPositions[i];
+      const b = finalPositions[j];
+
+      // Calculate horizontal gap (negative = overlap)
+      const aRight = a.x + a.width;
+      const bRight = b.x + b.width;
+      const horizontalGap = Math.max(b.x - aRight, a.x - bRight);
+
+      // Calculate vertical gap (negative = overlap)
+      const aBottom = a.y + a.height;
+      const bBottom = b.y + b.height;
+      const verticalGap = Math.max(b.y - aBottom, a.y - bBottom);
+
+      // Calculate center-to-center distance
+      const aCenterX = a.x + a.width / 2;
+      const aCenterY = a.y + a.height / 2;
+      const bCenterX = b.x + b.width / 2;
+      const bCenterY = b.y + b.height / 2;
+      const centerDeltaX = bCenterX - aCenterX;
+      const centerDeltaY = bCenterY - aCenterY;
+
+      console.log(`[FINAL GAP] ${a.name} <-> ${b.name}:`);
+      console.log(`  Horizontal edge gap: ${horizontalGap.toFixed(1)}px ${horizontalGap < 0 ? "(OVERLAP)" : ""}`);
+      console.log(`  Vertical edge gap: ${verticalGap.toFixed(1)}px ${verticalGap < 0 ? "(OVERLAP)" : ""}`);
+      console.log(`  Center-to-center: ΔX=${centerDeltaX.toFixed(1)}, ΔY=${centerDeltaY.toFixed(1)}`);
+    }
+  }
+
+  // Calculate composition bounding box AFTER transformation
+  let finalMinX = Infinity, finalMaxX = -Infinity;
+  let finalMinY = Infinity, finalMaxY = -Infinity;
+  for (const pos of finalPositions) {
+    finalMinX = Math.min(finalMinX, pos.x);
+    finalMaxX = Math.max(finalMaxX, pos.x + pos.width);
+    finalMinY = Math.min(finalMinY, pos.y);
+    finalMaxY = Math.max(finalMaxY, pos.y + pos.height);
+  }
+  console.log("┌─────────────────────────────────────────────────────────────────┐");
+  console.log("│ FINAL COMPOSITION BOUNDING BOX                                  │");
+  console.log("└─────────────────────────────────────────────────────────────────┘");
+  console.log(`  Position: (${finalMinX.toFixed(1)}, ${finalMinY.toFixed(1)})`);
+  console.log(`  Size: ${(finalMaxX - finalMinX).toFixed(1)} x ${(finalMaxY - finalMinY).toFixed(1)}`);
+  console.log(`  Center: (${((finalMinX + finalMaxX) / 2).toFixed(1)}, ${((finalMinY + finalMaxY) / 2).toFixed(1)})`);
+
+  // COMPARISON SUMMARY
+  console.log("╔══════════════════════════════════════════════════════════════════╗");
+  console.log("║ SPACING COMPARISON SUMMARY                                       ║");
+  console.log("╚══════════════════════════════════════════════════════════════════╝");
+  console.log(`Original composition size: ${(origMaxX - origMinX).toFixed(1)} x ${(origMaxY - origMinY).toFixed(1)}`);
+  console.log(`Final composition size:    ${(finalMaxX - finalMinX).toFixed(1)} x ${(finalMaxY - finalMinY).toFixed(1)}`);
+  console.log(`Expected scaled size:      ${((origMaxX - origMinX) * uniformScale).toFixed(1)} x ${((origMaxY - origMinY) * uniformScale).toFixed(1)}`);
+  console.log(`Scale applied: ${uniformScale.toFixed(3)}`);
+
+  // Compare gaps
+  for (let i = 0; i < absoluteNodes.length; i++) {
+    for (let j = i + 1; j < absoluteNodes.length; j++) {
+      const a = absoluteNodes[i];
+      const b = absoluteNodes[j];
+      const aFinal = finalPositions[i];
+      const bFinal = finalPositions[j];
+
+      // Original center-to-center
+      const origCenterDeltaX = (b.originalPos.x + b.originalPos.width / 2) - (a.originalPos.x + a.originalPos.width / 2);
+      const origCenterDeltaY = (b.originalPos.y + b.originalPos.height / 2) - (a.originalPos.y + a.originalPos.height / 2);
+
+      // Final center-to-center
+      const finalCenterDeltaX = (bFinal.x + bFinal.width / 2) - (aFinal.x + aFinal.width / 2);
+      const finalCenterDeltaY = (bFinal.y + bFinal.height / 2) - (aFinal.y + aFinal.height / 2);
+
+      // Expected (with uniform scale)
+      const expectedDeltaX = origCenterDeltaX * uniformScale;
+      const expectedDeltaY = origCenterDeltaY * uniformScale;
+
+      console.log(`${a.spec.nodeName} <-> ${b.spec.nodeName}:`);
+      console.log(`  Original ΔX: ${origCenterDeltaX.toFixed(1)} -> Final: ${finalCenterDeltaX.toFixed(1)} (expected: ${expectedDeltaX.toFixed(1)})`);
+      console.log(`  Original ΔY: ${origCenterDeltaY.toFixed(1)} -> Final: ${finalCenterDeltaY.toFixed(1)} (expected: ${expectedDeltaY.toFixed(1)})`);
+
+      const deltaXError = Math.abs(finalCenterDeltaX - expectedDeltaX);
+      const deltaYError = Math.abs(finalCenterDeltaY - expectedDeltaY);
+      if (deltaXError > 1 || deltaYError > 1) {
+        console.log(`  ⚠️ SPACING ERROR: ΔX off by ${deltaXError.toFixed(1)}px, ΔY off by ${deltaYError.toFixed(1)}px`);
+      } else {
+        console.log(`  ✓ Spacing preserved correctly`);
+      }
+    }
+  }
+
+  console.log("╔══════════════════════════════════════════════════════════════════╗");
+  console.log("║ [applyAbsolutePositioning] COMPLETE                              ║");
+  console.log("╚══════════════════════════════════════════════════════════════════╝");
+}
+
+/**
+ * Apply z-index ordering to control layer stacking.
+ * Figma doesn't have a z-index property - we control stacking via insertChild() order.
+ * Lower insertChild index = behind, higher index = in front.
+ *
+ * @param frame - The frame to process
+ * @param specMap - Map of node specs
+ */
+function applyZIndexOrdering(
+  frame: FrameNode,
+  specMap: Map<string, NodeSpec>
+): void {
+  console.log("[applyZIndexOrdering] Starting for frame:", frame.name);
+
+  // Collect direct children with zIndex values
+  const childrenWithZIndex: Array<{ node: SceneNode; zIndex: number }> = [];
+  const childrenWithoutZIndex: SceneNode[] = [];
+
+  for (const child of frame.children) {
+    const spec = specMap.get(child.id);
+    if (spec?.zIndex !== undefined) {
+      childrenWithZIndex.push({ node: child, zIndex: spec.zIndex });
+      console.log("[applyZIndexOrdering] Node with zIndex:", child.name, "zIndex:", spec.zIndex);
+    } else {
+      childrenWithoutZIndex.push(child);
+    }
+  }
+
+  console.log("[applyZIndexOrdering] Nodes with zIndex:", childrenWithZIndex.length);
+  console.log("[applyZIndexOrdering] Nodes without zIndex:", childrenWithoutZIndex.length);
+
+  // If no zIndex values specified, skip reordering
+  if (childrenWithZIndex.length === 0) {
+    console.log("[applyZIndexOrdering] No zIndex values specified, skipping");
+    // Still recurse into child frames
+    for (const child of frame.children) {
+      if (child.type === "FRAME") {
+        applyZIndexOrdering(child as FrameNode, specMap);
+      }
+    }
+    return;
+  }
+
+  // Sort by zIndex (lower = behind/first, higher = in front/last)
+  childrenWithZIndex.sort((a, b) => a.zIndex - b.zIndex);
+  console.log("[applyZIndexOrdering] Sorted order:", childrenWithZIndex.map(c => `${c.node.name}:${c.zIndex}`).join(", "));
+
+  // Build final order:
+  // 1. Nodes without zIndex maintain relative position at the back
+  // 2. Nodes with zIndex are stacked in order on top
+  const finalOrder: SceneNode[] = [...childrenWithoutZIndex, ...childrenWithZIndex.map(c => c.node)];
+
+  console.log("[applyZIndexOrdering] Final stacking order (back to front):");
+  for (let i = 0; i < finalOrder.length; i++) {
+    console.log(`[applyZIndexOrdering]   ${i}: ${finalOrder[i].name}`);
+  }
+
+  // Apply the new stacking order using insertChild
+  for (let i = 0; i < finalOrder.length; i++) {
+    frame.insertChild(i, finalOrder[i]);
+  }
+  console.log("[applyZIndexOrdering] Reordering complete for frame:", frame.name);
+
+  // Recurse into child frames
+  for (const child of frame.children) {
+    if (child.type === "FRAME") {
+      applyZIndexOrdering(child as FrameNode, specMap);
+    }
+  }
+}
+
+// ============================================
+// Phase 2: Advanced Transforms
+// ============================================
+
+/**
+ * Apply rotation transforms to nodes.
+ * Figma's rotation is in degrees, positive = counterclockwise.
+ *
+ * @param frame - The TikTok variant frame to process
+ * @param specMap - Map of node specs
+ */
+function applyRotation(
+  frame: FrameNode,
+  specMap: Map<string, NodeSpec>
+): void {
+  console.log("[applyRotation] Starting...");
+
+  // Build complete node map for the entire tree
+  const allNodesMap = buildNodeMap(frame);
+  console.log("[applyRotation] Built node map with", allNodesMap.size, "nodes");
+
+  // Find all nodes with rotation specified
+  let rotationCount = 0;
+  for (const [nodeId, spec] of specMap) {
+    if (spec.rotation === undefined || spec.rotation === 0) {
+      continue;
+    }
+
+    rotationCount++;
+    const node = allNodesMap.get(nodeId);
+
+    if (!node) {
+      console.log("[applyRotation] WARNING: Node not found:", nodeId, spec.nodeName);
+      continue;
+    }
+
+    console.log("[applyRotation] Processing node:", spec.nodeName, "id:", nodeId);
+    console.log("[applyRotation]   Requested rotation:", spec.rotation, "degrees");
+
+    // CRITICAL: Skip nodes inside component instances - they're frozen
+    if (isInsideComponentInstance(node)) {
+      console.log("[applyRotation]   SKIP - inside component instance");
+      continue;
+    }
+
+    // Check if node supports rotation
+    if (!("rotation" in node)) {
+      console.log("[applyRotation]   SKIP - node doesn't support rotation");
+      continue;
+    }
+
+    // Store original position for logging
+    const originalRotation = (node as SceneNode & { rotation: number }).rotation;
+    console.log("[applyRotation]   Original rotation:", originalRotation, "degrees");
+
+    // Apply rotation
+    (node as SceneNode & { rotation: number }).rotation = spec.rotation;
+    console.log("[applyRotation]   Applied rotation:", spec.rotation, "degrees");
+    console.log("[applyRotation]   Final rotation:", (node as SceneNode & { rotation: number }).rotation, "degrees");
+  }
+
+  console.log("[applyRotation] Complete. Processed", rotationCount, "nodes with rotation");
+}
+
+/**
+ * Apply aspect-locked scaling to nodes.
+ * Scales elements to target dimensions while maintaining original proportions.
+ *
+ * @param frame - The TikTok variant frame to process
+ * @param specMap - Map of node specs
+ */
+function applyAspectLockedScaling(
+  frame: FrameNode,
+  specMap: Map<string, NodeSpec>
+): void {
+  console.log("[applyAspectLockedScaling] Starting...");
+
+  // Build complete node map for the entire tree
+  const allNodesMap = buildNodeMap(frame);
+  console.log("[applyAspectLockedScaling] Built node map with", allNodesMap.size, "nodes");
+
+  // Find all nodes with aspect-locked scaling
+  let scaleCount = 0;
+  for (const [nodeId, spec] of specMap) {
+    // Skip if aspectLocked is not set or no target dimensions
+    if (!spec.aspectLocked) {
+      continue;
+    }
+    if (spec.targetWidth === undefined && spec.targetHeight === undefined) {
+      console.log("[applyAspectLockedScaling] Node", spec.nodeName, "has aspectLocked but no target dimensions, skipping");
+      continue;
+    }
+
+    scaleCount++;
+    const node = allNodesMap.get(nodeId);
+
+    if (!node) {
+      console.log("[applyAspectLockedScaling] WARNING: Node not found:", nodeId, spec.nodeName);
+      continue;
+    }
+
+    console.log("[applyAspectLockedScaling] Processing node:", spec.nodeName, "id:", nodeId);
+
+    // CRITICAL: Skip nodes inside component instances - they're frozen
+    if (isInsideComponentInstance(node)) {
+      console.log("[applyAspectLockedScaling]   SKIP - inside component instance");
+      continue;
+    }
+
+    // Check if node supports resize
+    if (!("resize" in node)) {
+      console.log("[applyAspectLockedScaling]   SKIP - node doesn't support resize");
+      continue;
+    }
+
+    const resizableNode = node as SceneNode & { resize: (width: number, height: number) => void };
+    const originalWidth = node.width;
+    const originalHeight = node.height;
+    const aspectRatio = originalWidth / originalHeight;
+
+    console.log("[applyAspectLockedScaling]   Original size:", originalWidth, "x", originalHeight);
+    console.log("[applyAspectLockedScaling]   Aspect ratio:", aspectRatio.toFixed(4));
+    console.log("[applyAspectLockedScaling]   Target width:", spec.targetWidth ?? "not set");
+    console.log("[applyAspectLockedScaling]   Target height:", spec.targetHeight ?? "not set");
+
+    let newWidth: number;
+    let newHeight: number;
+
+    if (spec.targetWidth !== undefined && spec.targetHeight !== undefined) {
+      // Both dimensions specified - scale to fit within bounds (use smaller scale)
+      const widthScale = spec.targetWidth / originalWidth;
+      const heightScale = spec.targetHeight / originalHeight;
+      const scale = Math.min(widthScale, heightScale);
+      newWidth = originalWidth * scale;
+      newHeight = originalHeight * scale;
+      console.log("[applyAspectLockedScaling]   Both dimensions specified, using fit-within scale:", scale.toFixed(4));
+    } else if (spec.targetWidth !== undefined) {
+      // Only width specified - calculate height from aspect ratio
+      newWidth = spec.targetWidth;
+      newHeight = spec.targetWidth / aspectRatio;
+      console.log("[applyAspectLockedScaling]   Width specified, calculating height from aspect ratio");
+    } else {
+      // Only height specified - calculate width from aspect ratio
+      newHeight = spec.targetHeight!;
+      newWidth = spec.targetHeight! * aspectRatio;
+      console.log("[applyAspectLockedScaling]   Height specified, calculating width from aspect ratio");
+    }
+
+    console.log("[applyAspectLockedScaling]   New size:", newWidth.toFixed(2), "x", newHeight.toFixed(2));
+
+    // Apply the resize
+    resizableNode.resize(newWidth, newHeight);
+    console.log("[applyAspectLockedScaling]   Resize applied");
+    console.log("[applyAspectLockedScaling]   Final size:", node.width, "x", node.height);
+  }
+
+  console.log("[applyAspectLockedScaling] Complete. Processed", scaleCount, "nodes with aspect-locked scaling");
+}
+
+/**
+ * Apply anchor points to control how elements position relative to frame edges.
+ * Uses Figma's constraints system for responsive positioning.
+ *
+ * @param frame - The TikTok variant frame to process
+ * @param specMap - Map of node specs
+ */
+function applyAnchorPoints(
+  frame: FrameNode,
+  specMap: Map<string, NodeSpec>
+): void {
+  console.log("[applyAnchorPoints] Starting...");
+
+  // Build complete node map for the entire tree
+  const allNodesMap = buildNodeMap(frame);
+  console.log("[applyAnchorPoints] Built node map with", allNodesMap.size, "nodes");
+
+  // Find all nodes with anchor points specified
+  let anchorCount = 0;
+  for (const [nodeId, spec] of specMap) {
+    if (!spec.anchor) {
+      continue;
+    }
+
+    anchorCount++;
+    const node = allNodesMap.get(nodeId);
+
+    if (!node) {
+      console.log("[applyAnchorPoints] WARNING: Node not found:", nodeId, spec.nodeName);
+      continue;
+    }
+
+    console.log("[applyAnchorPoints] Processing node:", spec.nodeName, "id:", nodeId);
+    console.log("[applyAnchorPoints]   Requested anchor:", JSON.stringify(spec.anchor));
+
+    // CRITICAL: Skip nodes inside component instances - they're frozen
+    if (isInsideComponentInstance(node)) {
+      console.log("[applyAnchorPoints]   SKIP - inside component instance");
+      continue;
+    }
+
+    // Check if node supports constraints
+    if (!("constraints" in node)) {
+      console.log("[applyAnchorPoints]   SKIP - node doesn't support constraints");
+      continue;
+    }
+
+    const constrainedNode = node as SceneNode & {
+      constraints: { horizontal: ConstraintType; vertical: ConstraintType };
+    };
+
+    // Map anchor values to Figma constraint types
+    const horizontalConstraint = mapAnchorToConstraint(spec.anchor.horizontal);
+    const verticalConstraint = mapAnchorToConstraint(spec.anchor.vertical);
+
+    console.log("[applyAnchorPoints]   Original constraints:", JSON.stringify(constrainedNode.constraints));
+    console.log("[applyAnchorPoints]   Mapping horizontal:", spec.anchor.horizontal, "->", horizontalConstraint);
+    console.log("[applyAnchorPoints]   Mapping vertical:", spec.anchor.vertical, "->", verticalConstraint);
+
+    // Apply constraints
+    constrainedNode.constraints = {
+      horizontal: horizontalConstraint,
+      vertical: verticalConstraint,
+    };
+
+    console.log("[applyAnchorPoints]   Applied constraints:", JSON.stringify(constrainedNode.constraints));
+
+    // If anchor is RIGHT or BOTTOM, we need to recalculate x/y positions
+    // to be relative to that edge instead of top-left
+    if (spec.positioning === "ABSOLUTE") {
+      const parent = node.parent as FrameNode;
+      if (parent) {
+        const parentWidth = parent.width;
+        const parentHeight = parent.height;
+
+        console.log("[applyAnchorPoints]   Parent size:", parentWidth, "x", parentHeight);
+
+        // Recalculate position based on anchor
+        if (spec.anchor.horizontal === "RIGHT" && spec.x !== undefined) {
+          // x is distance from right edge
+          const newX = parentWidth - spec.x - node.width;
+          console.log("[applyAnchorPoints]   RIGHT anchor: x offset", spec.x, "-> absolute x", newX);
+          node.x = newX;
+        } else if (spec.anchor.horizontal === "CENTER" && spec.x !== undefined) {
+          // x is offset from center
+          const centerX = (parentWidth - node.width) / 2;
+          const newX = centerX + spec.x;
+          console.log("[applyAnchorPoints]   CENTER anchor: x offset", spec.x, "-> absolute x", newX);
+          node.x = newX;
+        }
+
+        if (spec.anchor.vertical === "BOTTOM" && spec.y !== undefined) {
+          // y is distance from bottom edge
+          const newY = parentHeight - spec.y - node.height;
+          console.log("[applyAnchorPoints]   BOTTOM anchor: y offset", spec.y, "-> absolute y", newY);
+          node.y = newY;
+        } else if (spec.anchor.vertical === "CENTER" && spec.y !== undefined) {
+          // y is offset from center
+          const centerY = (parentHeight - node.height) / 2;
+          const newY = centerY + spec.y;
+          console.log("[applyAnchorPoints]   CENTER anchor: y offset", spec.y, "-> absolute y", newY);
+          node.y = newY;
+        }
+
+        console.log("[applyAnchorPoints]   Final position: x=", node.x, "y=", node.y);
+      }
+    }
+  }
+
+  console.log("[applyAnchorPoints] Complete. Processed", anchorCount, "nodes with anchor points");
+}
+
+/**
+ * Map anchor string to Figma constraint type.
+ */
+function mapAnchorToConstraint(anchor: "LEFT" | "CENTER" | "RIGHT" | "TOP" | "BOTTOM"): ConstraintType {
+  console.log("[mapAnchorToConstraint] Mapping:", anchor);
+  switch (anchor) {
+    case "LEFT":
+    case "TOP":
+      return "MIN";
+    case "CENTER":
+      return "CENTER";
+    case "RIGHT":
+    case "BOTTOM":
+      return "MAX";
+    default:
+      console.log("[mapAnchorToConstraint] Unknown anchor, defaulting to MIN");
+      return "MIN";
+  }
 }

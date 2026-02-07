@@ -150,6 +150,31 @@ Your task is to analyze the provided marketing frame and output a JSON layout sp
 4. Hide elements that don't work in vertical format (wide banners, horizontal galleries)
 5. Prioritize visual hierarchy: hero first, supporting content second, CTAs in safe areas
 
+## Design Adaptation (Not Redesign)
+
+Your goal is to ADAPT the existing design to TikTok format while PRESERVING its visual character. The output should feel like the same design reformatted, not a new design.
+
+**Analyze the source design first:**
+1. Spacing rhythm - What's the ratio between tight gaps (within groups) vs loose gaps (between sections)?
+2. Alignment pattern - Is content centered, left-aligned, or asymmetric?
+3. Visual density feel - Is the design airy with breathing room, or compact and content-rich?
+4. Grouping intent - What did the designer visually cluster together?
+5. Visual weight distribution - Where is the focal point? What's dominant?
+
+**Preserve these characteristics:**
+- If source has 2:1 ratio between section gaps and item gaps, maintain that ratio in output
+- If source is left-aligned, output stays left-aligned (counterAxisAlign: "MIN")
+- If source is centered, output stays centered (counterAxisAlign: "CENTER")
+- If source feels spacious, use the upper range of calculated padding/gaps
+- If elements are visually grouped in the source, they MUST stay together in the same semantic group
+- The visual hierarchy order in the source should inform the semantic group ordering
+
+**Do NOT impose:**
+- Don't center content if the source is left-aligned
+- Don't add spacing patterns that weren't in the original
+- Don't separate elements the designer intentionally grouped together
+- Don't change the "feel" of the design - airy stays airy, dense stays dense
+
 ## Semantic Grouping
 Analyze the design and group related elements by their semantic purpose. Elements that belong together visually should be in the same group.
 
@@ -168,6 +193,20 @@ Analyze the design and group related elements by their semantic purpose. Element
 3. Multiple related buttons → one "cta" group
 4. Order groups for TikTok: hero first (1-10), product/features middle (20-40), cta/brand at bottom (50-70)
 5. Set visible: false for "decorative" and "metadata" groups when they clutter mobile view
+
+### Spacing Preservation (preserveSpacing)
+Set preserveSpacing: true for groups where the relative spacing between elements must be maintained.
+The system will keep original X positions and center the composition horizontally, rather than using AI-specified coordinates.
+
+**Use preserveSpacing: true for:**
+- Product mockup groups (phones side by side, device arrangements)
+- Feature lists where icon-text gap rhythm matters
+- Multi-element compositions that should scale as a unit
+
+**When preserveSpacing is true:**
+- Do NOT specify x/y on individual nodes (the system handles positioning)
+- The group's elements will maintain their relative horizontal positions
+- The composition will be uniformly scaled and centered in the frame
 
 ## Padding & Spacing Guidelines
 Calculate padding and gap dynamically based on source frame characteristics - DO NOT copy example values verbatim.
@@ -199,9 +238,10 @@ Return ONLY valid JSON (no markdown, no explanation) with this exact structure:
     {
       "groupId": "group-2",
       "role": "product",
-      "nodeIds": ["123:460"],
+      "nodeIds": ["123:460", "123:461"],
       "order": 20,
-      "visible": true
+      "visible": true,
+      "preserveSpacing": true
     },
     {
       "groupId": "group-3",
@@ -227,6 +267,18 @@ Return ONLY valid JSON (no markdown, no explanation) with this exact structure:
       "order": 0,
       "widthSizing": "FILL",
       "heightSizing": "HUG"
+    },
+    {
+      "nodeId": "123:460",
+      "nodeName": "Phone Mockup",
+      "visible": true,
+      "order": 0,
+      "widthSizing": "FIXED",
+      "heightSizing": "FIXED",
+      "positioning": "ABSOLUTE",
+      "x": 540,
+      "y": 600,
+      "zIndex": 10
     }
   ],
   "rootLayout": {
@@ -234,7 +286,8 @@ Return ONLY valid JSON (no markdown, no explanation) with this exact structure:
     "padding": { "top": 180, "right": 40, "bottom": 60, "left": 40 },
     "gap": 28,
     "primaryAxisAlign": "MIN",
-    "counterAxisAlign": "CENTER"
+    "counterAxisAlign": "CENTER",
+    "clipContent": false
   },
   "reasoning": "Brief explanation of semantic grouping and layout decisions"
 }
@@ -273,7 +326,217 @@ Example with layoutDirection:
   "widthSizing": "HUG",
   "heightSizing": "HUG",
   "layoutDirection": "NONE"
-}`;
+}
+
+## Advanced Composition Controls
+
+### Absolute Positioning (positioning, x, y)
+Break elements out of auto-layout flow and place at specific coordinates.
+Use for:
+- Product mockups extending beyond frame edges
+- Floating badges or stickers overlapping other elements
+- Asymmetric layouts with precise placement
+
+Properties:
+- "positioning": "ABSOLUTE" - Remove from auto-layout flow
+- "x": X coordinate relative to parent (can be negative for left bleed)
+- "y": Y coordinate relative to parent (can be negative for top bleed)
+
+Example - Phone mockup bleeding off right edge:
+{
+  "nodeId": "123:456",
+  "nodeName": "Phone Mockup",
+  "visible": true,
+  "order": 0,
+  "widthSizing": "FIXED",
+  "heightSizing": "FIXED",
+  "positioning": "ABSOLUTE",
+  "x": 540,
+  "y": 600,
+  "zIndex": 10
+}
+
+### Overflow Control (clipContent in rootLayout)
+Control whether content can visually extend beyond frame boundaries.
+- true (default): Content clipped at edges - clean, contained look
+- false: Content can bleed beyond edges - dynamic, breaking-the-frame effects
+
+Use clipContent: false when:
+- Product mockups should extend beyond frame edges
+- Elements need to create dynamic edge-bleeding effects
+- Design has intentional overflow aesthetics
+
+### Z-Index Stacking (zIndex)
+Control which elements appear in front of others.
+Higher zIndex values appear in front of lower values.
+
+Use for:
+- Floating badges on top of product images (zIndex: 20)
+- Product mockups in front of background elements (zIndex: 10)
+- Background decorative elements behind everything (zIndex: 1)
+
+Example - Layered composition:
+{
+  "nodeId": "bg-element",
+  "nodeName": "Background Gradient",
+  "zIndex": 1,
+  ...
+},
+{
+  "nodeId": "phone-mockup",
+  "nodeName": "Phone Mockup",
+  "positioning": "ABSOLUTE",
+  "x": 600,
+  "y": 500,
+  "zIndex": 10,
+  ...
+},
+{
+  "nodeId": "floating-badge",
+  "nodeName": "Sale Badge",
+  "positioning": "ABSOLUTE",
+  "x": 900,
+  "y": 400,
+  "zIndex": 20,
+  ...
+}
+
+### Rotation (rotation)
+Apply rotation transforms to create dynamic, angled compositions.
+Positive values rotate counterclockwise (Figma convention).
+
+Use for:
+- Tilted phone mockups for dynamic energy (-15° to 15° typical)
+- Angled badges or stickers for playful effect
+- Rotated decorative elements
+
+Example - Phone tilted for dynamic effect:
+{
+  "nodeId": "123:456",
+  "nodeName": "Phone Mockup",
+  "positioning": "ABSOLUTE",
+  "x": 600,
+  "y": 500,
+  "rotation": -12,
+  "zIndex": 10,
+  ...
+}
+
+### Aspect-Locked Scaling (aspectLocked, targetWidth, targetHeight)
+Scale elements while maintaining their original proportions.
+Prevents distortion when resizing product mockups or images.
+
+Properties:
+- "aspectLocked": true - Maintain aspect ratio during scaling
+- "targetWidth": number - Scale to this width (height auto-calculated)
+- "targetHeight": number - Scale to this height (width auto-calculated)
+
+If both targetWidth and targetHeight specified, the smaller scale wins to fit within bounds.
+
+Example - Scale phone mockup to specific width:
+{
+  "nodeId": "123:456",
+  "nodeName": "Phone Mockup",
+  "aspectLocked": true,
+  "targetWidth": 400,
+  "positioning": "ABSOLUTE",
+  "x": 340,
+  "y": 500,
+  ...
+}
+
+### Anchor Points (anchor)
+Define how elements position relative to parent frame edges.
+Only meaningful for absolutely positioned elements.
+Useful for responsive layouts where elements should stay in corners/edges.
+
+Properties:
+- "anchor.horizontal": "LEFT" | "CENTER" | "RIGHT"
+- "anchor.vertical": "TOP" | "CENTER" | "BOTTOM"
+
+When anchored, x/y coordinates are interpreted relative to that anchor point.
+Example: anchor RIGHT + x: 50 means "50px from right edge"
+
+Example - Badge anchored to top-right corner:
+{
+  "nodeId": "badge-1",
+  "nodeName": "Sale Badge",
+  "positioning": "ABSOLUTE",
+  "anchor": { "horizontal": "RIGHT", "vertical": "TOP" },
+  "x": 20,
+  "y": 180,
+  "rotation": 15,
+  "zIndex": 20,
+  ...
+}
+
+### Combined Example - Dynamic Product Showcase:
+{
+  "nodeId": "phone-hero",
+  "nodeName": "iPhone Mockup",
+  "visible": true,
+  "order": 0,
+  "widthSizing": "FIXED",
+  "heightSizing": "FIXED",
+  "positioning": "ABSOLUTE",
+  "x": 540,
+  "y": 400,
+  "rotation": -10,
+  "aspectLocked": true,
+  "targetWidth": 500,
+  "anchor": { "horizontal": "CENTER", "vertical": "CENTER" },
+  "zIndex": 10
+}
+
+## When to Apply Advanced Composition Features
+
+IMPORTANT: Preserve the source design's existing transforms. Do NOT override rotation, scale, or positioning that already exists in the source.
+
+### Positioning Strategy Decision
+When a group has preserveSpacing: true:
+- The system automatically preserves original spacing between elements
+- Do NOT specify x/y coordinates on nodes in that group
+- Elements will be uniformly scaled and horizontally centered
+
+When a group has preserveSpacing: false or omitted:
+- Use x/y coordinates for TikTok safe zone optimization
+- AI-specified positions will place elements strategically
+
+### Product Mockups (phones, laptops, tablets, device screens)
+Apply these features to PRESERVE the mockup composition:
+- positioning: "ABSOLUTE" - Remove from layout flow (ALWAYS for mockups)
+- Set preserveSpacing: true on the product group if multiple mockups should maintain spacing
+- DO NOT specify x/y coordinates when preserveSpacing is true
+- zIndex: 10 - Layer in front of backgrounds
+- DO NOT specify rotation if the mockup is already tilted in the source
+- DO NOT specify aspectLocked/targetWidth if the mockup size looks correct
+- Set clipContent: false if mockups should bleed off edges
+
+IMPORTANT: When you set positioning: "ABSOLUTE" WITHOUT x/y coordinates, the original position
+will be preserved and scaled proportionally to the TikTok frame. This preserves the designer's
+original composition. Only specify x/y if you need to MOVE the element to a different location.
+
+### When to use rotation
+ONLY use rotation if:
+- The source element is NOT already rotated, AND
+- Adding a tilt would improve the composition
+If the element already appears tilted/angled in the source image, DO NOT include rotation in the spec.
+
+### When to use aspectLocked scaling
+ONLY use aspectLocked/targetWidth/targetHeight if:
+- The element needs to be resized to fit TikTok dimensions
+- The current size is too large or too small for the target frame
+If the element's current proportions work for the layout, DO NOT include scaling properties.
+
+### Badges, Labels, Sale Tags, Stickers
+- positioning: "ABSOLUTE"
+- anchor: { horizontal: "RIGHT", vertical: "TOP" } - Pin to corner
+- rotation: Only if not already rotated in source
+- zIndex: 20 - Float above other content
+
+### Background/Decorative Elements
+- zIndex: 1 - Push behind everything else
+- Consider clipContent: false if they should bleed`;
 
 /**
  * Build the user prompt with node tree and dimensions.
@@ -298,12 +561,40 @@ Based on source frame characteristics, calculate appropriate padding and gap val
 ## Node Tree
 ${JSON.stringify(nodeTree, null, 2)}
 
-Analyze the visual composition and generate a layout specification that:
-1. Prioritizes the most important visual elements
-2. Keeps critical content in the TikTok safe zone (top 8% to bottom 35% is dangerous)
-3. Uses vertical stacking for optimal mobile viewing
-4. Hides elements that don't translate well to vertical format
-5. Calculates appropriate padding and gap values for this specific content (don't use default values)
+## Your Analysis Steps
+
+**Step 1: Study the source design's character**
+- Is the alignment centered, left-aligned, or asymmetric?
+- What's the spacing rhythm? (tight within groups, loose between sections?)
+- Is the overall feel airy/spacious or compact/dense?
+- What elements did the designer visually group together?
+
+**Step 2: Identify semantic content**
+- What's the hero/main message?
+- What are the features/benefits?
+- Where's the product imagery?
+- What's the CTA?
+
+**Step 3: Adapt for TikTok while preserving character**
+- Reorder for vertical scroll priority
+- Keep critical content in safe zone (avoid top 8%, bottom 35%)
+- Maintain the source's alignment pattern
+- Preserve spacing ratios (if items are tightly grouped, keep them tight)
+- Hide only elements that truly don't work vertically
+
+**Step 4: Apply advanced composition features (preserve existing transforms)**
+- If device mockups exist: use positioning: "ABSOLUTE" to place them precisely
+- LOOK at the source image: if mockups are already tilted, do NOT add rotation
+- LOOK at the source image: if mockups are already sized correctly, do NOT add scaling
+- Only use rotation/aspectLocked if the source element needs those transforms applied
+- If mockups should bleed off edges, set clipContent: false on rootLayout
+- Use zIndex to control layering (backgrounds: 1, mockups: 10, badges: 20)
+
+**Step 5: Generate layout spec**
+- Use counterAxisAlign that matches source alignment (MIN=left, CENTER=centered)
+- Calculate gaps that maintain the source's spacing rhythm
+- Group elements that were visually grouped in the source
+- Include rotation, aspectLocked, targetWidth, and anchor for applicable elements
 
 Return ONLY the JSON layout specification.`;
 }
