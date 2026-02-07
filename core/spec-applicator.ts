@@ -318,13 +318,10 @@ function applyRootLayout(frame: FrameNode, layout: LayoutSpec["rootLayout"]): vo
   frame.layoutSizingVertical = "FIXED";
   console.log("[spec-applicator] Set sizing to FIXED");
 
-  // Apply clipContent setting (default: true for backward compatibility)
-  const clipContent = layout.clipContent ?? true;
-  frame.clipsContent = clipContent;
-  console.log("[spec-applicator] Set clipsContent:", clipContent);
-  if (!clipContent) {
-    console.log("[spec-applicator] Content can now bleed beyond frame edges");
-  }
+  // ALWAYS enable clip content on output frames to prevent content bleeding
+  // This ensures clean visual boundaries regardless of AI specification
+  frame.clipsContent = true;
+  console.log("[spec-applicator] Set clipsContent: true (always enforced on output frames)");
 }
 
 /**
