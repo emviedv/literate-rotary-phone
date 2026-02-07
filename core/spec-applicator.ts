@@ -11,6 +11,8 @@ import type { LayoutSpec, NodeSpec } from "../types/layout-spec";
 const TIKTOK_WIDTH = 1080;
 const TIKTOK_HEIGHT = 1920;
 
+console.log("[spec-applicator] Module loaded, TikTok dimensions:", TIKTOK_WIDTH, "x", TIKTOK_HEIGHT);
+
 /**
  * Apply a layout specification to create a TikTok variant.
  *
@@ -22,32 +24,47 @@ export async function applyLayoutSpec(
   sourceFrame: FrameNode,
   spec: LayoutSpec
 ): Promise<FrameNode> {
+  console.log("[spec-applicator] applyLayoutSpec started");
+  console.log("[spec-applicator] Source frame:", sourceFrame.name, "id:", sourceFrame.id);
+  console.log("[spec-applicator] Spec nodes count:", spec.nodes.length);
+
   // Clone the source frame
+  console.log("[spec-applicator] Cloning source frame...");
   const variant = sourceFrame.clone();
   variant.name = `${sourceFrame.name} - TikTok`;
+  console.log("[spec-applicator] Clone created:", variant.name, "id:", variant.id);
 
   // Position next to the source frame
   variant.x = sourceFrame.x + sourceFrame.width + 100;
   variant.y = sourceFrame.y;
+  console.log("[spec-applicator] Positioned at:", variant.x, variant.y);
 
   // Resize to TikTok dimensions
+  console.log("[spec-applicator] Resizing to TikTok dimensions...");
   variant.resize(TIKTOK_WIDTH, TIKTOK_HEIGHT);
+  console.log("[spec-applicator] New dimensions:", variant.width, "x", variant.height);
 
   // Apply root layout configuration (convert to auto-layout if needed)
+  console.log("[spec-applicator] Applying root layout...");
   applyRootLayout(variant, spec.rootLayout);
 
   // Build a map of node specs by ID for quick lookup
   const specMap = new Map<string, NodeSpec>();
   for (const nodeSpec of spec.nodes) {
     specMap.set(nodeSpec.nodeId, nodeSpec);
+    console.log("[spec-applicator] Mapped spec for node:", nodeSpec.nodeId, nodeSpec.nodeName);
   }
+  console.log("[spec-applicator] Spec map size:", specMap.size);
 
   // Apply specs to all children
+  console.log("[spec-applicator] Applying node specs...");
   await applyNodeSpecs(variant, specMap);
 
   // Reorder children based on order values
+  console.log("[spec-applicator] Reordering children...");
   reorderChildren(variant, specMap);
 
+  console.log("[spec-applicator] Layout application complete");
   return variant;
 }
 
@@ -55,28 +72,37 @@ export async function applyLayoutSpec(
  * Apply root layout configuration to the variant frame.
  */
 function applyRootLayout(frame: FrameNode, layout: LayoutSpec["rootLayout"]): void {
+  console.log("[spec-applicator] applyRootLayout - frame:", frame.name);
+  console.log("[spec-applicator] Layout config:", JSON.stringify(layout));
+
   // Enable auto-layout with vertical direction
   frame.layoutMode = "VERTICAL";
+  console.log("[spec-applicator] Set layoutMode to VERTICAL");
 
   // Apply padding
   frame.paddingTop = layout.padding.top;
   frame.paddingRight = layout.padding.right;
   frame.paddingBottom = layout.padding.bottom;
   frame.paddingLeft = layout.padding.left;
+  console.log("[spec-applicator] Applied padding:", layout.padding);
 
   // Apply gap
   frame.itemSpacing = layout.gap;
+  console.log("[spec-applicator] Applied gap:", layout.gap);
 
   // Apply alignment
   frame.primaryAxisAlignItems = layout.primaryAxisAlign;
   frame.counterAxisAlignItems = layout.counterAxisAlign;
+  console.log("[spec-applicator] Applied alignment - primary:", layout.primaryAxisAlign, "counter:", layout.counterAxisAlign);
 
   // Ensure frame sizing is fixed (we set the dimensions explicitly)
   frame.layoutSizingHorizontal = "FIXED";
   frame.layoutSizingVertical = "FIXED";
+  console.log("[spec-applicator] Set sizing to FIXED");
 
   // Clip content that overflows
   frame.clipsContent = true;
+  console.log("[spec-applicator] Enabled content clipping");
 }
 
 /**
@@ -87,11 +113,16 @@ async function applyNodeSpecs(
   specMap: Map<string, NodeSpec>
 ): Promise<void> {
   const children = [...parent.children] as SceneNode[];
+  console.log("[spec-applicator] applyNodeSpecs - parent:", parent.name, "children count:", children.length);
 
   for (const child of children) {
     const spec = specMap.get(child.id);
 
     if (spec) {
+      console.log("[spec-applicator] Applying spec to:", child.name, "id:", child.id);
+      console.log("[spec-applicator]   visible:", spec.visible, "order:", spec.order);
+      console.log("[spec-applicator]   sizing:", spec.widthSizing, "x", spec.heightSizing);
+
       // Apply visibility
       child.visible = spec.visible;
 
@@ -99,6 +130,7 @@ async function applyNodeSpecs(
       if ("layoutSizingHorizontal" in child) {
         child.layoutSizingHorizontal = sizingModeToFigma(spec.widthSizing);
         child.layoutSizingVertical = sizingModeToFigma(spec.heightSizing);
+        console.log("[spec-applicator]   Applied sizing modes");
       }
 
       // Apply scale factor if specified
@@ -109,7 +141,10 @@ async function applyNodeSpecs(
           currentWidth * spec.scaleFactor,
           currentHeight * spec.scaleFactor
         );
+        console.log("[spec-applicator]   Applied scale factor:", spec.scaleFactor);
       }
+    } else {
+      console.log("[spec-applicator] No spec for node:", child.name, "id:", child.id);
     }
 
     // Recurse into container nodes
@@ -127,8 +162,11 @@ function reorderChildren(
   parent: FrameNode,
   specMap: Map<string, NodeSpec>
 ): void {
+  console.log("[spec-applicator] reorderChildren - parent:", parent.name, "layoutMode:", parent.layoutMode);
+
   // Only reorder if parent has auto-layout
   if (parent.layoutMode === "NONE") {
+    console.log("[spec-applicator] Skipping reorder - no auto-layout");
     return;
   }
 
@@ -143,15 +181,19 @@ function reorderChildren(
     };
   });
 
+  console.log("[spec-applicator] Child orders before sort:", childOrders.map(c => `${c.node.name}:${c.order}`).join(", "));
+
   // Sort by order value
   childOrders.sort((a, b) => a.order - b.order);
+
+  console.log("[spec-applicator] Child orders after sort:", childOrders.map(c => `${c.node.name}:${c.order}`).join(", "));
 
   // Reorder in Figma by moving each child to its correct position
   for (let i = 0; i < childOrders.length; i++) {
     const { node } = childOrders[i];
-    // Move to index i (this is a no-op if already in correct position)
     parent.insertChild(i, node);
   }
+  console.log("[spec-applicator] Children reordered");
 
   // Recurse into child frames
   for (const child of parent.children) {
@@ -173,6 +215,7 @@ function sizingModeToFigma(mode: NodeSpec["widthSizing"]): "FILL" | "HUG" | "FIX
     case "FIXED":
       return "FIXED";
     default:
+      console.log("[spec-applicator] Unknown sizing mode:", mode, "- defaulting to HUG");
       return "HUG";
   }
 }

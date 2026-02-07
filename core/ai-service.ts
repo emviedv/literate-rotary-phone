@@ -14,10 +14,13 @@ let apiKey: string = typeof __SCALERESIZER_DEFAULT_AI_KEY__ !== "undefined"
   ? __SCALERESIZER_DEFAULT_AI_KEY__
   : "";
 
+console.log("[ai-service] Module loaded, default key configured:", apiKey.length > 0);
+
 /**
  * Set the OpenAI API key for subsequent calls.
  */
 export function setApiKey(key: string): void {
+  console.log("[ai-service] setApiKey called, key length:", key.length);
   apiKey = key;
 }
 
@@ -25,7 +28,9 @@ export function setApiKey(key: string): void {
  * Check if an API key is configured.
  */
 export function hasApiKey(): boolean {
-  return apiKey.length > 0;
+  const has = apiKey.length > 0;
+  console.log("[ai-service] hasApiKey:", has);
+  return has;
 }
 
 /**
@@ -43,11 +48,21 @@ export async function generateLayoutSpec(
   sourceWidth: number,
   sourceHeight: number
 ): Promise<LayoutSpec> {
+  console.log("[ai-service] generateLayoutSpec called");
+  console.log("[ai-service] Image base64 length:", imageBase64.length);
+  console.log("[ai-service] Source dimensions:", sourceWidth, "x", sourceHeight);
+  console.log("[ai-service] Node tree root:", nodeTree.name);
+
   if (!apiKey) {
+    console.error("[ai-service] ERROR: No API key configured");
     throw new Error("OpenAI API key not configured");
   }
 
   const prompt = buildPrompt(nodeTree, sourceWidth, sourceHeight);
+  console.log("[ai-service] Prompt built, length:", prompt.length);
+
+  console.log("[ai-service] Sending request to OpenAI...");
+  const startTime = Date.now();
 
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -84,19 +99,32 @@ export async function generateLayoutSpec(
     }),
   });
 
+  const elapsed = Date.now() - startTime;
+  console.log("[ai-service] Response received in", elapsed, "ms, status:", response.status);
+
   if (!response.ok) {
     const error = await response.text();
+    console.error("[ai-service] API error:", response.status, error);
     throw new Error(`OpenAI API error: ${response.status} - ${error}`);
   }
 
   const data = await response.json() as OpenAIResponse;
   const content = data.choices?.[0]?.message?.content;
+  console.log("[ai-service] Response content length:", content?.length ?? 0);
 
   if (!content) {
+    console.error("[ai-service] No content in response");
     throw new Error("No response content from OpenAI");
   }
 
-  return parseLayoutSpec(content);
+  console.log("[ai-service] Raw AI response (first 500 chars):", content.substring(0, 500));
+
+  const spec = parseLayoutSpec(content);
+  console.log("[ai-service] Parsed layout spec successfully");
+  console.log("[ai-service] Spec nodes count:", spec.nodes.length);
+  console.log("[ai-service] Spec reasoning:", spec.reasoning);
+
+  return spec;
 }
 
 /**
@@ -175,11 +203,14 @@ Return ONLY the JSON layout specification.`;
  * Parse the AI response into a LayoutSpec object.
  */
 function parseLayoutSpec(content: string): LayoutSpec {
+  console.log("[ai-service] parseLayoutSpec - input length:", content.length);
+
   // Try to extract JSON from the response (in case AI adds markdown)
   let jsonStr = content.trim();
 
   // Remove markdown code blocks if present
   if (jsonStr.startsWith("```")) {
+    console.log("[ai-service] Detected markdown code block, stripping...");
     const lines = jsonStr.split("\n");
     lines.shift(); // Remove opening ```json or ```
     while (lines.length && !lines[lines.length - 1].startsWith("```")) {
@@ -189,21 +220,28 @@ function parseLayoutSpec(content: string): LayoutSpec {
       lines.pop(); // Remove closing ```
     }
     jsonStr = lines.join("\n");
+    console.log("[ai-service] After stripping markdown, length:", jsonStr.length);
   }
 
   try {
     const parsed = JSON.parse(jsonStr) as LayoutSpec;
+    console.log("[ai-service] JSON parsed successfully");
 
     // Validate required fields
     if (!Array.isArray(parsed.nodes)) {
+      console.error("[ai-service] Invalid spec: missing nodes array");
       throw new Error("Invalid layout spec: missing nodes array");
     }
     if (!parsed.rootLayout) {
+      console.error("[ai-service] Invalid spec: missing rootLayout");
       throw new Error("Invalid layout spec: missing rootLayout");
     }
 
+    console.log("[ai-service] Validation passed - nodes:", parsed.nodes.length);
     return parsed;
   } catch (error) {
+    console.error("[ai-service] JSON parse error:", error);
+    console.error("[ai-service] Failed JSON string (first 500 chars):", jsonStr.substring(0, 500));
     throw new Error(`Failed to parse layout spec: ${error instanceof Error ? error.message : String(error)}`);
   }
 }

@@ -4,6 +4,8 @@
  * Handles exporting frames to base64 PNG for AI vision analysis.
  */
 
+console.log("[image-export] Module loaded");
+
 /**
  * Export a frame as a base64-encoded PNG string.
  * The image is scaled to fit within maxDimension while preserving aspect ratio.
@@ -16,17 +18,30 @@ export async function exportFrameAsBase64(
   frame: FrameNode,
   maxDimension: number = 1024
 ): Promise<string> {
+  console.log("[image-export] exportFrameAsBase64 called");
+  console.log("[image-export] Frame:", frame.name, "dimensions:", frame.width, "x", frame.height);
+  console.log("[image-export] Max dimension:", maxDimension);
+
   // Calculate scale to fit within maxDimension
   const scale = Math.min(maxDimension / frame.width, maxDimension / frame.height, 2);
+  console.log("[image-export] Calculated scale:", scale);
 
   // Export as PNG bytes
+  console.log("[image-export] Exporting PNG...");
+  const startTime = Date.now();
   const bytes = await frame.exportAsync({
     format: "PNG",
     constraint: { type: "SCALE", value: scale },
   });
+  const elapsed = Date.now() - startTime;
+  console.log("[image-export] Export complete in", elapsed, "ms, bytes:", bytes.length);
 
   // Convert to base64
-  return uint8ArrayToBase64(bytes);
+  console.log("[image-export] Converting to base64...");
+  const base64 = uint8ArrayToBase64(bytes);
+  console.log("[image-export] Base64 length:", base64.length);
+
+  return base64;
 }
 
 /**
