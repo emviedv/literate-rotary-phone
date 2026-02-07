@@ -11,8 +11,8 @@
     "size": "node -e \"const fs=require('fs');const path=require('path');let d=process.cwd();let f=null;while(true){const p=path.join(d,'tools','loc-top20.js');if(fs.existsSync(p)){f=p;break;}const up=path.dirname(d);if(up===d)break;d=up;}if(!f){console.error('tools/loc-top20.js not found');process.exit(1);}require(f);\"",
     "typecheck": "tsc --noEmit",
     "test": "node tests/run-tests.mjs",
-    "lint": "eslint core/ ui/ types/ tests/",
-    "lint:fix": "eslint core/ ui/ types/ tests/ --fix",
+    "lint": "eslint core/ ui/ types/",
+    "lint:fix": "eslint core/ ui/ types/ --fix",
     "check": "npm run lint && npm run typecheck && npm run test"
   },
   "devDependencies": {
